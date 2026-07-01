@@ -1,133 +1,307 @@
 (function () {
 
-  var SENTENCES = [
-    { speaker: "Gabrielle", color: "#e8a838", text: "The deck is looking really good" },
-    { speaker: "Lina",      color: "#8b6fc9", text: "Someone needs to send the deck over today" },
-    { speaker: "Zada",      color: "#5b9cf6", text: "Sure yeah I'll do that this afternoon" },
-    { speaker: "Nakamoro",  color: "#e05b5b", text: "Also did we ever actually loop in dev" },
-    { speaker: "Gabrielle", color: "#e8a838", text: "No but I can ping them after this" },
-    { speaker: "Lina",      color: "#8b6fc9", text: "Let me check my calendar real quick" },
-    { speaker: "Zada",      color: "#5b9cf6", text: "How about this text that is medium length" },
-    { speaker: "Nakamoro",  color: "#e05b5b", text: "And here again we have a shorter text" }
-  ];
+  var DEBUG      = false;   // set true to log row/height diagnostics
 
-  var MAX_LINES = 5;
-  var WORD_MS   = 200;
-  var PAUSE_MS  = 1100;
+  // ── tune these ────────────────────────────────────────────────
+  var MAX_LINES  = 5;
+  var WORD_MS    = 140;
+  var PAUSE_MS   = 900;
+  // Gradient mask — how far in from top/bottom (0–50%) the fade runs
+  var FADE_STOP  = '42%';
+  // Minimum opacity at the very edge (0 = invisible, 1 = no fade)
+  var FADE_ALPHA = 0.25;
+  // Per-row opacity — center (fromBottom 2) stays 1.0, others dimmed
+  var OPACITIES  = [0.8, 0.92, 1.0, 0.5, 0.2];
+  // Extra px added to measured max sentence width
+  var WIDTH_PAD  = 120;
+  // ─────────────────────────────────────────────────────────────
 
+  var ATTR       = 'data-transcript';
+  var A_WRAP     = 'wrap';
+  var A_TRACK    = 'track';
+  var A_NAME     = 'name';
+  var A_SENTENCE = 'sentence';
+
+  var EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+  var SENTENCES   = [];
   var container   = null;
+  var rowHeightPx = 0;
   var lines       = [];
   var sentenceIdx = 0;
   var wordIdx     = 0;
   var words       = [];
 
-  function styleFor(i) {
-    var k, activeIdx = -1;
-    for (k = lines.length - 1; k >= 0; k--) {
-      if (lines[k].completed) { activeIdx = k; break; }
+  function dlog() {
+    if (!DEBUG) { return; }
+    var args = ['[transcript]'].concat(Array.prototype.slice.call(arguments));
+    console.log.apply(console, args);
+  }
+
+  function snapshot(tag) {
+    if (!DEBUG || !container) { return; }
+    var rows = lines.map(function (l, i) {
+      var t = l.el;
+      return i + ':' + Math.round(t.offsetHeight) + (l.placeholder ? 'p' : '');
+    });
+    dlog(tag,
+      '| wrap.offsetH=', Math.round(container.offsetHeight),
+      '| wrap.scrollH=', Math.round(container.scrollHeight),
+      '| rows[', rows.join(' '), ']',
+      '| n=', lines.length);
+  }
+
+  function readSentencesFromDOM() {
+    var tracks = container.querySelectorAll('[' + ATTR + '="' + A_TRACK + '"]');
+    var result = [];
+    var i, track, badge, sentEl, computed, clone, cloneBadge;
+    for (i = 0; i < tracks.length; i++) {
+      track  = tracks[i];
+      badge  = track.querySelector('[' + ATTR + '="' + A_NAME + '"]');
+      sentEl = track.querySelector('[' + ATTR + '="' + A_SENTENCE + '"]');
+      if (!badge || !sentEl) { continue; }
+
+      computed   = window.getComputedStyle(badge);
+      clone      = track.cloneNode(true);
+      cloneBadge = clone.querySelector('[' + ATTR + '="' + A_NAME + '"]');
+      if (cloneBadge) {
+        cloneBadge.style.color           = computed.color;
+        cloneBadge.style.backgroundColor = computed.backgroundColor;
+      }
+
+      result.push({
+        template : clone,
+        text     : sentEl.textContent.trim()
+      });
     }
-    if (!lines[i].completed) { return { op: 0.5,  bold: false }; }
-    if (activeIdx === -1)     { return { op: 0.5,  bold: false }; }
-    var dist = activeIdx - i;
-    if (dist === 0) { return { op: 1.0,  bold: true  }; }
-    if (dist === 1) { return { op: 0.6,  bold: false }; }
-    if (dist === 2) { return { op: 0.35, bold: false }; }
-    return            { op: 0.15, bold: false };
+    return result;
+  }
+
+  function lockWidth() {
+    var probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;visibility:hidden;top:-9999px;left:-9999px;display:flex;flex-direction:column;';
+    document.body.appendChild(probe);
+
+    var maxW = 0, maxRowH = 0;
+    var i, row, sentEl;
+    for (i = 0; i < SENTENCES.length; i++) {
+      row    = SENTENCES[i].template.cloneNode(true);
+      sentEl = row.querySelector('[' + ATTR + '="' + A_SENTENCE + '"]');
+      if (sentEl) { sentEl.textContent = SENTENCES[i].text; }
+      row.style.whiteSpace = 'nowrap';
+      probe.appendChild(row);
+      if (row.offsetWidth  > maxW)    { maxW    = row.offsetWidth; }
+      if (row.offsetHeight > maxRowH) { maxRowH = row.offsetHeight; }
+    }
+
+    document.body.removeChild(probe);
+    if (maxW > 0) {
+      container.style.minWidth = (maxW + WIDTH_PAD) + 'px';
+      container.style.width    = (maxW + WIDTH_PAD) + 'px';
+    }
+
+    // Remember the tallest fully-typed row. Every row gets this as a
+    // min-height so an empty/typing row occupies the same space as a
+    // full one — no per-row resize, so siblings never shift.
+    rowHeightPx = maxRowH;
   }
 
   function refreshStyles() {
-    var i, s;
-    for (i = 0; i < lines.length; i++) {
-      s = styleFor(i);
-      lines[i].el.style.opacity = s.op;
-      lines[i].sentenceEl.style.fontWeight = s.bold ? '600' : '400';
+    var total = lines.length;
+    var i, fromBottom, op;
+    for (i = 0; i < total; i++) {
+      if (lines[i].placeholder) { continue; }
+      fromBottom = total - 1 - i;
+      op = OPACITIES[fromBottom] !== undefined ? OPACITIES[fromBottom] : 0.4;
+      lines[i].el.style.opacity = op;
     }
   }
 
-  function removeAfterFade(el) {
-    el.style.opacity   = '0';
-    el.style.transform = 'translateY(-10px)';
-    setTimeout(function () {
-      if (el.parentNode) { el.parentNode.removeChild(el); }
-    }, 400);
+  function addPlaceholder() {
+    var track  = SENTENCES[0].template.cloneNode(true);
+    var sentEl = track.querySelector('[' + ATTR + '="' + A_SENTENCE + '"]');
+    track.style.opacity = '0';
+    if (rowHeightPx > 0) { track.style.minHeight = rowHeightPx + 'px'; }
+    track.setAttribute('aria-hidden', 'true');
+    container.appendChild(track);
+    lines.push({ el: track, sentenceEl: sentEl, placeholder: true });
+  }
+
+  function evictOldest() {
+    var old = lines.shift();
+    if (old.el.parentNode) { old.el.parentNode.removeChild(old.el); }
+    snapshot('evict     ');
   }
 
   function addLine(sentence) {
-    if (lines.length >= MAX_LINES) {
-      removeAfterFade(lines.shift().el);
+    if (lines.length >= MAX_LINES) { evictOldest(); }
+
+    var track    = sentence.template.cloneNode(true);
+    var sentEl   = track.querySelector('[' + ATTR + '="' + A_SENTENCE + '"]');
+    var badge    = track.querySelector('[' + ATTR + '="' + A_NAME + '"]');
+    var nameWrap = badge ? badge.parentNode : null;
+
+    if (sentEl) {
+      sentEl.textContent = '';
     }
 
-    var track = document.createElement('div');
-    track.className        = 'hero_record_track';
+    if (rowHeightPx > 0) { track.style.minHeight = rowHeightPx + 'px'; }
     track.style.opacity    = '0';
     track.style.transform  = 'translateY(10px)';
-    track.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+    track.style.transition = 'opacity 0.3s ' + EASE + ', transform 0.3s ' + EASE;
+    track.style.willChange = 'opacity, transform';
 
-    var nameWrap = document.createElement('div');
-    nameWrap.className        = 'hero_record_name_wrap';
-    nameWrap.style.opacity    = '0';
-    nameWrap.style.transform  = 'translateX(-8px)';
-    nameWrap.style.transition = 'opacity 0.28s ease, transform 0.28s ease';
+    if (nameWrap) {
+      nameWrap.style.opacity    = '0';
+      nameWrap.style.transform  = 'translateX(-6px)';
+      nameWrap.style.transition = 'opacity 0.3s ' + EASE + ' 0.08s, transform 0.3s ' + EASE + ' 0.08s';
+    }
 
-    var badge = document.createElement('div');
-    badge.className             = 'hero_record_name';
-    badge.textContent           = sentence.speaker;
-    badge.style.backgroundColor = sentence.color;
-    nameWrap.appendChild(badge);
-
-    var sentEl = document.createElement('div');
-    sentEl.className        = 'hero_record_scentence';
-    sentEl.style.transition = 'font-weight 0.3s ease';
-
-    track.appendChild(nameWrap);
-    track.appendChild(sentEl);
     container.appendChild(track);
-
-    lines.push({ el: track, sentenceEl: sentEl, nameWrap: nameWrap, completed: false });
+    lines.push({ el: track, sentenceEl: sentEl, nameWrap: nameWrap, placeholder: false });
+    snapshot('addLine   ');
 
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
         refreshStyles();
         track.style.transform = 'translateY(0)';
         setTimeout(function () {
-          nameWrap.style.opacity   = '1';
-          nameWrap.style.transform = 'translateX(0)';
-        }, 80);
+          if (nameWrap) {
+            nameWrap.style.opacity   = '1';
+            nameWrap.style.transform = 'translateX(0)';
+          }
+        }, 60);
       });
     });
   }
 
   function typeNext() {
     var current = lines[lines.length - 1];
-    if (!current) { return; }
+    if (!current || current.placeholder || !current.sentenceEl) { return; }
     if (wordIdx < words.length) {
       current.sentenceEl.textContent = words.slice(0, wordIdx + 1).join(' ');
       wordIdx = wordIdx + 1;
-      setTimeout(typeNext, WORD_MS);
+      setTimeout(typeNext, WORD_MS + Math.floor(Math.random() * 80) - 40);
     } else {
-      current.completed = true;
-      refreshStyles();
+      snapshot('typeDone  ');
       sentenceIdx = (sentenceIdx + 1) % SENTENCES.length;
       setTimeout(startSentence, PAUSE_MS);
     }
   }
 
   function startSentence() {
+    snapshot('startSent ');
     var s   = SENTENCES[sentenceIdx];
     words   = s.text.split(' ');
     wordIdx = 0;
     addLine(s);
-    setTimeout(typeNext, 400);
+    setTimeout(typeNext, 420);
   }
 
+  // ── Checkbox ──────────────────────────────────────────────────
+
+  function initCheckbox() {
+    var checkEl = document.querySelector('[data-anim-check]');
+    if (!checkEl) { return; }
+
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 12 10');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', '#000');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
+
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M1.5 5L4.5 8L10.5 1.5');
+    path.setAttribute('pathLength', '1');
+    path.style.cssText = 'stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 0.35s ' + EASE + ';';
+
+    svg.appendChild(path);
+    checkEl.style.position = 'relative';
+    checkEl.appendChild(svg);
+
+    checkEl.addEventListener('click', function (e) {
+      e.preventDefault();
+      var on = checkEl.getAttribute('data-checked') === 'true';
+      checkEl.setAttribute('data-checked', on ? 'false' : 'true');
+      path.style.strokeDashoffset = on ? '1' : '0';
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+
   function init() {
-    container = document.querySelector('.hero_record_wrap');
+    container = document.querySelector('[' + ATTR + '="' + A_WRAP + '"]');
     if (!container) {
-      console.warn('[transcript] .hero_record_wrap not found');
+      console.warn('[transcript] no element with data-transcript="wrap" found');
       return;
     }
+
+    SENTENCES = readSentencesFromDOM();
+    if (!SENTENCES.length) {
+      console.warn('[transcript] no data-transcript="track" rows found inside wrap');
+      return;
+    }
+
+    container.style.display        = 'flex';
+    container.style.flexDirection  = 'column';
+    container.style.justifyContent = 'flex-end';
+    container.style.overflow       = 'hidden';
+
+    // Gradient mask — fades content at top and bottom edges
+    var edge = 'rgba(0,0,0,' + FADE_ALPHA + ')';
+    var mask = 'linear-gradient(to bottom, ' + edge + ' 0%, black ' + FADE_STOP + ', black ' + (100 - parseInt(FADE_STOP)) + '%, ' + edge + ' 100%)';
+    container.style.webkitMaskImage = mask;
+    container.style.maskImage       = mask;
+
     container.textContent = '';
+
+    lockWidth();
+
+    var p;
+    for (p = 0; p < MAX_LINES - 1; p++) { addPlaceholder(); }
+
+    // Measure a full row's height from the LIVE placeholders (they carry
+    // real text and inherit the hero's true typography — unlike an
+    // off-DOM probe). Lock every row to it so empty/typing rows never
+    // resize and shift the heading/checkbox.
+    for (p = 0; p < lines.length; p++) {
+      if (lines[p].el.offsetHeight > rowHeightPx) { rowHeightPx = lines[p].el.offsetHeight; }
+    }
+    if (rowHeightPx > 0) {
+      for (p = 0; p < lines.length; p++) { lines[p].el.style.minHeight = rowHeightPx + 'px'; }
+
+      // Pin the wrap to exactly MAX_LINES rows. addLine() evicts before it
+      // appends, so the row count dips to MAX_LINES-1 for a beat — with an
+      // auto-height flex-end box that shrink/grow shoves the siblings. A
+      // fixed height + overflow:hidden makes the transient invisible.
+      var lockH = rowHeightPx * MAX_LINES;
+      container.style.height     = lockH + 'px';
+      container.style.minHeight  = lockH + 'px';
+      container.style.maxHeight  = lockH + 'px';
+      container.style.flexShrink = '0';
+      container.style.flexGrow   = '0';
+    }
+
+    dlog('locked rowHeightPx =', rowHeightPx, '| MAX_LINES =', MAX_LINES);
+    snapshot('afterInit ');
+
+    if (DEBUG && typeof ResizeObserver !== 'undefined') {
+      var ro = new ResizeObserver(function (entries) {
+        entries.forEach(function (e) {
+          dlog('⚠ RESIZE', e.target === container ? 'wrap' : 'parent',
+            '→ h=', Math.round(e.contentRect.height));
+        });
+      });
+      ro.observe(container);
+      if (container.parentNode) { ro.observe(container.parentNode); }
+    }
+
     startSentence();
+
+    initCheckbox();
   }
 
   if (document.readyState === 'loading') {
