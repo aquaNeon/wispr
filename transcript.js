@@ -1,20 +1,12 @@
 (function () {
 
-  var DEBUG      = false;   // set true to log row/height diagnostics
-
-  // ── tune these ────────────────────────────────────────────────
   var MAX_LINES  = 5;
   var WORD_MS    = 140;
   var PAUSE_MS   = 900;
-  // Gradient mask — how far in from top/bottom (0–50%) the fade runs
   var FADE_STOP  = '42%';
-  // Minimum opacity at the very edge (0 = invisible, 1 = no fade)
   var FADE_ALPHA = 0.25;
-  // Per-row opacity — center (fromBottom 2) stays 1.0, others dimmed
   var OPACITIES  = [0.8, 0.92, 1.0, 0.5, 0.2];
-  // Extra px added to measured max sentence width
   var WIDTH_PAD  = 120;
-  // ─────────────────────────────────────────────────────────────
 
   var ATTR       = 'data-transcript';
   var A_WRAP     = 'wrap';
@@ -31,25 +23,6 @@
   var sentenceIdx = 0;
   var wordIdx     = 0;
   var words       = [];
-
-  function dlog() {
-    if (!DEBUG) { return; }
-    var args = ['[transcript]'].concat(Array.prototype.slice.call(arguments));
-    console.log.apply(console, args);
-  }
-
-  function snapshot(tag) {
-    if (!DEBUG || !container) { return; }
-    var rows = lines.map(function (l, i) {
-      var t = l.el;
-      return i + ':' + Math.round(t.offsetHeight) + (l.placeholder ? 'p' : '');
-    });
-    dlog(tag,
-      '| wrap.offsetH=', Math.round(container.offsetHeight),
-      '| wrap.scrollH=', Math.round(container.scrollHeight),
-      '| rows[', rows.join(' '), ']',
-      '| n=', lines.length);
-  }
 
   function readSentencesFromDOM() {
     var tracks = container.querySelectorAll('[' + ATTR + '="' + A_TRACK + '"]');
@@ -100,9 +73,6 @@
       container.style.width    = (maxW + WIDTH_PAD) + 'px';
     }
 
-    // Remember the tallest fully-typed row. Every row gets this as a
-    // min-height so an empty/typing row occupies the same space as a
-    // full one — no per-row resize, so siblings never shift.
     rowHeightPx = maxRowH;
   }
 
@@ -130,7 +100,6 @@
   function evictOldest() {
     var old = lines.shift();
     if (old.el.parentNode) { old.el.parentNode.removeChild(old.el); }
-    snapshot('evict     ');
   }
 
   function addLine(sentence) {
@@ -159,7 +128,6 @@
 
     container.appendChild(track);
     lines.push({ el: track, sentenceEl: sentEl, nameWrap: nameWrap, placeholder: false });
-    snapshot('addLine   ');
 
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -183,22 +151,18 @@
       wordIdx = wordIdx + 1;
       setTimeout(typeNext, WORD_MS + Math.floor(Math.random() * 80) - 40);
     } else {
-      snapshot('typeDone  ');
       sentenceIdx = (sentenceIdx + 1) % SENTENCES.length;
       setTimeout(startSentence, PAUSE_MS);
     }
   }
 
   function startSentence() {
-    snapshot('startSent ');
     var s   = SENTENCES[sentenceIdx];
     words   = s.text.split(' ');
     wordIdx = 0;
     addLine(s);
     setTimeout(typeNext, 420);
   }
-
-  // ── Checkbox ──────────────────────────────────────────────────
 
   function initCheckbox() {
     var checkEl = document.querySelector('[data-anim-check]');
@@ -230,8 +194,6 @@
     });
   }
 
-  // ─────────────────────────────────────────────────────────────
-
   function init() {
     container = document.querySelector('[' + ATTR + '="' + A_WRAP + '"]');
     if (!container) {
@@ -250,7 +212,6 @@
     container.style.justifyContent = 'flex-end';
     container.style.overflow       = 'hidden';
 
-    // Gradient mask — fades content at top and bottom edges
     var edge = 'rgba(0,0,0,' + FADE_ALPHA + ')';
     var mask = 'linear-gradient(to bottom, ' + edge + ' 0%, black ' + FADE_STOP + ', black ' + (100 - parseInt(FADE_STOP)) + '%, ' + edge + ' 100%)';
     container.style.webkitMaskImage = mask;
@@ -263,40 +224,18 @@
     var p;
     for (p = 0; p < MAX_LINES - 1; p++) { addPlaceholder(); }
 
-    // Measure a full row's height from the LIVE placeholders (they carry
-    // real text and inherit the hero's true typography — unlike an
-    // off-DOM probe). Lock every row to it so empty/typing rows never
-    // resize and shift the heading/checkbox.
     for (p = 0; p < lines.length; p++) {
       if (lines[p].el.offsetHeight > rowHeightPx) { rowHeightPx = lines[p].el.offsetHeight; }
     }
     if (rowHeightPx > 0) {
       for (p = 0; p < lines.length; p++) { lines[p].el.style.minHeight = rowHeightPx + 'px'; }
 
-      // Pin the wrap to exactly MAX_LINES rows. addLine() evicts before it
-      // appends, so the row count dips to MAX_LINES-1 for a beat — with an
-      // auto-height flex-end box that shrink/grow shoves the siblings. A
-      // fixed height + overflow:hidden makes the transient invisible.
       var lockH = rowHeightPx * MAX_LINES;
       container.style.height     = lockH + 'px';
       container.style.minHeight  = lockH + 'px';
       container.style.maxHeight  = lockH + 'px';
       container.style.flexShrink = '0';
       container.style.flexGrow   = '0';
-    }
-
-    dlog('locked rowHeightPx =', rowHeightPx, '| MAX_LINES =', MAX_LINES);
-    snapshot('afterInit ');
-
-    if (DEBUG && typeof ResizeObserver !== 'undefined') {
-      var ro = new ResizeObserver(function (entries) {
-        entries.forEach(function (e) {
-          dlog('⚠ RESIZE', e.target === container ? 'wrap' : 'parent',
-            '→ h=', Math.round(e.contentRect.height));
-        });
-      });
-      ro.observe(container);
-      if (container.parentNode) { ro.observe(container.parentNode); }
     }
 
     startSentence();
