@@ -190,7 +190,9 @@
     var popPlayed = popTls.map(function () { return false; });
     var gatherOn  = false;
 
-    function thresholdFor(step) { return (step + 1) / stepCount; }
+    // first batch pops the instant the section pins (drops the empty lead
+    // step); spacing between later pops is unchanged, so the feel is identical
+    function thresholdFor(step) { return step / stepCount; }
     var popThresh    = popTls.map(function (_, i) { return thresholdFor(i); });
     var gatherThresh = thresholdFor(batchCount);
 

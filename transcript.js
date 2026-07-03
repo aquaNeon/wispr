@@ -1,8 +1,7 @@
 (function () {
 
   var MAX_LINES  = 5;
-  var WORD_MS    = 140;
-  var PAUSE_MS   = 900;
+  var LINE_MS    = 1100;  // time between lines (whole line in at once, no typing)
   var FADE_STOP  = '42%';
   var FADE_ALPHA = 0.25;
   var OPACITIES  = [0.8, 0.92, 1.0, 0.5, 0.2];
@@ -111,7 +110,7 @@
     var nameWrap = badge ? badge.parentNode : null;
 
     if (sentEl) {
-      sentEl.textContent = '';
+      sentEl.textContent = sentence.text;   // full line at once — no per-word typing
     }
 
     if (rowHeightPx > 0) { track.style.minHeight = rowHeightPx + 'px'; }
@@ -143,25 +142,10 @@
     });
   }
 
-  function typeNext() {
-    var current = lines[lines.length - 1];
-    if (!current || current.placeholder || !current.sentenceEl) { return; }
-    if (wordIdx < words.length) {
-      current.sentenceEl.textContent = words.slice(0, wordIdx + 1).join(' ');
-      wordIdx = wordIdx + 1;
-      setTimeout(typeNext, WORD_MS + Math.floor(Math.random() * 80) - 40);
-    } else {
-      sentenceIdx = (sentenceIdx + 1) % SENTENCES.length;
-      setTimeout(startSentence, PAUSE_MS);
-    }
-  }
-
   function startSentence() {
-    var s   = SENTENCES[sentenceIdx];
-    words   = s.text.split(' ');
-    wordIdx = 0;
-    addLine(s);
-    setTimeout(typeNext, 420);
+    addLine(SENTENCES[sentenceIdx]);
+    sentenceIdx = (sentenceIdx + 1) % SENTENCES.length;
+    setTimeout(startSentence, LINE_MS);
   }
 
   function initCheckbox() {
