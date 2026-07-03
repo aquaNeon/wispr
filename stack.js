@@ -5,8 +5,9 @@
   var SNAP_DUR      = 0.3;
 
   var POP_BATCH     = 2;
-  var POP_STAGGER   = 0.08;
-  var POP_DUR       = 0.55;
+  var POP_STAGGER   = 0.05;
+  var POP_DUR       = 0.42;
+  var POP_BUNCH     = 0.55;   // <1 pulls pops earlier & tighter (last batch sooner); 1 = original spacing
   var POP_SCALE_X   = 0.35;
   var POP_SCALE_Y   = 0.85;
   var POP_Y         = 18;
@@ -193,7 +194,8 @@
     // first batch pops the instant the section pins (drops the empty lead
     // step); spacing between later pops is unchanged, so the feel is identical
     function thresholdFor(step) { return step / stepCount; }
-    var popThresh    = popTls.map(function (_, i) { return thresholdFor(i); });
+    // pops fire earlier & closer together; gather/hold spacing unchanged
+    var popThresh    = popTls.map(function (_, i) { return thresholdFor(i) * POP_BUNCH; });
     var gatherThresh = thresholdFor(batchCount);
 
     function update(p) {
