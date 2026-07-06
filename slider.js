@@ -18,10 +18,6 @@
   var WAVE_ROT   = 5;        // deg rotation amplitude
   var WAVE_PHASE = 0;        // phase offset (radians)
 
-  var SMOOTH   = 0.09;       // 0..1 ease toward the scroll target each frame; lower = more inertia/glide
-  var VEL_SKEW = 0.05;       // deg of skew per px/frame of velocity (cards lean into motion); 0 = off
-  var VEL_MAX  = 10;         // clamp for the velocity skew (deg)
-
   // fallback card size, applied ONLY to cards that are still unstyled (~0 size) so
   // the slider is testable before the Webflow card styles land.
   var CARD_W = 360;
@@ -56,7 +52,6 @@
 
     var startX = 0, endX = 0, travel = 0, trackBaseLeft = 0;
     var base = cards.map(function () { return { left: 0, w: 0 }; });
-    var targetP = 0, currentP = 0, prevX = 0;
 
     function measure() {
       var vw = window.innerWidth;
@@ -75,13 +70,11 @@
     // per-frame: slide the track and let each card ride the wave by its viewport x
     function render(p) {
       var x = startX + (endX - startX) * p;
-      var vel = x - prevX; prevX = x;                                // px/frame -> lean the cards
-      var skew = Math.max(-VEL_MAX, Math.min(VEL_MAX, vel * VEL_SKEW));
       gsap.set(track, { x: x });
       for (var i = 0; i < cards.length; i++) {
         var cx = trackBaseLeft + x + base[i].left + base[i].w / 2;   // card centre in the viewport
         var phase = (cx / WAVE_LEN) * Math.PI * 2 + WAVE_PHASE;
-        gsap.set(cards[i], { y: WAVE_AMP * Math.sin(phase), rotation: WAVE_ROT * Math.cos(phase), skewX: skew });
+        gsap.set(cards[i], { y: WAVE_AMP * Math.sin(phase), rotation: WAVE_ROT * Math.cos(phase) });
       }
     }
 
@@ -89,21 +82,8 @@
       trigger: wrap, start: 'top top',
       end: function () { return '+=' + (travel * SPEED); },
       pin: true, invalidateOnRefresh: true,
-      onRefreshInit: function () {
-        measure();
-        currentP = targetP = st ? st.progress : 0;                   // no lerp jump on refresh
-        render(currentP);
-      },
-      onUpdate: function (self) { targetP = self.progress; }         // scroll sets the target; ticker eases to it
-    });
-
-    // ease the actual position toward the scroll target every frame (inertia/glide)
-    gsap.ticker.add(function () {
-      var diff = targetP - currentP;
-      if (!st.isActive && Math.abs(diff) < 0.0001) { return; }       // idle when off-screen & settled
-      var dt = gsap.ticker.deltaRatio();                             // ~1 at 60fps -> frame-rate independent
-      currentP += diff * (1 - Math.pow(1 - SMOOTH, dt));
-      render(currentP);
+      onRefreshInit: function () { measure(); render(st ? st.progress : 0); },
+      onUpdate: function (self) { render(self.progress); }
     });
 
     function relayout() { ScrollTrigger.refresh(); }
