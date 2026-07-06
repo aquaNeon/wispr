@@ -57,11 +57,16 @@
   /* landing card */
   [data-stack="card"] {
     position: absolute;
-    left: 50%;
+    left: 0;
+    right: 0;
     bottom: 6vh;
-    transform: translateX(-50%);
-    width: 340px;
+    margin: 0 auto;
+    width: 380px;
     padding: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
     background: #16302a;
     border: 1px solid rgba(255,255,255,.15);
     border-radius: 12px;

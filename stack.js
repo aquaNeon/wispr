@@ -7,10 +7,9 @@
   var POP_BATCH     = 2;
   var POP_STAGGER   = 0.05;
   var POP_DUR       = 0.42;
-  var POP_BUNCH     = 0.55;   // <1 pulls pops earlier & tighter (last batch sooner); 1 = original spacing
+  var POP_BUNCH     = 0.55;   // <1 pulls pops earlier & tighter; 1 = original spacing
   var POP_SCALE_X   = 0.35;
   var POP_SCALE_Y   = 0.85;
-  var POP_Y         = 18;
   var POP_EASE      = 'back.out(1.6)';
 
   var CHECK_DELAY   = 0.18;
@@ -21,37 +20,41 @@
   var GATHER_DUR     = 0.7;
   var GATHER_EASE    = 'power3.inOut';
   var CARD_FADE      = 0.4;
-  var LANDED_BG      = '';
-  var LANDED_BG_VAR  = '--green';
+  var LANDED_BG      = '';        // explicit row colour on landing; '' = read the CSS var below
+  var LANDED_BG_VAR  = '--green'; // row bg once gathered, so rows read distinct from the card face
 
-  var CARD_ITEM_W   = 352;
-  var MATCH_HEIGHT  = true;
-  var ROW_H         = 0;
-  var ROW_GAP       = 8;
-  var HEAD_GAP      = 18;
-  var STACK_TOP     = 0;
-  var CARD_GROW     = 0.92;
+  var HOLD_STEPS    = 0;      // extra held steps after gather before travel begins
 
-  var HOLD_STEPS    = 2;
+  // after assembly the card rises from the bottom to viewport centre, then holds
+  // there (pinned) for HOLD_VH — room for future inner-card animations.
+  var CARD_TARGET   = 0.5;    // viewport fraction the card centres on (0.5 = dead centre)
+  var TRAVEL_VH     = 0.8;    // scroll (viewport heights) for the card to reach centre
+  var HOLD_VH       = 3;      // long hold at centre
 
-  var CARD_FOLLOW   = false;  // legacy: pin card independently & slide to center (split tasks from card — unused)
-  var FOLLOW_VH     = 1.3;
-  var CARD_TRAVEL   = false;
-  var CARD_TARGET   = 0.5;
+  // during the hold: the green panel (bg + H2) scrolls up & out while the card
+  // stays locked at centre (equal-and-opposite y), revealing what's behind.
+  var GREEN_LEAVE    = true;
+  var GREEN_LEAVE_VH = 1.4;   // how far (viewport heights) the green panel travels up
 
-  // after assembly: keep scrolling normally (card + tasks rise together), then
-  // once the card hits viewport center, pin the whole cluster there for STICKY_VH.
-  var STICKY_CENTER = false;  // OFF: after assembly just scroll normally, no pin
-  var STICKY_VH     = 1;      // how long (in viewport heights) the card stays stuck at center
+  // split colour reveal: during the hold a light layer (light bg + a light-themed
+  // clone of the card) rises from the bottom, clipped by a horizontal line, so the
+  // card/bg split dark-above / light-below exactly at that line (see figma).
+  var LIGHT_REVEAL   = true;
+  var LIGHT_BG       = '';            // '' -> read the CSS var below
+  var LIGHT_BG_VAR   = '--light-main';
+  var LIGHT_CARD_BG  = '#E4E4D0';     // card face in the light theme
+  var LIGHT_ROW_BG   = '#FFFDF9';     // task rows in the light theme
+  var LIGHT_TEXT     = '#1A1A1A';     // text + check outline in the light theme
+  var REVEAL_VH      = 1.2;           // scroll (viewport heights) the light takes to rise through
 
   var ATTR  = 'data-stack';
   var ORDER = 'data-stack-order';
 
   function sel(root, name) { return root.querySelectorAll('[' + ATTR + '="' + name + '"]'); }
   function one(root, name) { return root.querySelector('[' + ATTR + '="' + name + '"]'); }
+  function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
 
   function init() {
-    console.log('[stack] build: no-snap v5 | SNAP=' + SNAP);
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
       console.warn('[stack] GSAP + ScrollTrigger required before this script.');
       return;
@@ -77,94 +80,92 @@
     if (window.getComputedStyle(section).position === 'static') {
       section.style.position = 'relative';
     }
-    var sr0   = section.getBoundingClientRect();
-    var rect0 = items.map(function (it) { return it.getBoundingClientRect(); });
-    items.forEach(function (it, i) {
-      var pos = window.getComputedStyle(it).position;
-      if (pos === 'static' || pos === 'relative') {
-        it.style.position = 'absolute';
-        it.style.margin   = '0';
-        it.style.left     = (rect0[i].left - sr0.left) + 'px';
-        it.style.top      = (rect0[i].top  - sr0.top)  + 'px';
-      }
+
+    // scatter context = the items' original parent (.meeting_items in prod, the
+    // section in the test harness). Its box is the frame the scatter % live in.
+    var scatterCtx = items[0].parentNode;
+
+    // --- FLIP capture: record each item's scattered spot as a fraction of the
+    //     scatter frame, BEFORE we touch the DOM ---
+    var mi0 = scatterCtx.getBoundingClientRect();
+    var frac = items.map(function (it) {
+      var r = it.getBoundingClientRect();
+      return {
+        fx: mi0.width  ? (r.left - mi0.left) / mi0.width  : 0,
+        fy: mi0.height ? (r.top  - mi0.top)  / mi0.height : 0
+      };
     });
 
-    var checks = items.map(function (it) { return one(it, 'check'); });
-    items.forEach(function (it, i) {
-      gsap.set(it, { opacity: 0, scaleX: POP_SCALE_X, scaleY: POP_SCALE_Y, y: POP_Y, x: 0, zIndex: i + 1, transformOrigin: '50% 50%' });
-      it.style.willChange = 'transform, opacity, width, height';
-      it.style.whiteSpace = 'nowrap';
+    // pre-hide so reparenting into flow doesn't flash a full-opacity stack
+    gsap.set(items, { opacity: 0 });
+
+    // --- reparent tasks into the card as real flex children; neutralise the
+    //     Webflow absolute positioning so the card's flex column lays them out ---
+    items.forEach(function (it) {
+      card.appendChild(it);
+      it.style.position   = 'relative';   // relative (not static) so z-index still applies
+      it.style.inset      = 'auto';       // overrides the .is-N inset scatter rules
+      it.style.margin     = '0';
+      it.style.width      = '';           // let the .meeting_item 352px class width stand
       it.style.boxSizing  = 'border-box';
-      if (checks[i]) { gsap.set(checks[i], { scale: 0, opacity: 0, transformOrigin: '50% 50%' }); }
+      it.style.whiteSpace = 'nowrap';     // single-line rows -> stable height
+      it.style.willChange = 'transform, opacity';
     });
-    gsap.set(card, { autoAlpha: 0, zIndex: 0, scale: CARD_GROW, transformOrigin: '50% 50%' });
-    card.style.boxSizing = 'border-box';
 
-    var geo = items.map(function () { return { dx: 0, dy: 0, w: 0, h: 0 }; });
+    var checks    = items.map(function (it) { return it.querySelector('[' + ATTR + '="check"], .meeting_check'); });
+    var itemTexts = items.map(function (it) { return it.querySelector('.meeting_item_text') || it; });
 
-    function measure() {
-      var savedT = items.map(function (it) { return it.style.transform; });
-      var savedW = items.map(function (it) { return it.style.width; });
-      var savedH = items.map(function (it) { return it.style.height; });
-      items.forEach(function (it) { it.style.transform = 'none'; it.style.width = ''; it.style.height = ''; });
+    // capture the card's painted look, then make the face transparent so the
+    // "card" visually arrives during gather (never fade card OPACITY — that would
+    // hide the popping children; never SCALE the card — that would corrupt the
+    // scatter deltas measured at scale 1).
+    var ccs        = window.getComputedStyle(card);
+    var origBg     = ccs.backgroundColor;
+    var origBorder = ccs.borderColor;
+    card.style.boxSizing  = 'border-box';
+    card.style.willChange = 'transform';
 
-      var nats = items.map(function (it) { return it.getBoundingClientRect(); });
-      var uniformW = CARD_ITEM_W;
-      var rowH     = ROW_H;
-      if (uniformW <= 0) { uniformW = 0; nats.forEach(function (r) { if (r.width  > uniformW) { uniformW = r.width; } }); }
-      if (rowH     <= 0) { rowH     = 0; nats.forEach(function (r) { if (r.height > rowH)     { rowH     = r.height; } }); }
-      if (!MATCH_HEIGHT) { rowH = 0; }
+    var geo = items.map(function () { return { dx: 0, dy: 0 }; });
 
-      var cs    = window.getComputedStyle(card);
-      var padL  = parseFloat(cs.paddingLeft)   || 0;
-      var padT  = parseFloat(cs.paddingTop)    || 0;
-      var padR  = parseFloat(cs.paddingRight)  || 0;
-      var padB  = parseFloat(cs.paddingBottom) || 0;
-      var headH = (head ? head.offsetHeight + HEAD_GAP : 0) + STACK_TOP;
-
-      var slotH = rowH > 0 ? rowH : (function () {
-        var m = 0; nats.forEach(function (r) { if (r.height > m) { m = r.height; } }); return m;
-      }());
-
-      var rowsBlock = items.length * (slotH + ROW_GAP) - ROW_GAP;
-      card.style.width  = (uniformW + padL + padR) + 'px';
-      card.style.height = (padT + headH + rowsBlock + padB) + 'px';
-
-      var savedCT = card.style.transform;
-      card.style.transform = 'none';
-      var cRect = card.getBoundingClientRect();
-      card.style.transform = savedCT || '';
-
-      var left = cRect.left + padL;
-      var top  = cRect.top + padT + headH;
-
-      items.forEach(function (it) { it.style.width = uniformW + 'px'; if (rowH > 0) { it.style.height = rowH + 'px'; } });
-      var fin = items.map(function (it) { return it.getBoundingClientRect(); });
-
+    // read natural (flowed) rects with all transforms cleared, then invert against
+    // the scatter fraction to get each item's scatter delta.
+    function measureGeo() {
+      gsap.set(items, { x: 0, y: 0, scaleX: 1, scaleY: 1 });
+      gsap.set(card,  { y: 0 });
+      var mi  = scatterCtx.getBoundingClientRect();
+      var nat = items.map(function (it) { return it.getBoundingClientRect(); });
       for (var s = 0; s < items.length; s++) {
-        geo[s] = {
-          dx : left - fin[s].left,
-          dy : (top + s * (slotH + ROW_GAP)) - fin[s].top,
-          w  : uniformW,
-          h  : rowH > 0 ? rowH : fin[s].height
-        };
+        geo[s].dx = (mi.left + frac[s].fx * mi.width)  - nat[s].left;
+        geo[s].dy = (mi.top  + frac[s].fy * mi.height) - nat[s].top;
       }
-
-      console.log('[stack] geo', {
-        cardLeft: Math.round(cRect.left), cardTop: Math.round(cRect.top),
-        cardW: uniformW + padL + padR, cardH: card.style.height,
-        padL: padL, padR: padR, padT: padT,
-        itemLeft: Math.round(left), itemW: uniformW, rowTop: Math.round(top),
-        slotH: slotH, headH: headH
-      });
-
-      items.forEach(function (it, i) {
-        it.style.transform = savedT[i] || '';
-        it.style.width  = savedW[i] || '';
-        it.style.height = savedH[i] || '';
-      });
     }
 
+    // how far the card must rise from its assembled (bottom) spot to sit centred.
+    // section-relative so it survives refresh regardless of scroll position.
+    var cardShiftY = 0;
+    function computeCardShift() {
+      var prevY = gsap.getProperty(card, 'y');
+      gsap.set(card, { y: 0 });
+      var cr = card.getBoundingClientRect();
+      var sr = section.getBoundingClientRect();
+      cardShiftY = window.innerHeight * CARD_TARGET - ((cr.top - sr.top) + cr.height / 2);
+      gsap.set(card, { y: prevY });
+    }
+
+    // initial scattered + hidden state
+    measureGeo();
+    items.forEach(function (it, i) {
+      gsap.set(it, {
+        x: geo[i].dx, y: geo[i].dy,
+        scaleX: POP_SCALE_X, scaleY: POP_SCALE_Y,
+        opacity: 0, transformOrigin: '50% 50%', zIndex: i + 1
+      });
+      if (checks[i]) { gsap.set(checks[i], { scale: 0, opacity: 0, transformOrigin: '50% 50%' }); }
+    });
+    gsap.set(card, { opacity: 1, y: 0, backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)' });
+    if (head) { gsap.set(head, { opacity: 0 }); }
+
+    // --- pop timelines (batches): reveal only, in place at the scatter spot ---
     var batchCount = Math.ceil(items.length / POP_BATCH);
     var popTls = [];
     var b;
@@ -175,7 +176,7 @@
         var batchChecks = memberIdx.map(function (i) { return checks[i]; }).filter(Boolean);
 
         var tl = gsap.timeline({ paused: true });
-        tl.to(members, { opacity: 1, scaleX: 1, scaleY: 1, y: 0, duration: POP_DUR, ease: POP_EASE, stagger: POP_STAGGER }, 0);
+        tl.to(members, { opacity: 1, scaleX: 1, scaleY: 1, duration: POP_DUR, ease: POP_EASE, stagger: POP_STAGGER }, 0);
         if (batchChecks.length) {
           tl.to(batchChecks, { scale: 1, opacity: 1, duration: CHECK_DUR, ease: CHECK_EASE, stagger: POP_STAGGER }, CHECK_DELAY);
         }
@@ -187,17 +188,14 @@
       window.getComputedStyle(card).getPropertyValue(LANDED_BG_VAR).trim() ||
       window.getComputedStyle(document.documentElement).getPropertyValue(LANDED_BG_VAR).trim();
 
+    // --- gather timeline: card face fades in, items fall into their real slots ---
     var gatherTl = gsap.timeline({ paused: true });
-    gatherTl.to(card, { autoAlpha: 1, scale: 1, duration: CARD_FADE, ease: 'power2.out' }, 0);
+    gatherTl.to(card, { backgroundColor: origBg, borderColor: origBorder, duration: CARD_FADE, ease: 'power2.out' }, 0);
+    if (head) { gatherTl.to(head, { opacity: 1, duration: CARD_FADE, ease: 'power2.out' }, 0); }
     items.forEach(function (it, slot) {
       var tween = {
-        x        : function () { return geo[slot].dx; },
-        y        : function () { return geo[slot].dy; },
-        width    : function () { return geo[slot].w; },
-        height   : function () { return geo[slot].h; },
-        duration : GATHER_DUR,
-        ease     : GATHER_EASE,
-        onStart  : function () { it.style.zIndex = 100 + slot; }
+        x: 0, y: 0, duration: GATHER_DUR, ease: GATHER_EASE,
+        onStart: function () { it.style.zIndex = 100 + slot; }
       };
       if (landedBg) { tween.backgroundColor = landedBg; }
       gatherTl.to(it, tween, CARD_FADE * 0.5 + slot * GATHER_STAGGER);
@@ -207,13 +205,11 @@
     var popPlayed = popTls.map(function () { return false; });
     var gatherOn  = false;
 
-    // first batch pops the instant the section pins (drops the empty lead
-    // step); spacing between later pops is unchanged, so the feel is identical
     function thresholdFor(step) { return step / stepCount; }
-    // pops fire earlier & closer together; gather/hold spacing unchanged
     var popThresh    = popTls.map(function (_, i) { return thresholdFor(i) * POP_BUNCH; });
     var gatherThresh = thresholdFor(batchCount);
 
+    // drive pop batches + gather off assembly progress (0..1)
     function update(p) {
       var i;
       for (i = 0; i < popTls.length; i++) {
@@ -224,107 +220,157 @@
       else if (p < gatherThresh && gatherOn)         { gatherTl.reverse(); gatherOn = false; }
     }
 
-    var snapPoints = [0].concat(popThresh, [gatherThresh, 1]);
-    var stage = one(section, 'stage');
-    var hold  = one(section, 'hold');
-    var refresh = function () { measure(); if (!gatherOn) { gatherTl.invalidate(); } };
-
-    // how far the card must rise from its assembled (bottom) spot to sit dead-center
-    var cardShiftY = 0;
-    function computeCardShift() {
-      gsap.set(card, { y: 0 });
-      var r = card.getBoundingClientRect();
-      cardShiftY = (window.innerHeight * CARD_TARGET) - (r.top + r.height / 2);
-    }
-    function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
-
-    if (CARD_FOLLOW && stage) {
-      var assemblySteps = STEP_VH * stepCount;
-      var pA = assemblySteps / (assemblySteps + FOLLOW_VH);
-
-      // task rows must paint on top of the card face (stage sits after hold in the DOM)
-      stage.style.zIndex = '1';
-      if (hold) { hold.style.zIndex = '2'; hold.style.position = hold.style.position || 'relative'; }
-
-      if (hold) {
-        ScrollTrigger.create({
-          trigger: section, start: 'top top',
-          end: function () { return '+=' + (window.innerHeight * assemblySteps); },
-          pin: hold, pinSpacing: false, refreshPriority: 1, invalidateOnRefresh: true
+    // re-measure on refresh/resize: landing stays pixel-exact (natural is measured
+    // live); only the decorative scatter start reconstructs from the fractions.
+    function refresh() {
+      measureGeo();
+      if (canLeave) { gsap.set(greenPanel, { y: 0 }); }   // neutral for a clean card-shift measure
+      computeCardShift();
+      if (!gatherOn) {
+        items.forEach(function (it, i) {
+          var played = popPlayed[Math.floor(i / POP_BATCH)];
+          gsap.set(it, {
+            x: geo[i].dx, y: geo[i].dy,
+            scaleX: played ? 1 : POP_SCALE_X,
+            scaleY: played ? 1 : POP_SCALE_Y,
+            opacity: played ? 1 : 0
+          });
         });
+        gatherTl.invalidate();
+      } else {
+        gsap.set(items, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 });
       }
-
-      ScrollTrigger.create({
-        trigger: section, start: 'top top',
-        end: function () { return '+=' + (window.innerHeight * (assemblySteps + FOLLOW_VH)); },
-        pin: stage, pinSpacing: true, invalidateOnRefresh: true,
-        onRefreshInit: function () { refresh(); },
-        onRefresh: function () { if (CARD_TRAVEL) { computeCardShift(); } },
-        onUpdate: function (self) {
-          var p = self.progress;
-          update(Math.min(1, p / pA));
-          if (CARD_TRAVEL) {
-            var fp = smooth((p - pA) / (1 - pA));   // 0 during assembly, 0→1 across the follow
-            gsap.set(card, { y: cardShiftY * fp });
-          }
-        },
-        snap: SNAP ? { snapTo: snapPoints.map(function (v) { return v * pA; }).concat([1]), duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
-      });
-
-    } else {
-      var assemblySteps = STEP_VH * stepCount;
-      var travelVH      = CARD_TRAVEL ? FOLLOW_VH : 0;
-      var totalVH       = assemblySteps + travelVH;
-      var pA            = travelVH > 0 ? assemblySteps / totalVH : 1;  // progress where assembly ends / travel begins
-
-      ScrollTrigger.create({
-        trigger: section, start: 'top top',
-        end: function () { return '+=' + (window.innerHeight * totalVH); },
-        pin: true, invalidateOnRefresh: true,
-        onRefreshInit: refresh,
-        onRefresh: function () { if (CARD_TRAVEL) { computeCardShift(); } },
-        onUpdate: function (self) {
-          var p = self.progress;
-          update(Math.min(1, p / pA));
-          if (CARD_TRAVEL && p > pA) {
-            // one shared y on card + every item → whole cluster rises as a unit
-            var ty = cardShiftY * smooth((p - pA) / (1 - pA));
-            gsap.set(card, { y: ty });
-            items.forEach(function (it, slot) { gsap.set(it, { y: geo[slot].dy + ty }); });
-          }
-        },
-        snap: SNAP ? { snapTo: snapPoints.map(function (v) { return v * pA; }).concat([1]), duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
-      });
+      // re-assert the exact visual state for the current scroll position so a
+      // resize/refresh never flashes green defaults over the light zone.
+      applyScroll(st ? st.progress : 0);
     }
 
-    // sticky-at-center: card + tasks scroll up together after assembly, then lock
-    // at viewport center for STICKY_VH. Pin hero_contain so tasks stick with the card.
-    if (STICKY_CENTER) {
-      var pinUnit = stage ? stage.parentNode : section;
-      ScrollTrigger.create({
-        trigger: card,
-        start: 'center center',
-        end: function () { return '+=' + (window.innerHeight * STICKY_VH); },
-        pin: pinUnit,
-        pinSpacing: true,
-        invalidateOnRefresh: true
-      });
+    // the green panel = the section child that wraps the card (.hero_contain.is-green
+    // in prod: carries the green bg + the H2). Translating it up sweeps bg + H2 away.
+    var greenPanel = card;
+    while (greenPanel.parentNode && greenPanel.parentNode !== section) { greenPanel = greenPanel.parentNode; }
+    var canLeave = GREEN_LEAVE && greenPanel !== card;
+
+    // paint the section bg to the panel's green so no dark band shows behind the
+    // panel as it slides up — the transition reads green -> white, not green -> black.
+    var greenSectionBg = null;
+    if (canLeave) {
+      var coverBg = window.getComputedStyle(greenPanel).backgroundColor;
+      if (coverBg && coverBg !== 'rgba(0, 0, 0, 0)' && coverBg !== 'transparent') {
+        section.style.backgroundColor = coverBg;
+        greenSectionBg = coverBg;
+      }
     }
 
-    // call in console after scrolling to the assembled state to see real positions
-    window.__stackDebug = function () {
-      var c = card.getBoundingClientRect();
-      console.log('[stack] LIVE card', { left: Math.round(c.left), right: Math.round(c.right), top: Math.round(c.top), w: Math.round(c.width), h: Math.round(c.height) });
-      items.forEach(function (it, i) {
-        var r = it.getBoundingClientRect();
-        console.log('[stack] LIVE item ' + i, { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), w: Math.round(r.width), insetL: Math.round(r.left - c.left), insetR: Math.round(c.right - r.right) });
+    // --- light layer: a fixed, full-viewport light panel holding a light-themed
+    //     clone of the card, clipped to reveal from the bottom during the hold ---
+    var lightLayer = null, cardClone = null, lightBg = '';
+    if (LIGHT_REVEAL) {
+      lightBg = LIGHT_BG ||
+        window.getComputedStyle(document.documentElement).getPropertyValue(LIGHT_BG_VAR).trim() || '#E4E4D0';
+
+      lightLayer = document.createElement('div');
+      lightLayer.setAttribute('data-stack-light', '');
+      lightLayer.style.cssText = 'position:fixed;inset:0;z-index:9998;pointer-events:none;' +
+        'background:' + lightBg + ';clip-path:inset(100% 0 0 0);will-change:clip-path;';
+
+      cardClone = card.cloneNode(true);
+      cardClone.removeAttribute('data-stack');
+      cardClone.style.cssText = '';                       // drop the gsap inline (transparent bg etc.)
+      cardClone.style.position   = 'absolute';
+      cardClone.style.margin     = '0';
+      cardClone.style.boxSizing  = 'border-box';
+      cardClone.style.background  = LIGHT_CARD_BG;
+      cardClone.style.color       = LIGHT_TEXT;
+      // reset every descendant's animation inline styles so the clone shows the landed state
+      Array.prototype.forEach.call(cardClone.querySelectorAll('*'), function (el) {
+        el.style.transform = ''; el.style.opacity = '1';
       });
-    };
+      Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) {
+        el.style.backgroundColor = LIGHT_ROW_BG;
+      });
+      Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) {
+        el.style.color = LIGHT_TEXT;
+      });
+      Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) {
+        el.style.borderColor = LIGHT_TEXT;
+      });
 
-    measure();
+      lightLayer.appendChild(cardClone);
+      document.body.appendChild(lightLayer);
+    }
 
-    // re-measure once layout & webfonts settle — early measure sizes the card
-    // to pre-font row heights, leaving it too short so rows spill out the bottom
+    // swap the REAL card + section to the light theme once the reveal is complete
+    // (invisible behind the fully-covering overlay), so hiding the overlay past the
+    // section reveals light reality instead of reverting to green.
+    var realLight = false;
+    function setRealLight(on) {
+      if (!lightLayer || realLight === on) { return; }
+      realLight = on;
+      gsap.set(card, { backgroundColor: on ? LIGHT_CARD_BG : origBg, borderColor: on ? LIGHT_CARD_BG : origBorder });
+      items.forEach(function (it) { gsap.set(it, { backgroundColor: on ? LIGHT_ROW_BG : landedBg }); });
+      itemTexts.forEach(function (t) { t.style.color = on ? LIGHT_TEXT : ''; });
+      if (head) { head.style.color = on ? LIGHT_TEXT : ''; }
+      checks.forEach(function (c) { if (c) { c.style.borderColor = on ? LIGHT_TEXT : ''; } });
+      if (greenSectionBg) { section.style.backgroundColor = on ? lightBg : greenSectionBg; }
+    }
+
+    // --- single master pin: assembly -> travel to centre -> long hold ---
+    var assemblySteps = STEP_VH * stepCount;
+    var totalVH = assemblySteps + TRAVEL_VH + HOLD_VH;
+    var pA = TRAVEL_VH > 0 ? assemblySteps / totalVH : 1;                     // assembly ends
+    var pB = TRAVEL_VH > 0 ? (assemblySteps + TRAVEL_VH) / totalVH : 1;       // travel ends / hold begins
+    var revealSpanP = totalVH > 0 ? REVEAL_VH / totalVH : 1;                  // progress span the light takes to rise
+
+    var snapPoints = [0].concat(popThresh, [gatherThresh])
+      .map(function (v) { return v * pA; })
+      .concat([pB, 1]);
+
+    // one place that maps scroll progress -> every visual (assembly, rise, green
+    // leave, light reveal, theme). Used by both onUpdate and refresh so the state
+    // is always self-consistent, even on fast scroll or resize.
+    function applyScroll(p) {
+      update(pA > 0 ? Math.min(1, p / pA) : 1);
+      var lightOn = false;
+      if (p <= pA) {                                     // assembling at the bottom
+        gsap.set(card, { y: 0 });
+        if (canLeave) { gsap.set(greenPanel, { y: 0 }); }
+        if (lightLayer) { lightLayer.style.clipPath = 'inset(100% 0 0 0)'; }
+      } else {                                           // card rises AND green leaves together
+        var t = (pB > pA) ? smooth(Math.min(1, (p - pA) / (pB - pA))) : 1;  // 0 at rise start -> 1 centred
+        var gy = canLeave ? -window.innerHeight * GREEN_LEAVE_VH * t : 0;
+        if (canLeave) { gsap.set(greenPanel, { y: gy }); }
+        gsap.set(card, { y: cardShiftY * t - gy });      // rise to centre + cancel the parent's move
+
+        if (lightLayer) {
+          if (p < pB) {                                  // not yet holding: light stays hidden
+            lightLayer.style.clipPath = 'inset(100% 0 0 0)';
+          } else {                                       // holding: light rises through the card
+            var rp = revealSpanP > 0 ? Math.min(1, (p - pB) / revealSpanP) : 1;
+            var cr = card.getBoundingClientRect();
+            cardClone.style.top   = cr.top + 'px';
+            cardClone.style.left  = cr.left + 'px';
+            cardClone.style.width = cr.width + 'px';
+            lightLayer.style.clipPath = 'inset(' + ((1 - rp) * 100) + '% 0 0 0)';
+            lightOn = rp >= 1;                            // once fully revealed, reality is light too
+          }
+        }
+      }
+      setRealLight(lightOn);   // single source of truth: light only in the fully-revealed hold
+    }
+
+    var st = ScrollTrigger.create({
+      trigger: section, start: 'top top',
+      end: function () { return '+=' + (window.innerHeight * totalVH); },
+      pin: true, invalidateOnRefresh: true,
+      onRefreshInit: refresh,
+      onUpdate: function (self) { applyScroll(self.progress); },
+      onLeave:     function () { if (lightLayer) { lightLayer.style.display = 'none'; } },
+      onEnterBack: function () { if (lightLayer) { lightLayer.style.display = ''; } },
+      snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
+    });
+
+    // re-measure once layout & webfonts settle (avoids sizing off pre-font metrics)
     function relayout() { ScrollTrigger.refresh(); }
     window.addEventListener('load', relayout);
     if (document.fonts && document.fonts.ready) { document.fonts.ready.then(relayout); }
