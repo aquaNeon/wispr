@@ -252,13 +252,15 @@
     while (greenPanel.parentNode && greenPanel.parentNode !== section) { greenPanel = greenPanel.parentNode; }
     var canLeave = GREEN_LEAVE && greenPanel !== card;
 
-    // paint the section bg to the panel's green so no dark band shows behind the
-    // panel as it slides up — the transition reads green -> white, not green -> black.
+    // the panel's green is used to cover the dark section as the panel slides up
+    // (so no black band shows). We DON'T paint it permanently — that would hide the
+    // panel's rounded top corners (green-on-green). The section stays its original
+    // dark during assembly (corners read), then goes green only during the leave.
+    var origSectionBg  = window.getComputedStyle(section).backgroundColor;
     var greenSectionBg = null;
     if (canLeave) {
       var coverBg = window.getComputedStyle(greenPanel).backgroundColor;
       if (coverBg && coverBg !== 'rgba(0, 0, 0, 0)' && coverBg !== 'transparent') {
-        section.style.backgroundColor = coverBg;
         greenSectionBg = coverBg;
       }
     }
@@ -313,7 +315,6 @@
       itemTexts.forEach(function (t) { t.style.color = on ? LIGHT_TEXT : ''; });
       if (head) { head.style.color = on ? LIGHT_TEXT : ''; }
       checks.forEach(function (c) { if (c) { c.style.borderColor = on ? LIGHT_TEXT : ''; } });
-      if (greenSectionBg) { section.style.backgroundColor = on ? lightBg : greenSectionBg; }
     }
 
     // --- single master pin: assembly -> travel to centre -> long hold ---
@@ -356,6 +357,11 @@
             lightOn = rp >= 1;                            // once fully revealed, reality is light too
           }
         }
+      }
+      // section bg by phase: dark during assembly (rounded corners read) -> green
+      // during the leave (no black band) -> light once fully revealed.
+      if (greenSectionBg) {
+        section.style.backgroundColor = (p <= pA) ? origSectionBg : (lightOn ? lightBg : greenSectionBg);
       }
       setRealLight(lightOn);   // single source of truth: light only in the fully-revealed hold
     }
