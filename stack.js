@@ -1,7 +1,7 @@
 (function () {
 
   var STEP_VH       = 0.7;
-  var SNAP          = true;
+  var SNAP          = false;   // magnetic scroll-to-nearest-step; off = free scroll
   var SNAP_DUR      = 0.3;
 
   var POP_BATCH     = 2;
@@ -34,8 +34,15 @@
 
   var HOLD_STEPS    = 2;
 
-  var CARD_FOLLOW   = false;
+  var CARD_FOLLOW   = false;  // legacy: pin card independently & slide to center (split tasks from card — unused)
   var FOLLOW_VH     = 1.3;
+  var CARD_TRAVEL   = false;
+  var CARD_TARGET   = 0.5;
+
+  // after assembly: keep scrolling normally (card + tasks rise together), then
+  // once the card hits viewport center, pin the whole cluster there for STICKY_VH.
+  var STICKY_CENTER = false;  // OFF: after assembly just scroll normally, no pin
+  var STICKY_VH     = 1;      // how long (in viewport heights) the card stays stuck at center
 
   var ATTR  = 'data-stack';
   var ORDER = 'data-stack-order';
@@ -44,6 +51,7 @@
   function one(root, name) { return root.querySelector('[' + ATTR + '="' + name + '"]'); }
 
   function init() {
+    console.log('[stack] build: no-snap v5 | SNAP=' + SNAP);
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
       console.warn('[stack] GSAP + ScrollTrigger required before this script.');
       return;
@@ -142,6 +150,14 @@
         };
       }
 
+      console.log('[stack] geo', {
+        cardLeft: Math.round(cRect.left), cardTop: Math.round(cRect.top),
+        cardW: uniformW + padL + padR, cardH: card.style.height,
+        padL: padL, padR: padR, padT: padT,
+        itemLeft: Math.round(left), itemW: uniformW, rowTop: Math.round(top),
+        slotH: slotH, headH: headH
+      });
+
       items.forEach(function (it, i) {
         it.style.transform = savedT[i] || '';
         it.style.width  = savedW[i] || '';
@@ -213,9 +229,22 @@
     var hold  = one(section, 'hold');
     var refresh = function () { measure(); if (!gatherOn) { gatherTl.invalidate(); } };
 
+    // how far the card must rise from its assembled (bottom) spot to sit dead-center
+    var cardShiftY = 0;
+    function computeCardShift() {
+      gsap.set(card, { y: 0 });
+      var r = card.getBoundingClientRect();
+      cardShiftY = (window.innerHeight * CARD_TARGET) - (r.top + r.height / 2);
+    }
+    function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
+
     if (CARD_FOLLOW && stage) {
       var assemblySteps = STEP_VH * stepCount;
       var pA = assemblySteps / (assemblySteps + FOLLOW_VH);
+
+      // task rows must paint on top of the card face (stage sits after hold in the DOM)
+      stage.style.zIndex = '1';
+      if (hold) { hold.style.zIndex = '2'; hold.style.position = hold.style.position || 'relative'; }
 
       if (hold) {
         ScrollTrigger.create({
@@ -229,23 +258,76 @@
         trigger: section, start: 'top top',
         end: function () { return '+=' + (window.innerHeight * (assemblySteps + FOLLOW_VH)); },
         pin: stage, pinSpacing: true, invalidateOnRefresh: true,
-        onRefreshInit: refresh,
-        onUpdate: function (self) { update(Math.min(1, self.progress / pA)); },
+        onRefreshInit: function () { refresh(); },
+        onRefresh: function () { if (CARD_TRAVEL) { computeCardShift(); } },
+        onUpdate: function (self) {
+          var p = self.progress;
+          update(Math.min(1, p / pA));
+          if (CARD_TRAVEL) {
+            var fp = smooth((p - pA) / (1 - pA));   // 0 during assembly, 0→1 across the follow
+            gsap.set(card, { y: cardShiftY * fp });
+          }
+        },
         snap: SNAP ? { snapTo: snapPoints.map(function (v) { return v * pA; }).concat([1]), duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
       });
 
     } else {
+      var assemblySteps = STEP_VH * stepCount;
+      var travelVH      = CARD_TRAVEL ? FOLLOW_VH : 0;
+      var totalVH       = assemblySteps + travelVH;
+      var pA            = travelVH > 0 ? assemblySteps / totalVH : 1;  // progress where assembly ends / travel begins
+
       ScrollTrigger.create({
         trigger: section, start: 'top top',
-        end: function () { return '+=' + (window.innerHeight * STEP_VH * stepCount); },
+        end: function () { return '+=' + (window.innerHeight * totalVH); },
         pin: true, invalidateOnRefresh: true,
         onRefreshInit: refresh,
-        onUpdate: function (self) { update(self.progress); },
-        snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
+        onRefresh: function () { if (CARD_TRAVEL) { computeCardShift(); } },
+        onUpdate: function (self) {
+          var p = self.progress;
+          update(Math.min(1, p / pA));
+          if (CARD_TRAVEL && p > pA) {
+            // one shared y on card + every item → whole cluster rises as a unit
+            var ty = cardShiftY * smooth((p - pA) / (1 - pA));
+            gsap.set(card, { y: ty });
+            items.forEach(function (it, slot) { gsap.set(it, { y: geo[slot].dy + ty }); });
+          }
+        },
+        snap: SNAP ? { snapTo: snapPoints.map(function (v) { return v * pA; }).concat([1]), duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
       });
     }
 
+    // sticky-at-center: card + tasks scroll up together after assembly, then lock
+    // at viewport center for STICKY_VH. Pin hero_contain so tasks stick with the card.
+    if (STICKY_CENTER) {
+      var pinUnit = stage ? stage.parentNode : section;
+      ScrollTrigger.create({
+        trigger: card,
+        start: 'center center',
+        end: function () { return '+=' + (window.innerHeight * STICKY_VH); },
+        pin: pinUnit,
+        pinSpacing: true,
+        invalidateOnRefresh: true
+      });
+    }
+
+    // call in console after scrolling to the assembled state to see real positions
+    window.__stackDebug = function () {
+      var c = card.getBoundingClientRect();
+      console.log('[stack] LIVE card', { left: Math.round(c.left), right: Math.round(c.right), top: Math.round(c.top), w: Math.round(c.width), h: Math.round(c.height) });
+      items.forEach(function (it, i) {
+        var r = it.getBoundingClientRect();
+        console.log('[stack] LIVE item ' + i, { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), w: Math.round(r.width), insetL: Math.round(r.left - c.left), insetR: Math.round(c.right - r.right) });
+      });
+    };
+
     measure();
+
+    // re-measure once layout & webfonts settle — early measure sizes the card
+    // to pre-font row heights, leaving it too short so rows spill out the bottom
+    function relayout() { ScrollTrigger.refresh(); }
+    window.addEventListener('load', relayout);
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(relayout); }
   }
 
   if (document.readyState === 'loading') {
