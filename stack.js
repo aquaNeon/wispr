@@ -8,6 +8,7 @@
   var POP_STAGGER   = 0.05;
   var POP_DUR       = 0.42;
   var POP_BUNCH     = 0.55;   // <1 pulls pops earlier & tighter; 1 = original spacing
+  var POP_LEAD      = 0.06;   // small scroll lead so the FIRST batch animates in (not pre-popped at p=0)
   var POP_SCALE_X   = 0.35;
   var POP_SCALE_Y   = 0.85;
   var POP_EASE      = 'back.out(1.6)';
@@ -206,7 +207,7 @@
     var gatherOn  = false;
 
     function thresholdFor(step) { return step / stepCount; }
-    var popThresh    = popTls.map(function (_, i) { return thresholdFor(i) * POP_BUNCH; });
+    var popThresh    = popTls.map(function (_, i) { return POP_LEAD + thresholdFor(i) * POP_BUNCH; });
     var gatherThresh = thresholdFor(batchCount);
 
     // drive pop batches + gather off assembly progress (0..1)

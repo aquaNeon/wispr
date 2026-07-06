@@ -8,10 +8,10 @@
   var TRACK  = '.slider_inner_wrap';
   var CARD   = '.slider_card';
 
-  var GAP          = 48;     // px between cards (applied to the track)
-  var START_OFFSET = 0.55;   // track starts pushed right by this fraction of the viewport (cards enter from the right)
-  var END_PAD      = 0.25;   // trailing space (viewport fraction) after the last card
-  var SPEED        = 1;      // vertical-scroll : horizontal-travel ratio (1 = 1:1)
+  var GAP      = 48;     // px between cards (applied to the track)
+  var START_AT = 0.72;   // viewport fraction where the FIRST card's centre starts; HIGHER = further right (enters more), lower = more of it visible
+  var END_AT   = 0.6;    // viewport fraction where the LAST card's centre rests at release; HIGHER = release earlier, lower = scroll further
+  var SPEED    = 1;      // vertical-scroll : horizontal-travel ratio (1 = 1:1)
 
   var WAVE_AMP   = 70;       // px vertical wave amplitude
   var WAVE_LEN   = 820;      // px wavelength (horizontal distance per wave cycle)
@@ -54,22 +54,23 @@
       if (c.offsetHeight < 10) { c.style.height = CARD_H + 'px'; }
     });
 
-    var startX = 0, endX = 0, travel = 0, trackBaseLeft = 0;
+    var startX = 0, endX = 0, travel = 0;
     var base = cards.map(function () { return { left: 0, w: 0 }; });
     var targetP = 0, currentP = 0, prevX = 0;
 
     function measure() {
       var vw = window.innerWidth;
       gsap.set(track, { x: 0 });
-      var tr = track.getBoundingClientRect();
-      trackBaseLeft = tr.left;                       // track's left at x:0 (pinned -> constant)
-      cards.forEach(function (c, i) { base[i] = { left: c.offsetLeft, w: c.offsetWidth }; });
+      // card viewport positions at x:0 (bakes in the track's own left padding)
+      cards.forEach(function (c, i) { var r = c.getBoundingClientRect(); base[i] = { left: r.left, w: r.width }; });
 
-      var trackW = track.scrollWidth;
-      startX = vw * START_OFFSET;                    // push the row off the right edge
-      endX   = -(trackW - vw + vw * END_PAD);        // last card scrolled past the left + trailing pad
-      if (endX > 0) { endX = 0; }
+      var last = cards.length - 1;
+      // place the first card's centre at START_AT and the last card's centre at
+      // END_AT — independent of the track's padding, and no empty tail.
+      startX = START_AT * vw - (base[0].left + base[0].w / 2);
+      endX   = END_AT   * vw - (base[last].left + base[last].w / 2);
       travel = startX - endX;
+      if (travel < 0) { travel = 0; }
     }
 
     // per-frame: slide the track and let each card ride the wave by its viewport x
@@ -79,7 +80,7 @@
       var skew = Math.max(-VEL_MAX, Math.min(VEL_MAX, vel * VEL_SKEW));
       gsap.set(track, { x: x });
       for (var i = 0; i < cards.length; i++) {
-        var cx = trackBaseLeft + x + base[i].left + base[i].w / 2;   // card centre in the viewport
+        var cx = base[i].left + x + base[i].w / 2;                   // card centre in the viewport
         var phase = (cx / WAVE_LEN) * Math.PI * 2 + WAVE_PHASE;
         gsap.set(cards[i], { y: WAVE_AMP * Math.sin(phase), rotation: WAVE_ROT * Math.cos(phase), skewX: skew });
       }
