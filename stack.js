@@ -34,7 +34,7 @@
   // -> release: green scrolls up & away, H2 scrolls through view, card rises to centre and
   // lands as the H2 scrolls off (RELEASE_VH) -> long hold at centre (HOLD_VH).
   var CARD_TARGET    = 0.5;   // viewport fraction the card centres on (0.5 = dead centre)
-  var GREEN_HOLD_VH  = 1.0;   // extra scroll held in green after assembly, before release
+  var GREEN_HOLD_VH  = 0.25;  // brief scroll held in green after assembly, before the scroll-through
   var RELEASE_VH     = 1.6;   // green-leave + H2 scroll + card-centre, all together
   var HOLD_VH        = 3;     // hold at centre after the green lifts, then the pin releases
 
@@ -237,7 +237,9 @@
       return smooth(ap / gatherThresh);
     }
 
-    // drive pop batches + gather off assembly progress (0..1)
+    // drive pop batches + gather as TRIGGERED time-based timelines (the dynamic feel). the
+    // pin locks the scroll at "assembly done" until the gather finishes (see onUpdate), so
+    // fast scroll can't outrun them; everything after that scrubs.
     function update(p) {
       var i;
       for (i = 0; i < popTls.length; i++) {
@@ -405,7 +407,16 @@
       end: function () { return '+=' + (window.innerHeight * totalVH); },
       pin: true, invalidateOnRefresh: true,
       onRefreshInit: refresh,
-      onUpdate: function (self) { applyScroll(self.progress); },
+      onUpdate: function (self) {
+        var p = self.progress;
+        // lock the scroll at "assembly done" (pG) until the time-based gather finishes, so
+        // fast scroll can't outrun it. once complete, normal scrub resumes.
+        if (p > pG && gatherOn && gatherTl.progress() < 1) {
+          self.scroll(self.start + pG * (self.end - self.start));
+          p = pG;
+        }
+        applyScroll(p);
+      },
       onLeave:     function () { if (cardClone) { cardClone.style.display = 'none'; } },
       onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
