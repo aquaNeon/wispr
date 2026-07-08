@@ -13,9 +13,8 @@
   var POP_SCALE_Y   = 0.85;
   var POP_EASE      = 'back.out(2)';
 
-  // fan-out: rows pop in bunched near centre (a fist), then scrolling moves them OUT
-  // to their scatter spots. FIST = how tight the start is: 0 = all stacked dead-centre,
-  // 0.5 = start half-open (skips the tightest part), 1 = no fist (start at scatter spot).
+  // FIST = fan-out tightness. 0.5 = start half-open (bunch near the cloud centre, fan out to
+  // the scatter spots) — the original "great" feel. 1 = off (pop in place, no movement).
   var FIST          = 0.5;
 
   var CHECK_DELAY   = 0.18;
@@ -37,12 +36,13 @@
   var CARD_TARGET    = 0.5;   // viewport fraction the card centres on (0.5 = dead centre)
   var GREEN_HOLD_VH  = 1.0;   // extra scroll held in green after assembly, before release
   var RELEASE_VH     = 1.6;   // green-leave + H2 scroll + card-centre, all together
-  var HOLD_VH        = 3;     // long hold at centre
+  var HOLD_VH        = 3;     // hold at centre after the green lifts, then the pin releases
 
-  // during the hold: the green panel (bg + H2) scrolls up & out while the card
-  // stays locked at centre (equal-and-opposite y), revealing what's behind.
+  // during the release: the green panel (bg + headline) scrolls up & fully out while the
+  // card stays locked at centre (equal-and-opposite y), revealing the cream behind.
   var GREEN_LEAVE    = true;
-  var GREEN_LEAVE_VH = 1.4;   // how far (viewport heights) the green panel travels up
+  var GREEN_CLEAR    = 1.06;   // lift the panel by its OWN measured height x this, so it fully clears
+  var GREEN_RADIUS   = '80px'; // forced inline (!important) so it beats the Webflow embed; '' = leave to CSS
 
   // split colour reveal: during the hold a light layer (light bg + a light-themed
   // clone of the card) rises from the bottom, clipped by a horizontal line, so the
@@ -53,9 +53,7 @@
   var LIGHT_CARD_BG  = '#E4E4D0';     // card face in the light theme
   var LIGHT_ROW_BG   = '#FFFDF9';     // task rows in the light theme
   var LIGHT_TEXT     = '#1A1A1A';     // text + check outline in the light theme
-  var REVEAL_VH      = 0.8;           // scroll the light bg takes to rise through (card split)
-  var LIGHT_HEAD_Y   = 0.34;          // viewport fraction (from top) the H2 passes through
-  var HEAD_TRAVEL_VH = 1.8;           // how far (vh) the H2 scrolls in-then-out through view
+  // NOTE: the white-section H2 is plain Webflow content now (scrolls normally) — not driven here.
 
   var ATTR  = 'data-stack';
   var ORDER = 'data-stack-order';
@@ -144,16 +142,23 @@
       gsap.set(items, { x: 0, y: 0, scaleX: 1, scaleY: 1 });
       gsap.set(card,  { y: 0 });
       var mi  = scatterCtx.getBoundingClientRect();
-      var sr  = section.getBoundingClientRect();
-      var scx = sr.left + sr.width  / 2;
-      var scy = sr.top  + sr.height / 2;
       var nat = items.map(function (it) { return it.getBoundingClientRect(); });
-      for (var s = 0; s < items.length; s++) {
+      // fan bunches toward the CENTROID of the scatter spots (the middle of the cloud, around
+      // the heading), so it fans out symmetrically in place — never from the section centre
+      // (far below on a tall section) or off-screen.
+      var spot = [], cx = 0, cy = 0, s;
+      for (s = 0; s < items.length; s++) {
         geo[s].dx = (mi.left + frac[s].fx * mi.width)  - nat[s].left;
         geo[s].dy = (mi.top  + frac[s].fy * mi.height) - nat[s].top;
-        // vector from section centre to this row's scatter spot -> drift direction
-        out[s].ox = (nat[s].left + geo[s].dx + nat[s].width  / 2) - scx;
-        out[s].oy = (nat[s].top  + geo[s].dy + nat[s].height / 2) - scy;
+        var scX = nat[s].left + geo[s].dx + nat[s].width  / 2;
+        var scY = nat[s].top  + geo[s].dy + nat[s].height / 2;
+        spot.push({ x: scX, y: scY });
+        cx += scX; cy += scY;
+      }
+      cx /= items.length; cy /= items.length;
+      for (s = 0; s < items.length; s++) {
+        out[s].ox = spot[s].x - cx;
+        out[s].oy = spot[s].y - cy;
       }
     }
 
@@ -246,9 +251,10 @@
     // re-measure on refresh/resize: landing stays pixel-exact (natural is measured
     // live); only the decorative scatter start reconstructs from the fractions.
     function refresh() {
+      contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });   // neutral for a clean measure
       measureGeo();
-      if (canLeave) { gsap.set(greenPanel, { y: 0 }); }   // neutral for a clean card-shift measure
-      computeCardShift();
+      measurePositions();
+      computeTiming();
       if (!gatherOn) {
         items.forEach(function (it, i) {
           var played = popPlayed[Math.floor(i / POP_BATCH)];
@@ -268,128 +274,79 @@
       applyScroll(st ? st.progress : 0);
     }
 
-    // the green panel = the section child that wraps the card (.hero_contain.is-green
-    // in prod: carries the green bg + the H2). Translating it up sweeps bg + H2 away.
+    // the green panel = the section child that wraps the card (.hero_contain.is-green).
     var greenPanel = card;
     while (greenPanel.parentNode && greenPanel.parentNode !== section) { greenPanel = greenPanel.parentNode; }
-    var canLeave = GREEN_LEAVE && greenPanel !== card;
+    var canLeave = greenPanel !== card;
+    if (canLeave && GREEN_RADIUS) { greenPanel.style.setProperty('border-radius', GREEN_RADIUS, 'important'); }
 
-    // the panel's green is used to cover the dark section as the panel slides up
-    // (so no black band shows). We DON'T paint it permanently — that would hide the
-    // panel's rounded top corners (green-on-green). The section stays its original
-    // dark during assembly (corners read), then goes green only during the leave.
-    var origSectionBg  = window.getComputedStyle(section).backgroundColor;
-    var greenSectionBg = null;
-    if (canLeave) {
-      var coverBg = window.getComputedStyle(greenPanel).backgroundColor;
-      if (coverBg && coverBg !== 'rgba(0, 0, 0, 0)' && coverBg !== 'transparent') {
-        greenSectionBg = coverBg;
+    // the rest of the section below the green panel: the white transition (holds the H2)
+    // and the tabs grid. we scroll the WHOLE stack up together (by S) to reveal them.
+    var transWrap = section.querySelector('.meeting_transition_wrap');
+    var tabsWrap  = section.querySelector('.meeting_tabs_contain');
+    var contentEls = [greenPanel, transWrap, tabsWrap].filter(Boolean);
+
+    // card (inside the green panel) must sit ABOVE the H2 text + tabs grid where they
+    // overlap. these are all transformed (gsap y) so z-index applies.
+    if (greenPanel) { greenPanel.style.zIndex = '5'; }
+    if (transWrap)  { transWrap.style.zIndex  = '1'; }
+    if (tabsWrap)   { tabsWrap.style.zIndex   = '1'; }
+
+    // measured each refresh: how far the card rises (bottom -> centre), and how far the
+    // content must scroll (S) to bring the tabs-grid centre to screen centre (= where the
+    // card lands). sCardStart = the S at which the H2 is above the card and it begins rising.
+    var cardRiseDist = 0, sCenter = 0, sCardStart = 0;
+    function measurePositions() {
+      contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });
+      gsap.set(card, { y: 0 });
+      var mid  = window.innerHeight * CARD_TARGET;
+      var sTop = section.getBoundingClientRect().top;
+      var cr   = card.getBoundingClientRect();
+      cardRiseDist = ((cr.top - sTop) + cr.height / 2) - mid;
+      if (cardRiseDist < 0) { cardRiseDist = 0; }
+      if (tabsWrap) {
+        var tr = tabsWrap.getBoundingClientRect();
+        sCenter = ((tr.top - sTop) + tr.height / 2) - mid;
+      } else {
+        sCenter = cardRiseDist;
       }
+      if (sCenter < cardRiseDist) { sCenter = cardRiseDist; }
+      sCardStart = sCenter - cardRiseDist;
     }
 
-    // --- light layer: a fixed, full-viewport light panel holding a light-themed
-    //     clone of the card, clipped to reveal from the bottom during the hold ---
-    var lightLayer = null, cardClone = null, lightBg = '';
-    var headLayer  = null, headClone = null;   // H2 gets its own un-clipped scrolling layer
-    var cardCloneLayer = null;                 // card clone rides above the H2 (higher z)
+    // dark/light SPLIT: a light-themed clone of the card sits exactly over the real (dark)
+    // card, clipped at the green/white boundary (the green panel's bottom edge). So the card
+    // reads DARK where it overlaps the green and LIGHT where it overlaps the white — split
+    // right on the line. The real card stays dark; the clone supplies the light half.
+    var cardClone = null;
     if (LIGHT_REVEAL) {
-      lightBg = LIGHT_BG ||
-        window.getComputedStyle(document.documentElement).getPropertyValue(LIGHT_BG_VAR).trim() || '#E4E4D0';
-
-      lightLayer = document.createElement('div');
-      lightLayer.setAttribute('data-stack-light', '');
-      lightLayer.style.cssText = 'position:fixed;inset:0;z-index:9998;pointer-events:none;' +
-        'background:' + lightBg + ';clip-path:inset(100% 0 0 0);will-change:clip-path;';
-
       cardClone = card.cloneNode(true);
-      cardClone.removeAttribute('data-stack');
-      cardClone.style.cssText = '';                       // drop the gsap inline (transparent bg etc.)
-      cardClone.style.position   = 'absolute';
-      cardClone.style.margin     = '0';
-      cardClone.style.boxSizing  = 'border-box';
-      cardClone.style.background  = LIGHT_CARD_BG;
-      cardClone.style.color       = LIGHT_TEXT;
-      // reset every descendant's animation inline styles so the clone shows the landed state
-      Array.prototype.forEach.call(cardClone.querySelectorAll('*'), function (el) {
-        el.style.transform = ''; el.style.opacity = '1';
-      });
-      Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) {
-        el.style.backgroundColor = LIGHT_ROW_BG;
-      });
-      Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) {
-        el.style.color = LIGHT_TEXT;
-      });
-      Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) {
-        el.style.borderColor = LIGHT_TEXT;
-      });
-
-      document.body.appendChild(lightLayer);
-
-      // card clone rides its OWN layer ABOVE the H2 (z 10000 > headLayer 9999), so the
-      // card/tasks always sit in front of the light-section H2 when they overlap. shares
-      // the same clip-path as the light bg so the dark/light split stays in sync.
-      cardCloneLayer = document.createElement('div');
-      cardCloneLayer.setAttribute('data-stack-cardclone', '');
-      cardCloneLayer.style.cssText = 'position:fixed;inset:0;z-index:10000;pointer-events:none;clip-path:inset(100% 0 0 0);will-change:clip-path;';
-      cardCloneLayer.appendChild(cardClone);
-      document.body.appendChild(cardCloneLayer);
-
-      // light-section H2: clone whatever carries data-stack="light-head" (ANYWHERE in the
-      // doc) into its OWN un-clipped fixed layer so it can SCROLL through the viewport
-      // (in then out) rather than being wiped in by the clip. sits above the light bg.
-      var lightHeadSrc = one(document, 'light-head');
-      if (lightHeadSrc) {
-        headLayer = document.createElement('div');
-        headLayer.setAttribute('data-stack-head', '');
-        headLayer.style.cssText = 'position:fixed;inset:0;z-index:9999;pointer-events:none;display:none;';
-
-        headClone = lightHeadSrc.cloneNode(true);
-        headClone.removeAttribute(ATTR);
-        headClone.style.position   = 'absolute';
-        headClone.style.left        = '50%';
-        headClone.style.top         = (LIGHT_HEAD_Y * 100) + '%';
-        headClone.style.transform   = 'translate(-50%, -50%)';
-        headClone.style.margin      = '0';
-        headClone.style.width       = '100%';
-        headClone.style.color       = LIGHT_TEXT;
-        headClone.style.willChange  = 'transform';
-
-        headLayer.appendChild(headClone);
-        document.body.appendChild(headLayer);
-        // only hide the source if it's INSIDE the pinned section (else it'd double up during
-        // the pin). a real sibling below stays visible for when you scroll down to it.
-        if (section.contains(lightHeadSrc)) { lightHeadSrc.style.visibility = 'hidden'; }
-      }
+      cardClone.removeAttribute(ATTR);
+      cardClone.style.cssText = 'position:fixed;margin:0;box-sizing:border-box;pointer-events:none;' +
+        'z-index:10000;display:none;background:' + LIGHT_CARD_BG + ';color:' + LIGHT_TEXT + ';' +
+        'will-change:clip-path,top,left,width;';
+      Array.prototype.forEach.call(cardClone.querySelectorAll('*'), function (el) { el.style.transform = ''; el.style.opacity = '1'; });
+      Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) { el.style.backgroundColor = LIGHT_ROW_BG; });
+      Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) { el.style.color = LIGHT_TEXT; });
+      Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) { el.style.borderColor = LIGHT_TEXT; });
+      document.body.appendChild(cardClone);
     }
 
-    // swap the REAL card + section to the light theme once the reveal is complete
-    // (invisible behind the fully-covering overlay), so hiding the overlay past the
-    // section reveals light reality instead of reverting to green.
-    var realLight = false;
-    function setRealLight(on) {
-      if (!lightLayer || realLight === on) { return; }
-      realLight = on;
-      gsap.set(card, { backgroundColor: on ? LIGHT_CARD_BG : origBg, borderColor: on ? LIGHT_CARD_BG : origBorder });
-      items.forEach(function (it) { gsap.set(it, { backgroundColor: on ? LIGHT_ROW_BG : landedBg }); });
-      itemTexts.forEach(function (t) { t.style.color = on ? LIGHT_TEXT : ''; });
-      if (head) { head.style.color = on ? LIGHT_TEXT : ''; }
-      checks.forEach(function (c) { if (c) { c.style.borderColor = on ? LIGHT_TEXT : ''; } });
-      // blank the green panel's bg once fully light so it can never flash when the pin
-      // releases; restore it when scrolling back up into the (still-green) reveal.
-      if (canLeave) { greenPanel.style.backgroundColor = on ? 'transparent' : (greenSectionBg || ''); }
-    }
-
-    // --- single master pin: assembly -> travel to centre -> long hold ---
+    // --- single master pin: assembly -> green hold -> content scroll (green out, H2 in,
+    //     card rises to centre) -> sticky hold at centre. the content-scroll length is the
+    //     measured scroll distance (sCenter), so timing is recomputed on refresh. ---
     var assemblySteps = STEP_VH * stepCount;
-    var totalVH = assemblySteps + GREEN_HOLD_VH + RELEASE_VH + HOLD_VH;
-    var pA = assemblySteps / totalVH;                                  // assembly ends (card bottom, green)
-    var pG = (assemblySteps + GREEN_HOLD_VH) / totalVH;                // green hold ends -> release begins
-    var pB = (assemblySteps + GREEN_HOLD_VH + RELEASE_VH) / totalVH;   // release ends -> card centred / hold begins
-    var revealSpanP = totalVH > 0 ? REVEAL_VH / totalVH : 1;           // light bg clip-reveal span (from pG)
-
-    var snapPoints = [0].concat(popThresh, [gatherThresh])
-      .map(function (v) { return v * pA; })
-      .concat([pG, pB, 1]);
+    var totalVH = 0, pA = 0, pG = 0, pHold = 0;
+    var snapPoints = [];
+    function computeTiming() {
+      var contentVH = window.innerHeight ? (sCenter / window.innerHeight) : 1;
+      totalVH = assemblySteps + GREEN_HOLD_VH + contentVH + HOLD_VH;
+      pA    = assemblySteps / totalVH;                                        // assembly ends
+      pG    = (assemblySteps + GREEN_HOLD_VH) / totalVH;                      // green hold ends -> content scroll begins
+      pHold = (assemblySteps + GREEN_HOLD_VH + contentVH) / totalVH;          // card centred / sticky hold begins
+      snapPoints = [0].concat(popThresh, [gatherThresh]).map(function (v) { return v * pA; }).concat([pG, pHold, 1]);
+    }
+    computeTiming();
 
     // one place that maps scroll progress -> every visual (assembly, rise, green
     // leave, light reveal, theme). Used by both onUpdate and refresh so the state
@@ -411,51 +368,36 @@
         }
       }
 
-      var lightOn = false;
-      if (p <= pG) {                                     // assembling, then holding in green
-        if (canLeave) { gsap.set(greenPanel, { y: 0 }); }
-        gsap.set(card, { y: 0 });
-        if (lightLayer)     { lightLayer.style.clipPath = 'inset(100% 0 0 0)'; }
-        if (cardCloneLayer) { cardCloneLayer.style.clipPath = 'inset(100% 0 0 0)'; }
-        if (headLayer)      { headLayer.style.display = 'none'; }
-      } else {                                           // release: green out, H2 through, card centres
-        var rel  = (pB > pG) ? Math.min(1, (p - pG) / (pB - pG)) : 1;   // 0 at release start -> 1 centred
-        var relS = smooth(rel);
+      // content scroll S: 0 through assembly + green hold, ramps 0 -> sCenter over the
+      // content phase, then frozen at sCenter for the sticky hold.
+      var S;
+      if (p <= pG)         { S = 0; }
+      else if (p >= pHold) { S = sCenter; }
+      else                 { S = (pHold > pG) ? ((p - pG) / (pHold - pG)) * sCenter : sCenter; }
 
-        // green scrolls up and away
-        var gy = canLeave ? -window.innerHeight * GREEN_LEAVE_VH * relS : 0;
-        if (canLeave) { gsap.set(greenPanel, { y: gy }); }
+      // scroll the whole stack (green + transition H2 + tabs) up by S
+      for (var ci = 0; ci < contentEls.length; ci++) { gsap.set(contentEls[ci], { y: -S }); }
 
-        // card rises bottom -> centre across the release, landing as the H2 scrolls off
-        gsap.set(card, { y: cardShiftY * relS - gy });
+      // card: held at the bottom (+S cancels the green's -S) until the H2 is above it
+      // (S >= sCardStart), then rises in unison to centre, then sticky.
+      gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
 
-        // light bg + card split reveal (clip rises from the bottom), quick at release start
-        if (lightLayer) {
-          var rp = revealSpanP > 0 ? Math.min(1, (p - pG) / revealSpanP) : 1;
-          var cr = card.getBoundingClientRect();
-          cardClone.style.top   = cr.top + 'px';
-          cardClone.style.left  = cr.left + 'px';
-          cardClone.style.width = cr.width + 'px';
-          var clip = 'inset(' + ((1 - rp) * 100) + '% 0 0 0)';
-          lightLayer.style.clipPath = clip;
-          if (cardCloneLayer) { cardCloneLayer.style.clipPath = clip; }   // keep the split in sync, card above H2
-          lightOn = rp >= 1;                             // once fully revealed, reality is light too
-        }
-
-        // H2 scrolls UP through the viewport (enters from below, exits top) over the release
-        if (headLayer) {
-          headLayer.style.display = '';
-          var hy = (0.5 - rel) * HEAD_TRAVEL_VH * window.innerHeight;   // +below at start -> -above at end
-          headClone.style.transform = 'translate(-50%, calc(-50% + ' + hy + 'px))';
+      // dark/light SPLIT: keep the light clone exactly over the real (dark) card, clipped at
+      // the green/white boundary (green panel's bottom edge) — dark above the line, light below.
+      if (cardClone) {
+        var cr = card.getBoundingClientRect();
+        var B  = canLeave ? greenPanel.getBoundingClientRect().bottom : -1e9;
+        var topClip = Math.max(0, Math.min(cr.height, B - cr.top));   // boundary in card-local px
+        if (topClip >= cr.height - 0.5) {
+          cardClone.style.display = 'none';                 // fully over green -> all dark
+        } else {
+          cardClone.style.display  = '';
+          cardClone.style.top      = cr.top + 'px';
+          cardClone.style.left     = cr.left + 'px';
+          cardClone.style.width    = cr.width + 'px';
+          cardClone.style.clipPath = 'inset(' + topClip + 'px 0 0 0)';   // reveal below the line
         }
       }
-      // section bg: keep the section's own bg through assembly AND the leave, so the
-      // lifting green panel's rounded corners read against it -> light once fully revealed.
-      // (previously painted green during the leave = green-on-green, hid the bottom radius.)
-      if (greenSectionBg) {
-        section.style.backgroundColor = lightOn ? lightBg : origSectionBg;
-      }
-      setRealLight(lightOn);   // single source of truth: light only in the fully-revealed hold
     }
 
     var st = ScrollTrigger.create({
@@ -464,8 +406,8 @@
       pin: true, invalidateOnRefresh: true,
       onRefreshInit: refresh,
       onUpdate: function (self) { applyScroll(self.progress); },
-      onLeave:     function () { if (lightLayer) { lightLayer.style.display = 'none'; } if (headLayer) { headLayer.style.display = 'none'; } if (cardCloneLayer) { cardCloneLayer.style.display = 'none'; } },
-      onEnterBack: function () { if (lightLayer) { lightLayer.style.display = ''; } if (cardCloneLayer) { cardCloneLayer.style.display = ''; } },
+      onLeave:     function () { if (cardClone) { cardClone.style.display = 'none'; } },
+      onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
     });
 
