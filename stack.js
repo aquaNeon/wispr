@@ -31,11 +31,13 @@
 
   var HOLD_STEPS    = 0;      // extra held steps after gather before travel begins
 
-  // after assembly the card rises from the bottom to viewport centre, then holds
-  // there (pinned) for HOLD_VH — room for future inner-card animations.
-  var CARD_TARGET   = 0.5;    // viewport fraction the card centres on (0.5 = dead centre)
-  var TRAVEL_VH     = 0.8;    // scroll (viewport heights) for the card to reach centre
-  var HOLD_VH       = 3;      // long hold at centre
+  // sequence: assemble (card bottom, green) -> hold one more beat in green (GREEN_HOLD_VH)
+  // -> release: green scrolls up & away, H2 scrolls through view, card rises to centre and
+  // lands as the H2 scrolls off (RELEASE_VH) -> long hold at centre (HOLD_VH).
+  var CARD_TARGET    = 0.5;   // viewport fraction the card centres on (0.5 = dead centre)
+  var GREEN_HOLD_VH  = 1.0;   // extra scroll held in green after assembly, before release
+  var RELEASE_VH     = 1.6;   // green-leave + H2 scroll + card-centre, all together
+  var HOLD_VH        = 3;     // long hold at centre
 
   // during the hold: the green panel (bg + H2) scrolls up & out while the card
   // stays locked at centre (equal-and-opposite y), revealing what's behind.
@@ -51,7 +53,9 @@
   var LIGHT_CARD_BG  = '#E4E4D0';     // card face in the light theme
   var LIGHT_ROW_BG   = '#FFFDF9';     // task rows in the light theme
   var LIGHT_TEXT     = '#1A1A1A';     // text + check outline in the light theme
-  var REVEAL_VH      = 1.2;           // scroll (viewport heights) the light takes to rise through
+  var REVEAL_VH      = 0.8;           // scroll the light bg takes to rise through (card split)
+  var LIGHT_HEAD_Y   = 0.34;          // viewport fraction (from top) the H2 passes through
+  var HEAD_TRAVEL_VH = 1.8;           // how far (vh) the H2 scrolls in-then-out through view
 
   var ATTR  = 'data-stack';
   var ORDER = 'data-stack-order';
@@ -286,6 +290,8 @@
     // --- light layer: a fixed, full-viewport light panel holding a light-themed
     //     clone of the card, clipped to reveal from the bottom during the hold ---
     var lightLayer = null, cardClone = null, lightBg = '';
+    var headLayer  = null, headClone = null;   // H2 gets its own un-clipped scrolling layer
+    var cardCloneLayer = null;                 // card clone rides above the H2 (higher z)
     if (LIGHT_REVEAL) {
       lightBg = LIGHT_BG ||
         window.getComputedStyle(document.documentElement).getPropertyValue(LIGHT_BG_VAR).trim() || '#E4E4D0';
@@ -317,8 +323,43 @@
         el.style.borderColor = LIGHT_TEXT;
       });
 
-      lightLayer.appendChild(cardClone);
       document.body.appendChild(lightLayer);
+
+      // card clone rides its OWN layer ABOVE the H2 (z 10000 > headLayer 9999), so the
+      // card/tasks always sit in front of the light-section H2 when they overlap. shares
+      // the same clip-path as the light bg so the dark/light split stays in sync.
+      cardCloneLayer = document.createElement('div');
+      cardCloneLayer.setAttribute('data-stack-cardclone', '');
+      cardCloneLayer.style.cssText = 'position:fixed;inset:0;z-index:10000;pointer-events:none;clip-path:inset(100% 0 0 0);will-change:clip-path;';
+      cardCloneLayer.appendChild(cardClone);
+      document.body.appendChild(cardCloneLayer);
+
+      // light-section H2: clone whatever carries data-stack="light-head" (ANYWHERE in the
+      // doc) into its OWN un-clipped fixed layer so it can SCROLL through the viewport
+      // (in then out) rather than being wiped in by the clip. sits above the light bg.
+      var lightHeadSrc = one(document, 'light-head');
+      if (lightHeadSrc) {
+        headLayer = document.createElement('div');
+        headLayer.setAttribute('data-stack-head', '');
+        headLayer.style.cssText = 'position:fixed;inset:0;z-index:9999;pointer-events:none;display:none;';
+
+        headClone = lightHeadSrc.cloneNode(true);
+        headClone.removeAttribute(ATTR);
+        headClone.style.position   = 'absolute';
+        headClone.style.left        = '50%';
+        headClone.style.top         = (LIGHT_HEAD_Y * 100) + '%';
+        headClone.style.transform   = 'translate(-50%, -50%)';
+        headClone.style.margin      = '0';
+        headClone.style.width       = '100%';
+        headClone.style.color       = LIGHT_TEXT;
+        headClone.style.willChange  = 'transform';
+
+        headLayer.appendChild(headClone);
+        document.body.appendChild(headLayer);
+        // only hide the source if it's INSIDE the pinned section (else it'd double up during
+        // the pin). a real sibling below stays visible for when you scroll down to it.
+        if (section.contains(lightHeadSrc)) { lightHeadSrc.style.visibility = 'hidden'; }
+      }
     }
 
     // swap the REAL card + section to the light theme once the reveal is complete
@@ -333,18 +374,22 @@
       itemTexts.forEach(function (t) { t.style.color = on ? LIGHT_TEXT : ''; });
       if (head) { head.style.color = on ? LIGHT_TEXT : ''; }
       checks.forEach(function (c) { if (c) { c.style.borderColor = on ? LIGHT_TEXT : ''; } });
+      // blank the green panel's bg once fully light so it can never flash when the pin
+      // releases; restore it when scrolling back up into the (still-green) reveal.
+      if (canLeave) { greenPanel.style.backgroundColor = on ? 'transparent' : (greenSectionBg || ''); }
     }
 
     // --- single master pin: assembly -> travel to centre -> long hold ---
     var assemblySteps = STEP_VH * stepCount;
-    var totalVH = assemblySteps + TRAVEL_VH + HOLD_VH;
-    var pA = TRAVEL_VH > 0 ? assemblySteps / totalVH : 1;                     // assembly ends
-    var pB = TRAVEL_VH > 0 ? (assemblySteps + TRAVEL_VH) / totalVH : 1;       // travel ends / hold begins
-    var revealSpanP = totalVH > 0 ? REVEAL_VH / totalVH : 1;                  // progress span the light takes to rise
+    var totalVH = assemblySteps + GREEN_HOLD_VH + RELEASE_VH + HOLD_VH;
+    var pA = assemblySteps / totalVH;                                  // assembly ends (card bottom, green)
+    var pG = (assemblySteps + GREEN_HOLD_VH) / totalVH;                // green hold ends -> release begins
+    var pB = (assemblySteps + GREEN_HOLD_VH + RELEASE_VH) / totalVH;   // release ends -> card centred / hold begins
+    var revealSpanP = totalVH > 0 ? REVEAL_VH / totalVH : 1;           // light bg clip-reveal span (from pG)
 
     var snapPoints = [0].concat(popThresh, [gatherThresh])
       .map(function (v) { return v * pA; })
-      .concat([pB, 1]);
+      .concat([pG, pB, 1]);
 
     // one place that maps scroll progress -> every visual (assembly, rise, green
     // leave, light reveal, theme). Used by both onUpdate and refresh so the state
@@ -367,34 +412,48 @@
       }
 
       var lightOn = false;
-      if (p <= pA) {                                     // assembling at the bottom
-        gsap.set(card, { y: 0 });
+      if (p <= pG) {                                     // assembling, then holding in green
         if (canLeave) { gsap.set(greenPanel, { y: 0 }); }
-        if (lightLayer) { lightLayer.style.clipPath = 'inset(100% 0 0 0)'; }
-      } else {                                           // card rises AND green leaves together
-        var t = (pB > pA) ? smooth(Math.min(1, (p - pA) / (pB - pA))) : 1;  // 0 at rise start -> 1 centred
-        var gy = canLeave ? -window.innerHeight * GREEN_LEAVE_VH * t : 0;
-        if (canLeave) { gsap.set(greenPanel, { y: gy }); }
-        gsap.set(card, { y: cardShiftY * t - gy });      // rise to centre + cancel the parent's move
+        gsap.set(card, { y: 0 });
+        if (lightLayer)     { lightLayer.style.clipPath = 'inset(100% 0 0 0)'; }
+        if (cardCloneLayer) { cardCloneLayer.style.clipPath = 'inset(100% 0 0 0)'; }
+        if (headLayer)      { headLayer.style.display = 'none'; }
+      } else {                                           // release: green out, H2 through, card centres
+        var rel  = (pB > pG) ? Math.min(1, (p - pG) / (pB - pG)) : 1;   // 0 at release start -> 1 centred
+        var relS = smooth(rel);
 
+        // green scrolls up and away
+        var gy = canLeave ? -window.innerHeight * GREEN_LEAVE_VH * relS : 0;
+        if (canLeave) { gsap.set(greenPanel, { y: gy }); }
+
+        // card rises bottom -> centre across the release, landing as the H2 scrolls off
+        gsap.set(card, { y: cardShiftY * relS - gy });
+
+        // light bg + card split reveal (clip rises from the bottom), quick at release start
         if (lightLayer) {
-          if (p < pB) {                                  // not yet holding: light stays hidden
-            lightLayer.style.clipPath = 'inset(100% 0 0 0)';
-          } else {                                       // holding: light rises through the card
-            var rp = revealSpanP > 0 ? Math.min(1, (p - pB) / revealSpanP) : 1;
-            var cr = card.getBoundingClientRect();
-            cardClone.style.top   = cr.top + 'px';
-            cardClone.style.left  = cr.left + 'px';
-            cardClone.style.width = cr.width + 'px';
-            lightLayer.style.clipPath = 'inset(' + ((1 - rp) * 100) + '% 0 0 0)';
-            lightOn = rp >= 1;                            // once fully revealed, reality is light too
-          }
+          var rp = revealSpanP > 0 ? Math.min(1, (p - pG) / revealSpanP) : 1;
+          var cr = card.getBoundingClientRect();
+          cardClone.style.top   = cr.top + 'px';
+          cardClone.style.left  = cr.left + 'px';
+          cardClone.style.width = cr.width + 'px';
+          var clip = 'inset(' + ((1 - rp) * 100) + '% 0 0 0)';
+          lightLayer.style.clipPath = clip;
+          if (cardCloneLayer) { cardCloneLayer.style.clipPath = clip; }   // keep the split in sync, card above H2
+          lightOn = rp >= 1;                             // once fully revealed, reality is light too
+        }
+
+        // H2 scrolls UP through the viewport (enters from below, exits top) over the release
+        if (headLayer) {
+          headLayer.style.display = '';
+          var hy = (0.5 - rel) * HEAD_TRAVEL_VH * window.innerHeight;   // +below at start -> -above at end
+          headClone.style.transform = 'translate(-50%, calc(-50% + ' + hy + 'px))';
         }
       }
-      // section bg by phase: dark during assembly (rounded corners read) -> green
-      // during the leave (no black band) -> light once fully revealed.
+      // section bg: keep the section's own bg through assembly AND the leave, so the
+      // lifting green panel's rounded corners read against it -> light once fully revealed.
+      // (previously painted green during the leave = green-on-green, hid the bottom radius.)
       if (greenSectionBg) {
-        section.style.backgroundColor = (p <= pA) ? origSectionBg : (lightOn ? lightBg : greenSectionBg);
+        section.style.backgroundColor = lightOn ? lightBg : origSectionBg;
       }
       setRealLight(lightOn);   // single source of truth: light only in the fully-revealed hold
     }
@@ -405,8 +464,8 @@
       pin: true, invalidateOnRefresh: true,
       onRefreshInit: refresh,
       onUpdate: function (self) { applyScroll(self.progress); },
-      onLeave:     function () { if (lightLayer) { lightLayer.style.display = 'none'; } },
-      onEnterBack: function () { if (lightLayer) { lightLayer.style.display = ''; } },
+      onLeave:     function () { if (lightLayer) { lightLayer.style.display = 'none'; } if (headLayer) { headLayer.style.display = 'none'; } if (cardCloneLayer) { cardCloneLayer.style.display = 'none'; } },
+      onEnterBack: function () { if (lightLayer) { lightLayer.style.display = ''; } if (cardCloneLayer) { cardCloneLayer.style.display = ''; } },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
     });
 
