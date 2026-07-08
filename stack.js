@@ -6,12 +6,17 @@
 
   var POP_BATCH     = 2;
   var POP_STAGGER   = 0.05;
-  var POP_DUR       = 0.42;
+  var POP_DUR       = 0.34;
   var POP_BUNCH     = 0.55;   // <1 pulls pops earlier & tighter; 1 = original spacing
   var POP_LEAD      = 0.06;   // small scroll lead so the FIRST batch animates in (not pre-popped at p=0)
   var POP_SCALE_X   = 0.35;
   var POP_SCALE_Y   = 0.85;
-  var POP_EASE      = 'back.out(1.6)';
+  var POP_EASE      = 'back.out(2)';
+
+  // fan-out: rows pop in bunched near centre (a fist), then scrolling moves them OUT
+  // to their scatter spots. FIST = how tight the start is: 0 = all stacked dead-centre,
+  // 0.5 = start half-open (skips the tightest part), 1 = no fist (start at scatter spot).
+  var FIST          = 0.5;
 
   var CHECK_DELAY   = 0.18;
   var CHECK_DUR     = 0.4;
@@ -127,6 +132,7 @@
     card.style.willChange = 'transform';
 
     var geo = items.map(function () { return { dx: 0, dy: 0 }; });
+    var out = items.map(function () { return { ox: 0, oy: 0 }; });   // outward vector (scatter spot -> section centre)
 
     // read natural (flowed) rects with all transforms cleared, then invert against
     // the scatter fraction to get each item's scatter delta.
@@ -134,10 +140,16 @@
       gsap.set(items, { x: 0, y: 0, scaleX: 1, scaleY: 1 });
       gsap.set(card,  { y: 0 });
       var mi  = scatterCtx.getBoundingClientRect();
+      var sr  = section.getBoundingClientRect();
+      var scx = sr.left + sr.width  / 2;
+      var scy = sr.top  + sr.height / 2;
       var nat = items.map(function (it) { return it.getBoundingClientRect(); });
       for (var s = 0; s < items.length; s++) {
         geo[s].dx = (mi.left + frac[s].fx * mi.width)  - nat[s].left;
         geo[s].dy = (mi.top  + frac[s].fy * mi.height) - nat[s].top;
+        // vector from section centre to this row's scatter spot -> drift direction
+        out[s].ox = (nat[s].left + geo[s].dx + nat[s].width  / 2) - scx;
+        out[s].oy = (nat[s].top  + geo[s].dy + nat[s].height / 2) - scy;
       }
     }
 
@@ -209,6 +221,12 @@
     function thresholdFor(step) { return step / stepCount; }
     var popThresh    = popTls.map(function (_, i) { return POP_LEAD + thresholdFor(i) * POP_BUNCH; });
     var gatherThresh = thresholdFor(batchCount);
+
+    // fan-out grows across the assembly (0 at start of pops -> full just as gather begins)
+    function spreadT(ap) {
+      if (gatherThresh <= 0) { return 0; }
+      return smooth(ap / gatherThresh);
+    }
 
     // drive pop batches + gather off assembly progress (0..1)
     function update(p) {
@@ -332,7 +350,22 @@
     // leave, light reveal, theme). Used by both onUpdate and refresh so the state
     // is always self-consistent, even on fast scroll or resize.
     function applyScroll(p) {
-      update(pA > 0 ? Math.min(1, p / pA) : 1);
+      var ap = pA > 0 ? Math.min(1, p / pA) : 1;
+      update(ap);
+
+      // fan-out: rows start bunched at centre (a fist) and open OUT to their scatter
+      // spots as scroll progresses. gather owns x/y once it turns on.
+      if (!gatherOn) {
+        var t    = spreadT(ap);              // 0 = tight fist, 1 = full scatter spot
+        var pull = (1 - FIST) * (1 - t);     // amount to pull each row back toward centre
+        for (var si = 0; si < items.length; si++) {
+          gsap.set(items[si], {
+            x: geo[si].dx - out[si].ox * pull,
+            y: geo[si].dy - out[si].oy * pull
+          });
+        }
+      }
+
       var lightOn = false;
       if (p <= pA) {                                     // assembling at the bottom
         gsap.set(card, { y: 0 });
