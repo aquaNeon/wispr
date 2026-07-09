@@ -53,7 +53,7 @@
   var LIGHT_BG_VAR   = '--light-main';
   var LIGHT_CARD_BG  = '#E4E4D0';     // card face in the light theme
   var LIGHT_ROW_BG   = '#FFFDF9';     // task rows in the light theme
-  var LIGHT_Z        = 9990;          // clone stacking — above section content, BELOW the nav (9999)
+  var LIGHT_Z        = 990;           // clone stacking — above section content, BELOW the nav wrapper (999)
   var LIGHT_TEXT     = '#1A1A1A';     // text + check outline in the light theme
   // NOTE: the white-section H2 is plain Webflow content now (scrolls normally) — not driven here.
 
