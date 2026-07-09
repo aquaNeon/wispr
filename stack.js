@@ -320,9 +320,10 @@
     var tabsWrap  = section.querySelector('.meeting_tabs_contain');
     var contentEls = [greenPanel, transWrap, tabsWrap].filter(Boolean);
 
-    // card (inside the green panel) must sit ABOVE the H2 text + tabs grid where they
-    // overlap. these are all transformed (gsap y) so z-index applies.
-    if (greenPanel) { greenPanel.style.zIndex = '5'; }
+    // card (inside the green panel) must sit ABOVE the H2 text + tabs grid where they overlap.
+    // these are all transformed (gsap y) so z-index applies. green panel is lifted high (but
+    // below the 999 nav) so it beats the H2/SVGs whatever their own z, carrying the card with it.
+    if (greenPanel) { greenPanel.style.position = 'relative'; greenPanel.style.zIndex = '900'; }
     if (transWrap)  { transWrap.style.zIndex  = '1'; }
     if (tabsWrap)   { tabsWrap.style.zIndex   = '1'; }
 
@@ -416,14 +417,25 @@
     if (LIGHT_REVEAL) {
       cardClone = card.cloneNode(true);
       cardClone.removeAttribute(ATTR);
-      cardClone.style.cssText = 'position:fixed;margin:0;box-sizing:border-box;pointer-events:none;' +
-        'z-index:' + LIGHT_Z + ';display:none;background:' + LIGHT_CARD_BG + ';color:' + LIGHT_TEXT + ';' +
-        'will-change:clip-path,top,left,width;';
+      // clone lives INSIDE the card (absolute, inset:0) so it's pinned to the card by the DOM
+      // and inherits every transform — no fixed-position chasing, so no sub-pixel seam / green
+      // peek / resize drift. only its clip line changes. z above the rows, below the nav.
+      cardClone.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;margin:0;' +
+        'box-sizing:border-box;pointer-events:none;overflow:hidden;border-radius:inherit;' +
+        'z-index:' + LIGHT_Z + ';display:none;' +
+        'background:' + LIGHT_CARD_BG + ';color:' + LIGHT_TEXT + ';will-change:clip-path;';
       Array.prototype.forEach.call(cardClone.querySelectorAll('*'), function (el) { el.style.transform = ''; el.style.opacity = '1'; });
       Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) { el.style.backgroundColor = LIGHT_ROW_BG; });
       Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) { el.style.color = LIGHT_TEXT; });
       Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) { el.style.borderColor = LIGHT_TEXT; });
-      document.body.appendChild(cardClone);
+      // the clone copied the card's (dark) border — recolor it to the light face, and add a
+      // light box-shadow ring so any 1px dark anti-alias edge of the real card is masked.
+      cardClone.style.borderColor = LIGHT_CARD_BG;
+      cardClone.style.boxShadow   = '0 0 0 1.5px ' + LIGHT_CARD_BG;
+      // NOTE: no position change on the card — it's always GSAP-transformed (translate), and a
+      // transform is a containing block for absolute children, so the clone's inset:0 anchors to
+      // the card automatically. (Setting position:relative here dropped the card behind the H2.)
+      card.appendChild(cardClone);
       // icons: recolor ONLY the property each shape actually paints with — stroke for line
       // icons (e.g. the caret: fill:none), fill for solid ones — so a fill never floods a
       // stroked shape. runs post-append so getComputedStyle is valid. mark each data-stack="icon".
@@ -521,11 +533,8 @@
         if (topClip >= cr.height - 0.5) {
           cardClone.style.display = 'none';                 // fully over green -> all dark
         } else {
+          // clone is a card child at inset:0 — it already tracks the card, just clip the line
           cardClone.style.display  = '';
-          cardClone.style.position = 'fixed';   // restore if parked on a prior leave
-          cardClone.style.top      = cr.top + 'px';
-          cardClone.style.left     = cr.left + 'px';
-          cardClone.style.width    = cr.width + 'px';
           cardClone.style.clipPath = 'inset(' + topClip + 'px 0 0 0)';
         }
       }
@@ -568,17 +577,8 @@
         }
         applyScroll(p);
       },
-      // scrolling out the BOTTOM: park the light clone at its doc position so it scrolls away
-      // still light (no dark-card flash). the isActive gate stops it re-showing on rescale.
-      onLeave: function () {
-        if (cardClone) {
-          var cr = card.getBoundingClientRect();
-          cardClone.style.position = 'absolute';
-          cardClone.style.top  = (window.pageYOffset + cr.top) + 'px';
-          cardClone.style.left = (window.pageXOffset + cr.left) + 'px';
-        }
-        restoreTopRadius();
-      },
+      // clone is a card child now — it scrolls off WITH the card (stays light), no parking needed.
+      onLeave:     function () { restoreTopRadius(); },
       onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } restoreTopRadius(); },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
     });
