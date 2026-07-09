@@ -35,7 +35,7 @@
   // centre while the scroll steps through the tabs (TAB_STEP_VH each), then the pin releases.
   var CARD_TARGET    = 0.5;   // viewport fraction the card centres on (0.5 = dead centre)
   var GREEN_HOLD_VH  = 0.25;  // brief scroll held in green after assembly, before the scroll-through
-  var TAB_STEP_VH    = 0.8;   // scroll length per tab while the tabs section is sticky (card centred)
+  var TAB_STEP_VH    = 1.0;   // scroll length per tab while the tabs section is sticky (card centred) = 100vh/tab
 
   // during the release: the green panel (bg + headline) scrolls up & fully out while the
   // card stays locked at centre (equal-and-opposite y), revealing the cream behind.
@@ -273,6 +273,7 @@
       // re-assert the exact visual state for the current scroll position so a
       // resize/refresh never flashes green defaults over the light zone.
       applyScroll(st ? st.progress : 0);
+      if (activeTab >= 0) { moveIndicator(activeTab); }   // keep the elevator aligned
     }
 
     // the green panel = the section child that wraps the card (.hero_contain.is-green).
@@ -301,6 +302,7 @@
     var tabTexts = section.querySelectorAll('[data-tab-text]');   // right-column text panels (per tab)
     var tabAnims = section.querySelectorAll('[data-tab-anim]');   // centre animation slots (per tab)
     var bgSvgs   = section.querySelectorAll('[data-tab-bg]');     // background line SVGs
+    var tabIndicator = tabsWrap ? tabsWrap.querySelector('[data-tab-indicator]') : null; // single orange bar
     var activeTab = -1;
 
     // prep each bg SVG path so we can "draw" it by scrubbing stroke-dashoffset with scroll
@@ -331,6 +333,14 @@
         el.classList.toggle('is-active', parseInt(el.getAttribute(attr), 10) === n);
       });
     }
+    // slide the single orange indicator to sit over the active tab (elevator).
+    // CSS owns the glide (transition on transform); we just set the target y + height.
+    function moveIndicator(n) {
+      if (!tabIndicator || !tabItems[n]) { return; }
+      var it = tabItems[n];
+      tabIndicator.style.transform = 'translateY(' + it.offsetTop + 'px)';
+      tabIndicator.style.height    = it.offsetHeight + 'px';
+    }
     function setActiveTab(n) {
       if (n === activeTab) { return; }
       activeTab = n;
@@ -339,6 +349,7 @@
       section.setAttribute('data-active-tab', String(n));
       toggleByIndex(tabTexts, 'data-tab-text', n);   // right text
       toggleByIndex(tabAnims, 'data-tab-anim', n);   // centre animation slot
+      moveIndicator(n);                              // elevator to the active tab
     }
 
     // measured each refresh: how far the card rises (bottom -> centre), and how far the
