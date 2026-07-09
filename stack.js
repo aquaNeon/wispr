@@ -30,13 +30,12 @@
 
   var HOLD_STEPS    = 0;      // extra held steps after gather before travel begins
 
-  // sequence: assemble (card bottom, green) -> hold one more beat in green (GREEN_HOLD_VH)
-  // -> release: green scrolls up & away, H2 scrolls through view, card rises to centre and
-  // lands as the H2 scrolls off (RELEASE_VH) -> long hold at centre (HOLD_VH).
+  // sequence: assemble (card bottom, green) -> brief green hold (GREEN_HOLD_VH) -> content
+  // scroll (green + H2 + tabs scroll up, card rises to centre) -> STICKY TABS: card holds at
+  // centre while the scroll steps through the tabs (TAB_STEP_VH each), then the pin releases.
   var CARD_TARGET    = 0.5;   // viewport fraction the card centres on (0.5 = dead centre)
   var GREEN_HOLD_VH  = 0.25;  // brief scroll held in green after assembly, before the scroll-through
-  var RELEASE_VH     = 1.6;   // green-leave + H2 scroll + card-centre, all together
-  var HOLD_VH        = 3;     // hold at centre after the green lifts, then the pin releases
+  var TAB_STEP_VH    = 0.8;   // scroll length per tab while the tabs section is sticky (card centred)
 
   // during the release: the green panel (bg + headline) scrolls up & fully out while the
   // card stays locked at centre (equal-and-opposite y), revealing the cream behind.
@@ -294,6 +293,54 @@
     if (transWrap)  { transWrap.style.zIndex  = '1'; }
     if (tabsWrap)   { tabsWrap.style.zIndex   = '1'; }
 
+    // tabs: left-column items (clickable); the scroll advances the active one while sticky.
+    // state is published as `is-active` on the active tab + `data-active-tab="N"` on the tabs
+    // container and the section, so Webflow content (card inner + right text) can react to it.
+    var tabItems = tabsWrap ? Array.prototype.slice.call(tabsWrap.querySelectorAll('.meeting_tabs_item')) : [];
+    var numTabs  = Math.max(1, tabItems.length);
+    var tabTexts = section.querySelectorAll('[data-tab-text]');   // right-column text panels (per tab)
+    var tabAnims = section.querySelectorAll('[data-tab-anim]');   // centre animation slots (per tab)
+    var bgSvgs   = section.querySelectorAll('[data-tab-bg]');     // background line SVGs
+    var activeTab = -1;
+
+    // prep each bg SVG path so we can "draw" it by scrubbing stroke-dashoffset with scroll
+    Array.prototype.forEach.call(bgSvgs, function (svg) {
+      Array.prototype.forEach.call(svg.querySelectorAll('path'), function (p) {
+        var len = (p.getTotalLength ? p.getTotalLength() : 0) || 1;
+        p.style.strokeDasharray  = len;
+        p.style.strokeDashoffset = len;                 // start un-drawn
+        p._len = len;
+      });
+    });
+    // paint the lines in-then-out across the tabs phase: each SVG owns an equal slice; over
+    // its slice it draws IN (first half) then OUT (second half). tp = 0..1 tabs progress.
+    function drawBg(tp) {
+      var N = bgSvgs.length; if (!N) { return; }
+      for (var i = 0; i < N; i++) {
+        var local = (tp - i / N) * N;                   // 0..1 within this SVG's slice
+        local = local < 0 ? 0 : (local > 1 ? 1 : local);
+        var f = (local <= 0.5) ? (1 - local * 2) : (-(local - 0.5) * 2);  // 1->0 (in) then 0->-1 (out)
+        Array.prototype.forEach.call(bgSvgs[i].querySelectorAll('path'), function (p) {
+          p.style.strokeDashoffset = String(f * p._len);
+        });
+      }
+    }
+
+    function toggleByIndex(list, attr, n) {
+      Array.prototype.forEach.call(list, function (el) {
+        el.classList.toggle('is-active', parseInt(el.getAttribute(attr), 10) === n);
+      });
+    }
+    function setActiveTab(n) {
+      if (n === activeTab) { return; }
+      activeTab = n;
+      for (var i = 0; i < tabItems.length; i++) { tabItems[i].classList.toggle('is-active', i === n); }
+      if (tabsWrap) { tabsWrap.setAttribute('data-active-tab', String(n)); }
+      section.setAttribute('data-active-tab', String(n));
+      toggleByIndex(tabTexts, 'data-tab-text', n);   // right text
+      toggleByIndex(tabAnims, 'data-tab-anim', n);   // centre animation slot
+    }
+
     // measured each refresh: how far the card rises (bottom -> centre), and how far the
     // content must scroll (S) to bring the tabs-grid centre to screen centre (= where the
     // card lands). sCardStart = the S at which the H2 is above the card and it begins rising.
@@ -342,10 +389,11 @@
     var snapPoints = [];
     function computeTiming() {
       var contentVH = window.innerHeight ? (sCenter / window.innerHeight) : 1;
-      totalVH = assemblySteps + GREEN_HOLD_VH + contentVH + HOLD_VH;
+      var tabsVH    = numTabs * TAB_STEP_VH;                                  // sticky tabs phase
+      totalVH = assemblySteps + GREEN_HOLD_VH + contentVH + tabsVH;
       pA    = assemblySteps / totalVH;                                        // assembly ends
       pG    = (assemblySteps + GREEN_HOLD_VH) / totalVH;                      // green hold ends -> content scroll begins
-      pHold = (assemblySteps + GREEN_HOLD_VH + contentVH) / totalVH;          // card centred / sticky hold begins
+      pHold = (assemblySteps + GREEN_HOLD_VH + contentVH) / totalVH;          // card centred / tabs phase begins
       snapPoints = [0].concat(popThresh, [gatherThresh]).map(function (v) { return v * pA; }).concat([pG, pHold, 1]);
     }
     computeTiming();
@@ -400,6 +448,18 @@
           cardClone.style.clipPath = 'inset(' + topClip + 'px 0 0 0)';   // reveal below the line
         }
       }
+
+      // tabs: while the card is sticky at centre [pHold..1], the scroll advances the active
+      // tab (equal slice each). before that, tab 0 is the default.
+      var tn = 0;
+      if (p > pHold && pHold < 1) {
+        tn = Math.floor((p - pHold) / (1 - pHold) * numTabs);
+        if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
+      }
+      setActiveTab(tn);
+
+      // background lines paint in/out, scrubbed across the tabs phase
+      drawBg((p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0);
     }
 
     var st = ScrollTrigger.create({
@@ -420,6 +480,15 @@
       onLeave:     function () { if (cardClone) { cardClone.style.display = 'none'; } },
       onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
+    });
+
+    // click a tab -> smooth-scroll to the middle of that tab's slice
+    tabItems.forEach(function (item, i) {
+      item.style.cursor = 'pointer';
+      item.addEventListener('click', function () {
+        var centreP = pHold + (i + 0.5) / numTabs * (1 - pHold);
+        window.scrollTo({ top: st.start + centreP * (st.end - st.start), behavior: 'smooth' });
+      });
     });
 
     // re-measure once layout & webfonts settle (avoids sizing off pre-font metrics)
