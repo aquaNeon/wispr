@@ -26,7 +26,7 @@
   var GATHER_EASE    = 'power3.inOut';
   var CARD_FADE      = 0.4;
   var LANDED_BG      = '';        // explicit row colour on landing; '' = read the CSS var below
-  var LANDED_BG_VAR  = '--green'; // row bg once gathered, so rows read distinct from the card face
+  var LANDED_BG_VAR  = '--base-color--fathom'; // row bg once gathered, so rows read distinct from the card face
 
   var HOLD_STEPS    = 0;      // extra held steps after gather before travel begins
 
@@ -36,6 +36,8 @@
   var CARD_TARGET    = 0.5;   // viewport fraction the card centres on (0.5 = dead centre)
   var GREEN_HOLD_VH  = 0.25;  // brief scroll held in green after assembly, before the scroll-through
   var TAB_STEP_VH    = 1.0;   // scroll length per tab while the tabs section is sticky (card centred) = 100vh/tab
+  var END_HOLD_VH    = 0.35;  // short hold on the LAST tab before release (vs a full empty step)
+  var BG_SMOOTH      = 0.12;  // 0..1 ease of the bg-line paint toward scroll; lower = softer/laggier draw
 
   // during the release: the green panel (bg + headline) scrolls up & fully out while the
   // card stays locked at centre (equal-and-opposite y), revealing the cream behind.
@@ -51,6 +53,7 @@
   var LIGHT_BG_VAR   = '--light-main';
   var LIGHT_CARD_BG  = '#E4E4D0';     // card face in the light theme
   var LIGHT_ROW_BG   = '#FFFDF9';     // task rows in the light theme
+  var LIGHT_Z        = 9990;          // clone stacking — above section content, BELOW the nav (9999)
   var LIGHT_TEXT     = '#1A1A1A';     // text + check outline in the light theme
   // NOTE: the white-section H2 is plain Webflow content now (scrolls normally) — not driven here.
 
@@ -62,6 +65,11 @@
   function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
 
   function init() {
+    // desktop-only: below Webflow's tablet breakpoint (991px) we don't pin or animate.
+    // the separate static mobile block (stacked, per-tab) takes over via CSS.
+    // NOTE: crossing 991px live (e.g. rotating a tablet) needs a reload to switch modes.
+    if (!window.matchMedia('(min-width: 992px)').matches) { return; }
+
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
       console.warn('[stack] GSAP + ScrollTrigger required before this script.');
       return;
@@ -87,6 +95,12 @@
     if (window.getComputedStyle(section).position === 'static') {
       section.style.position = 'relative';
     }
+
+    // lock the section to one viewport + clip: keeps the green panel viewport-sized (so its
+    // corners are on-screen) AND stops the tall natural height from adding empty scroll after
+    // the pin. the animation overlays every element into this frame via transforms anyway.
+    section.style.height   = window.innerHeight + 'px';
+    section.style.overflow = 'hidden';
 
     // scatter context = the items' original parent (.meeting_items in prod, the
     // section in the test harness). Its box is the frame the scatter % live in.
@@ -121,6 +135,15 @@
 
     var checks    = items.map(function (it) { return it.querySelector('[' + ATTR + '="check"], .meeting_check'); });
     var itemTexts = items.map(function (it) { return it.querySelector('.meeting_item_text') || it; });
+
+    // card-head icon(s) (e.g. the ▾ next to TODAY): these live in the card head, NOT inside a
+    // task row, so the head's opacity:0 doesn't cover them and they'd show before the card.
+    // hide them up front and fade them in with the head on gather. (row icons are excluded —
+    // they belong to their rows and pop with them.)
+    var headIcons = card
+      ? Array.prototype.slice.call(card.querySelectorAll('[' + ATTR + '="icon"]'))
+          .filter(function (ic) { return !items.some(function (it) { return it.contains(ic); }); })
+      : [];
 
     // capture the card's painted look, then make the face transparent so the
     // "card" visually arrives during gather (never fade card OPACITY — that would
@@ -185,6 +208,7 @@
     });
     gsap.set(card, { opacity: 1, y: 0, backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)' });
     if (head) { gsap.set(head, { opacity: 0 }); }
+    if (headIcons.length) { gsap.set(headIcons, { opacity: 0 }); }
 
     // --- pop timelines (batches): reveal only, in place at the scatter spot ---
     var batchCount = Math.ceil(items.length / POP_BATCH);
@@ -213,6 +237,7 @@
     var gatherTl = gsap.timeline({ paused: true });
     gatherTl.to(card, { backgroundColor: origBg, borderColor: origBorder, duration: CARD_FADE, ease: 'power2.out' }, 0);
     if (head) { gatherTl.to(head, { opacity: 1, duration: CARD_FADE, ease: 'power2.out' }, 0); }
+    if (headIcons.length) { gatherTl.to(headIcons, { opacity: 1, duration: CARD_FADE, ease: 'power2.out' }, 0); }
     items.forEach(function (it, slot) {
       var tween = {
         x: 0, y: 0, duration: GATHER_DUR, ease: GATHER_EASE,
@@ -252,6 +277,8 @@
     // re-measure on refresh/resize: landing stays pixel-exact (natural is measured
     // live); only the decorative scatter start reconstructs from the fractions.
     function refresh() {
+      section.style.height = window.innerHeight + 'px';   // keep the viewport lock integer-exact on resize
+      if (cardClone) { cardClone.style.display = 'none'; }  // hide during re-measure; applyScroll re-shows if active
       contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });   // neutral for a clean measure
       measureGeo();
       measurePositions();
@@ -276,9 +303,14 @@
       if (activeTab >= 0) { moveIndicator(activeTab); }   // keep the elevator aligned
     }
 
-    // the green panel = the section child that wraps the card (.hero_contain.is-green).
-    var greenPanel = card;
-    while (greenPanel.parentNode && greenPanel.parentNode !== section) { greenPanel = greenPanel.parentNode; }
+    // the green panel = the element carrying the green bg + rounded corners. prefer an
+    // explicit data-stack="green" (deterministic across projects); otherwise fall back to
+    // walking up from the card to the section's direct child (which assumes a fixed nesting).
+    var greenPanel = one(section, 'green');
+    if (!greenPanel) {
+      greenPanel = card;
+      while (greenPanel.parentNode && greenPanel.parentNode !== section) { greenPanel = greenPanel.parentNode; }
+    }
     var canLeave = greenPanel !== card;
     if (canLeave && GREEN_RADIUS) { greenPanel.style.setProperty('border-radius', GREEN_RADIUS, 'important'); }
 
@@ -304,6 +336,7 @@
     var bgSvgs   = section.querySelectorAll('[data-tab-bg]');     // background line SVGs
     var tabIndicator = tabsWrap ? tabsWrap.querySelector('[data-tab-indicator]') : null; // single orange bar
     var activeTab = -1;
+    var bgTargetP = 0, bgCurrentP = 0;   // lerped bg-line paint progress (see ticker below)
 
     // prep each bg SVG path so we can "draw" it by scrubbing stroke-dashoffset with scroll
     Array.prototype.forEach.call(bgSvgs, function (svg) {
@@ -337,9 +370,10 @@
     // CSS owns the glide (transition on transform); we just set the target y + height.
     function moveIndicator(n) {
       if (!tabIndicator || !tabItems[n]) { return; }
-      var it = tabItems[n];
-      tabIndicator.style.transform = 'translateY(' + it.offsetTop + 'px)';
-      tabIndicator.style.height    = it.offsetHeight + 'px';
+      // align to the tab's LABEL text (not the whole item) so the bar matches the name height
+      var label = tabItems[n].querySelector('.meeting_tabs_text_wrap') || tabItems[n];
+      tabIndicator.style.transform = 'translateY(' + label.offsetTop + 'px)';
+      tabIndicator.style.height    = label.offsetHeight + 'px';
     }
     function setActiveTab(n) {
       if (n === activeTab) { return; }
@@ -383,24 +417,40 @@
       cardClone = card.cloneNode(true);
       cardClone.removeAttribute(ATTR);
       cardClone.style.cssText = 'position:fixed;margin:0;box-sizing:border-box;pointer-events:none;' +
-        'z-index:10000;display:none;background:' + LIGHT_CARD_BG + ';color:' + LIGHT_TEXT + ';' +
+        'z-index:' + LIGHT_Z + ';display:none;background:' + LIGHT_CARD_BG + ';color:' + LIGHT_TEXT + ';' +
         'will-change:clip-path,top,left,width;';
       Array.prototype.forEach.call(cardClone.querySelectorAll('*'), function (el) { el.style.transform = ''; el.style.opacity = '1'; });
       Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) { el.style.backgroundColor = LIGHT_ROW_BG; });
       Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) { el.style.color = LIGHT_TEXT; });
       Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) { el.style.borderColor = LIGHT_TEXT; });
       document.body.appendChild(cardClone);
+      // icons: recolor ONLY the property each shape actually paints with — stroke for line
+      // icons (e.g. the caret: fill:none), fill for solid ones — so a fill never floods a
+      // stroked shape. runs post-append so getComputedStyle is valid. mark each data-stack="icon".
+      Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="icon"]'), function (icon) {
+        icon.style.color = LIGHT_TEXT;   // masked-div icons using background:currentColor
+        var shapes = icon.querySelectorAll('path, line, polyline, polygon, circle, rect, ellipse');
+        Array.prototype.forEach.call(shapes.length ? shapes : [icon], function (p) {
+          var cs = window.getComputedStyle(p);
+          var none = { 'none': 1, 'rgba(0, 0, 0, 0)': 1, 'transparent': 1 };
+          if (cs.fill   && !none[cs.fill])   { p.style.fill   = LIGHT_TEXT; }
+          if (cs.stroke && !none[cs.stroke]) { p.style.stroke = LIGHT_TEXT; }
+        });
+      });
     }
 
     // --- single master pin: assembly -> green hold -> content scroll (green out, H2 in,
     //     card rises to centre) -> sticky hold at centre. the content-scroll length is the
     //     measured scroll distance (sCenter), so timing is recomputed on refresh. ---
     var assemblySteps = STEP_VH * stepCount;
-    var totalVH = 0, pA = 0, pG = 0, pHold = 0;
+    var totalVH = 0, pA = 0, pG = 0, pHold = 0, tabSpan = 1;
     var snapPoints = [];
     function computeTiming() {
       var contentVH = window.innerHeight ? (sCenter / window.innerHeight) : 1;
-      var tabsVH    = numTabs * TAB_STEP_VH;                                  // sticky tabs phase
+      // each tab gets a full step to transition through, except the LAST which only
+      // holds END_HOLD_VH before release — kills the ~100vh of empty scroll at the end.
+      var tabsVH    = (numTabs - 1) * TAB_STEP_VH + END_HOLD_VH;              // sticky tabs phase
+      tabSpan = tabsVH / TAB_STEP_VH;   // tabs-phase length in "steps" (last one is short)
       totalVH = assemblySteps + GREEN_HOLD_VH + contentVH + tabsVH;
       pA    = assemblySteps / totalVH;                                        // assembly ends
       pG    = (assemblySteps + GREEN_HOLD_VH) / totalVH;                      // green hold ends -> content scroll begins
@@ -443,20 +493,40 @@
       // (S >= sCardStart), then rises in unison to centre, then sticky.
       gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
 
+      // green panel corners, PER EDGE: an edge flush to the viewport squares (full-bleed);
+      // an edge floating inside the viewport keeps the radius. so docked-at-top -> square top,
+      // green bottom sitting mid-screen (cream below) -> rounded bottom.
+      if (canLeave && GREEN_RADIUS) {
+        var maxR = parseFloat(GREEN_RADIUS) || 0;
+        var gr   = greenPanel.getBoundingClientRect();
+        var vh   = window.innerHeight;
+        var topR = (gr.top    <= 1)      ? 0 : Math.min(maxR, gr.top);
+        var botR = (gr.bottom >= vh - 1) ? 0 : Math.min(maxR, vh - gr.bottom);
+        greenPanel.style.setProperty('border-top-left-radius',     topR + 'px', 'important');
+        greenPanel.style.setProperty('border-top-right-radius',    topR + 'px', 'important');
+        greenPanel.style.setProperty('border-bottom-left-radius',  botR + 'px', 'important');
+        greenPanel.style.setProperty('border-bottom-right-radius', botR + 'px', 'important');
+      }
+
       // dark/light SPLIT: keep the light clone exactly over the real (dark) card, clipped at
       // the green/white boundary (green panel's bottom edge) — dark above the line, light below.
-      if (cardClone) {
+      // ONLY while the section is actively pinned — otherwise a refresh/resize would re-show
+      // the fixed clone at centre as a stray "duplicate card". When inactive we leave it hidden
+      // (or parked by onLeave) and never reposition it.
+      if (cardClone && st && st.isActive) {
         var cr = card.getBoundingClientRect();
         var B  = canLeave ? greenPanel.getBoundingClientRect().bottom : -1e9;
         var topClip = Math.max(0, Math.min(cr.height, B - cr.top));   // boundary in card-local px
+        if (p >= pHold) { topClip = 0; }   // tabs phase: split complete -> light covers fully
         if (topClip >= cr.height - 0.5) {
           cardClone.style.display = 'none';                 // fully over green -> all dark
         } else {
           cardClone.style.display  = '';
+          cardClone.style.position = 'fixed';   // restore if parked on a prior leave
           cardClone.style.top      = cr.top + 'px';
           cardClone.style.left     = cr.left + 'px';
           cardClone.style.width    = cr.width + 'px';
-          cardClone.style.clipPath = 'inset(' + topClip + 'px 0 0 0)';   // reveal below the line
+          cardClone.style.clipPath = 'inset(' + topClip + 'px 0 0 0)';
         }
       }
 
@@ -464,13 +534,23 @@
       // tab (equal slice each). before that, tab 0 is the default.
       var tn = 0;
       if (p > pHold && pHold < 1) {
-        tn = Math.floor((p - pHold) / (1 - pHold) * numTabs);
+        // map by STEPS (not equal fractions) so the short last-tab hold doesn't shrink
+        // every tab's window — tabs 0..n-2 get a full step, the last gets END_HOLD.
+        tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
         if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
       }
       setActiveTab(tn);
 
-      // background lines paint in/out, scrubbed across the tabs phase
-      drawBg((p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0);
+      // background lines: publish the target; a lerped ticker eases the actual paint
+      // so the draw isn't harshly welded to the raw scroll.
+      bgTargetP = (p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0;
+    }
+
+    // restore the panel's rounded top once the section is released (scrolled past either
+    // end) — applyScroll only runs while pinned, so the docked 0px would otherwise stick.
+    function restoreTopRadius() {
+      if (!canLeave || !GREEN_RADIUS) { return; }
+      greenPanel.style.setProperty('border-radius', GREEN_RADIUS, 'important');
     }
 
     var st = ScrollTrigger.create({
@@ -488,17 +568,49 @@
         }
         applyScroll(p);
       },
-      onLeave:     function () { if (cardClone) { cardClone.style.display = 'none'; } },
-      onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } },
+      // scrolling out the BOTTOM: park the light clone at its doc position so it scrolls away
+      // still light (no dark-card flash). the isActive gate stops it re-showing on rescale.
+      onLeave: function () {
+        if (cardClone) {
+          var cr = card.getBoundingClientRect();
+          cardClone.style.position = 'absolute';
+          cardClone.style.top  = (window.pageYOffset + cr.top) + 'px';
+          cardClone.style.left = (window.pageXOffset + cr.left) + 'px';
+        }
+        restoreTopRadius();
+      },
+      onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } restoreTopRadius(); },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
     });
 
-    // click a tab -> smooth-scroll to the middle of that tab's slice
+    // ease the bg-line paint toward the scroll target every frame, so lines draw
+    // in/out smoothly instead of snapping with the scrollbar. guarded so a hiccup
+    // here can never stall GSAP's shared ticker.
+    gsap.ticker.add(function () {
+      try {
+        var diff = bgTargetP - bgCurrentP;
+        if (Math.abs(diff) < 0.0005) { return; }
+        var dt = gsap.ticker.deltaRatio();                  // frame-rate independent
+        bgCurrentP += diff * (1 - Math.pow(1 - BG_SMOOTH, dt));
+        drawBg(bgCurrentP);
+      } catch (e) { /* never let a paint hiccup break the global ticker */ }
+    });
+
+    // click a tab -> jump to the middle of that tab's slice
     tabItems.forEach(function (item, i) {
       item.style.cursor = 'pointer';
       item.addEventListener('click', function () {
-        var centreP = pHold + (i + 0.5) / numTabs * (1 - pHold);
-        window.scrollTo({ top: st.start + centreP * (st.end - st.start), behavior: 'smooth' });
+        // land in the MIDDLE of this tab's slice using the step-based mapping (the last tab's
+        // slice is short — END_HOLD — so uniform math overshot it to the very end / leave).
+        var last = numTabs - 1;
+        var centerProg = (i < last) ? (i + 0.5) / tabSpan : ((last / tabSpan) + 1) / 2;
+        var centreP = pHold + centerProg * (1 - pHold);
+        // pre-seed the bg paint at the START of the destination line's slice, so the lerp
+        // draws only that line in — instead of cycling every line on the way.
+        var N = bgSvgs.length || 1;
+        bgCurrentP = Math.min(N - 1, Math.floor(centerProg * N)) / N;
+        // jump instantly so the scroll doesn't cross every tab; only the target fires.
+        window.scrollTo({ top: st.start + centreP * (st.end - st.start), behavior: 'auto' });
       });
     });
 
