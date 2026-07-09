@@ -2,11 +2,17 @@
 
   // pinned horizontal "wave" slider: pin the section, scroll drives the card track
   // right -> left, and each card rides a gentle sine wave (vertical + rotation) as
-  // it crosses the viewport. Works for any number of .slider_card children.
+  // it crosses the viewport. Works for any number of card children.
+  //
+  // attribute contract (class-name agnostic — name the Webflow classes anything):
+  //   data-slider="wrap"   -> the section that gets pinned
+  //   data-slider="track"  -> the flex row we translate (inside wrap)
+  //   data-slider="card"   -> each card (inside track)
 
-  var WRAP   = '.slider_wrap';
-  var TRACK  = '.slider_inner_wrap';
-  var CARD   = '.slider_card';
+  var ATTR   = 'data-slider';
+  var A_WRAP  = 'wrap';
+  var A_TRACK = 'track';
+  var A_CARD  = 'card';
 
   var GAP      = 48;     // px between cards (applied to the track)
   var START_AT = 0.72;   // viewport fraction where the FIRST card's centre starts; HIGHER = further right (enters more), lower = more of it visible
@@ -34,12 +40,12 @@
     }
     gsap.registerPlugin(ScrollTrigger);
 
-    var wrap  = document.querySelector(WRAP);
-    var track = document.querySelector(TRACK);
-    if (!wrap || !track) { console.warn('[slider] .slider_wrap / .slider_inner_wrap not found'); return; }
+    var wrap  = document.querySelector('[' + ATTR + '="' + A_WRAP + '"]');
+    var track = wrap && wrap.querySelector('[' + ATTR + '="' + A_TRACK + '"]');
+    if (!wrap || !track) { console.warn('[slider] need data-slider="wrap" with a data-slider="track" inside'); return; }
 
-    var cards = Array.prototype.slice.call(track.querySelectorAll(CARD));
-    if (!cards.length) { console.warn('[slider] no .slider_card children'); return; }
+    var cards = Array.prototype.slice.call(track.querySelectorAll('[' + ATTR + '="' + A_CARD + '"]'));
+    if (!cards.length) { console.warn('[slider] no data-slider="card" children inside the track'); return; }
 
     // lay the track out as a horizontal row
     track.style.display    = 'flex';
