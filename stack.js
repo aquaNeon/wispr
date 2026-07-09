@@ -328,6 +328,20 @@
       greenPanel.style.overflow = 'hidden';
     }
 
+    // top hairline cover: pinning the clipped section lands on a sub-pixel, so the page cream
+    // bleeds through ~1px at the very top when the green is docked. we can't cover it from
+    // inside the clipped section, so a thin fixed green strip sits at viewport top (below the
+    // nav), shown ONLY while the green is docked (never during scroll-in or the light reveal).
+    var greenBg  = canLeave ? window.getComputedStyle(greenPanel).backgroundColor : '';
+    var topCover = null;
+    if (canLeave && greenBg && greenBg !== 'rgba(0, 0, 0, 0)' && greenBg !== 'transparent') {
+      topCover = document.createElement('div');
+      topCover.setAttribute('aria-hidden', 'true');
+      topCover.style.cssText = 'position:fixed;top:0;left:0;right:0;height:3px;pointer-events:none;' +
+        'display:none;z-index:' + (LIGHT_Z - 1) + ';background:' + greenBg + ';';
+      document.body.appendChild(topCover);
+    }
+
     // the rest of the section below the green panel: the white transition (holds the H2)
     // and the tabs grid. we scroll the WHOLE stack up together (by S) to reveal them.
     var transWrap = section.querySelector('.meeting_transition_wrap');
@@ -532,6 +546,9 @@
         greenPanel.style.setProperty('border-top-right-radius',    topR + 'px', 'important');
         greenPanel.style.setProperty('border-bottom-left-radius',  botR + 'px', 'important');
         greenPanel.style.setProperty('border-bottom-right-radius', botR + 'px', 'important');
+        // hairline cover: only while the top is docked (squared) AND the green still spans the
+        // top edge — never during the rounded scroll-in or once the green has left upward.
+        if (topCover) { topCover.style.display = (topR === 0 && gr.bottom > 3) ? 'block' : 'none'; }
       }
 
       // dark/light SPLIT: keep the light clone exactly over the real (dark) card, clipped at
@@ -590,8 +607,8 @@
         applyScroll(p);
       },
       // clone is a card child now — it scrolls off WITH the card (stays light), no parking needed.
-      onLeave:     function () { restoreTopRadius(); },
-      onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } restoreTopRadius(); },
+      onLeave:     function () { if (topCover) { topCover.style.display = 'none'; } restoreTopRadius(); },
+      onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } if (topCover) { topCover.style.display = 'none'; } restoreTopRadius(); },
       snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
     });
 
