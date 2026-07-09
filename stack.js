@@ -65,10 +65,11 @@
   function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
 
   function init() {
-    // desktop-only: below Webflow's tablet breakpoint (991px) we don't pin or animate.
-    // the separate static mobile block (stacked, per-tab) takes over via CSS.
-    // NOTE: crossing 991px live (e.g. rotating a tablet) needs a reload to switch modes.
-    if (!window.matchMedia('(min-width: 992px)').matches) { return; }
+    // DESKTOP (>=992): full choreography — assembly -> card rise -> content scroll -> sticky tabs.
+    // MOBILE  (<=991): assembly ONLY — tasks pop/gather into the card while pinned, then release
+    //   into normal scroll (the stacked .mobile_meeting-card block flows below). no tabs, no
+    //   content-scroll, no light reveal, no section clip. NOTE: crossing 991px live needs a reload.
+    var isDesktop = window.matchMedia('(min-width: 992px)').matches;
 
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
       console.warn('[stack] GSAP + ScrollTrigger required before this script.');
@@ -96,11 +97,13 @@
       section.style.position = 'relative';
     }
 
-    // lock the section to one viewport + clip: keeps the green panel viewport-sized (so its
-    // corners are on-screen) AND stops the tall natural height from adding empty scroll after
-    // the pin. the animation overlays every element into this frame via transforms anyway.
-    section.style.height   = window.innerHeight + 'px';
-    section.style.overflow = 'hidden';
+    // DESKTOP only: lock the section to one viewport + clip (keeps the green panel viewport-
+    // sized and stops the tall natural height adding empty scroll after the pin). on MOBILE the
+    // section must keep its natural height so the stacked cards below can scroll normally.
+    if (isDesktop) {
+      section.style.height   = window.innerHeight + 'px';
+      section.style.overflow = 'hidden';
+    }
 
     // scatter context = the items' original parent (.meeting_items in prod, the
     // section in the test harness). Its box is the frame the scatter % live in.
@@ -277,7 +280,10 @@
     // re-measure on refresh/resize: landing stays pixel-exact (natural is measured
     // live); only the decorative scatter start reconstructs from the fractions.
     function refresh() {
-      section.style.height = window.innerHeight + 'px';   // keep the viewport lock integer-exact on resize
+      // keep the viewport lock integer-exact on resize: desktop clips the SECTION, mobile the
+      // GREEN PANEL (so the mobile stacked cards below stay free to scroll).
+      if (isDesktop) { section.style.height = window.innerHeight + 'px'; }
+      else if (canLeave) { greenPanel.style.height = window.innerHeight + 'px'; }
       if (cardClone) { cardClone.style.display = 'none'; }  // hide during re-measure; applyScroll re-shows if active
       contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });   // neutral for a clean measure
       measureGeo();
@@ -314,10 +320,18 @@
     var canLeave = greenPanel !== card;
     if (canLeave && GREEN_RADIUS) { greenPanel.style.setProperty('border-radius', GREEN_RADIUS, 'important'); }
 
+    // MOBILE: clip the GREEN PANEL to one viewport so its tall internal spacers (the big
+    // assembly margins) don't create a super-long green scroll. the stacked cards live OUTSIDE
+    // the green panel, so they still scroll freely after. (desktop clips the whole section.)
+    if (!isDesktop && canLeave) {
+      greenPanel.style.height   = window.innerHeight + 'px';
+      greenPanel.style.overflow = 'hidden';
+    }
+
     // the rest of the section below the green panel: the white transition (holds the H2)
     // and the tabs grid. we scroll the WHOLE stack up together (by S) to reveal them.
     var transWrap = section.querySelector('.meeting_transition_wrap');
-    var tabsWrap  = section.querySelector('.meeting_tabs_contain');
+    var tabsWrap  = isDesktop ? section.querySelector('.meeting_tabs_contain') : null;  // desktop tabs only
     var contentEls = [greenPanel, transWrap, tabsWrap].filter(Boolean);
 
     // card (inside the green panel) must sit ABOVE the H2 text + tabs grid where they overlap.
@@ -414,7 +428,7 @@
     // reads DARK where it overlaps the green and LIGHT where it overlaps the white — split
     // right on the line. The real card stays dark; the clone supplies the light half.
     var cardClone = null;
-    if (LIGHT_REVEAL) {
+    if (LIGHT_REVEAL && isDesktop) {   // light dark/light split is a desktop-only effect
       cardClone = card.cloneNode(true);
       cardClone.removeAttribute(ATTR);
       // clone lives INSIDE the card (absolute, inset:0) so it's pinned to the card by the DOM
@@ -458,11 +472,13 @@
     var totalVH = 0, pA = 0, pG = 0, pHold = 0, tabSpan = 1;
     var snapPoints = [];
     function computeTiming() {
-      var contentVH = window.innerHeight ? (sCenter / window.innerHeight) : 1;
+      // MOBILE: no content-scroll and no tabs — the pin is just assembly (+ green hold), then
+      // release into normal scroll. DESKTOP: content-scroll brings the tabs to centre + tabs phase.
+      var contentVH = (isDesktop && window.innerHeight) ? (sCenter / window.innerHeight) : 0;
       // each tab gets a full step to transition through, except the LAST which only
       // holds END_HOLD_VH before release — kills the ~100vh of empty scroll at the end.
-      var tabsVH    = (numTabs - 1) * TAB_STEP_VH + END_HOLD_VH;              // sticky tabs phase
-      tabSpan = tabsVH / TAB_STEP_VH;   // tabs-phase length in "steps" (last one is short)
+      var tabsVH    = isDesktop ? ((numTabs - 1) * TAB_STEP_VH + END_HOLD_VH) : 0;   // sticky tabs phase
+      tabSpan = tabsVH / TAB_STEP_VH || 1;   // tabs-phase length in "steps" (last one is short)
       totalVH = assemblySteps + GREEN_HOLD_VH + contentVH + tabsVH;
       pA    = assemblySteps / totalVH;                                        // assembly ends
       pG    = (assemblySteps + GREEN_HOLD_VH) / totalVH;                      // green hold ends -> content scroll begins
@@ -491,19 +507,17 @@
         }
       }
 
-      // content scroll S: 0 through assembly + green hold, ramps 0 -> sCenter over the
-      // content phase, then frozen at sCenter for the sticky hold.
-      var S;
-      if (p <= pG)         { S = 0; }
-      else if (p >= pHold) { S = sCenter; }
-      else                 { S = (pHold > pG) ? ((p - pG) / (pHold - pG)) * sCenter : sCenter; }
-
-      // scroll the whole stack (green + transition H2 + tabs) up by S
-      for (var ci = 0; ci < contentEls.length; ci++) { gsap.set(contentEls[ci], { y: -S }); }
-
-      // card: held at the bottom (+S cancels the green's -S) until the H2 is above it
-      // (S >= sCardStart), then rises in unison to centre, then sticky.
-      gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
+      // DESKTOP: scroll the stack (green + H2 + tabs) up by S and rise the card to centre.
+      // MOBILE: assembly only — nothing scrolls, the card stays where it assembled, and the pin
+      // simply releases after (normal scroll then carries the stacked cards up below).
+      if (isDesktop) {
+        var S;
+        if (p <= pG)         { S = 0; }
+        else if (p >= pHold) { S = sCenter; }
+        else                 { S = (pHold > pG) ? ((p - pG) / (pHold - pG)) * sCenter : sCenter; }
+        for (var ci = 0; ci < contentEls.length; ci++) { gsap.set(contentEls[ci], { y: -S }); }
+        gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
+      }
 
       // green panel corners, PER EDGE: an edge flush to the viewport squares (full-bleed);
       // an edge floating inside the viewport keeps the radius. so docked-at-top -> square top,
@@ -539,20 +553,18 @@
         }
       }
 
-      // tabs: while the card is sticky at centre [pHold..1], the scroll advances the active
-      // tab (equal slice each). before that, tab 0 is the default.
-      var tn = 0;
-      if (p > pHold && pHold < 1) {
-        // map by STEPS (not equal fractions) so the short last-tab hold doesn't shrink
-        // every tab's window — tabs 0..n-2 get a full step, the last gets END_HOLD.
-        tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
-        if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
+      // tabs (DESKTOP only): while the card is sticky at centre [pHold..1], the scroll advances
+      // the active tab (step-based). mobile has no tabs.
+      if (isDesktop) {
+        var tn = 0;
+        if (p > pHold && pHold < 1) {
+          tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
+          if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
+        }
+        setActiveTab(tn);
+        // background lines: publish the target; a lerped ticker eases the actual paint.
+        bgTargetP = (p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0;
       }
-      setActiveTab(tn);
-
-      // background lines: publish the target; a lerped ticker eases the actual paint
-      // so the draw isn't harshly welded to the raw scroll.
-      bgTargetP = (p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0;
     }
 
     // restore the panel's rounded top once the section is released (scrolled past either
