@@ -83,21 +83,24 @@
   var FULL_HOLD_VH = 0.25;   // beat at full bleed
   var SHRINK_VH    = 0.7;    // P2: sides shrink in to the final card
   var TAB_STEP_VH  = 1.0;    // scroll length per tab while sticky
-  var END_HOLD_VH  = 0.35;   // hold on the last tab before release
+  var END_HOLD_VH  = 1.0;    // hold on the last tab before release (its whole dwell time)
 
   var CARD_TARGET  = 0.5;    // viewport fraction the card centres on during the ride
   var CARD_W       = 400;    // px final card width after the shrink (clamped to stage)
   var CARD_H       = 560;    // px final card height after the shrink (clamped to stage)
-  var CARD_DIP     = 40;     // px the card sags below centre mid-ride (0 at start and landing)
+  var CARD_DIP     = 70;     // px the card sags below centre mid-ride (0 at start and landing)
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
   var CARD_GAP     = 0;      // px gap between the two cards while both are visible
+  var SNAP_W       = 0.15;   // fraction of the grow travel that snaps at each end (sliver zones)
+  var SNAP_S       = 0.05;   // fraction of the grow scroll spent on each snap; smaller = snappier
 
-  // marquee drift (svg <text> x attribute, like the old SMIL animate but scroll-aware)
-  var MQ_DIR       = -1;     // -1 = text streams left (ticker style), 1 = right
-  var MQ_SPEED     = 0.6;    // base px per frame at 60fps (multiplied by data-speed)
-  var MQ_RAMP      = 1.2;    // extra speed at full pin progress (0 = constant speed)
-  var IN_DIST      = 1200;   // px the slow marquee travels during the P0 scrub-in
+  // marquee (svg <text> x attribute) — moves ONLY with scroll, scrubbed both directions
+  var MQ_DIR       = -1;     // -1 = text streams left on scroll down, 1 = right
+  var MQ_SCRUB     = 0.35;   // px of text travel per px of scroll (multiplied by data-speed)
+  var MQ_RAMP      = 1.2;    // extra speed at full pin progress (0 = constant)
+  var MQ_PAD       = 60;     // extra viewBox units the text starts beyond the right edge
+  var MQ_IN_FRAC   = 0.5;    // fraction of P0 by which the kb text has fully entered
 
   var GREEN_RADIUS = '80px'; // auto-tags the green panel for the corners module. '' = off
   var BG_SMOOTH    = 0.12;
@@ -124,6 +127,15 @@
   function oneF(root, name) { return root.querySelector('[' + FLOW + '="' + name + '"]'); }
   function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
   function phaseT(p, a, b) { return b > a ? smooth((p - a) / (b - a)) : (p >= b ? 1 : 0); }
+  // races through the first/last SNAP_W of travel in SNAP_S of the scroll: card slivers
+  // never linger at either end of the grow, but everything stays fully scrubbed
+  function snapEnds(t) {
+    if (t <= 0) { return 0; }
+    if (t >= 1) { return 1; }
+    if (t < SNAP_S)     { return SNAP_W * (t / SNAP_S); }
+    if (t > 1 - SNAP_S) { return 1 - SNAP_W * ((1 - t) / SNAP_S); }
+    return SNAP_W + ((t - SNAP_S) / (1 - 2 * SNAP_S)) * (1 - 2 * SNAP_W);
+  }
 
   function init() {
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
@@ -197,39 +209,49 @@
 
       // ---- marquees: drift the svg <text> x attr; loop like the old SMIL animate ----
       // each entry: text el, start x (loop point), data-speed multiplier, current pos
+      // each marquee starts fully off-screen right, streams in leftward with scroll, then loops.
+      // the authored x attr (e.g. -4000) sets the LOOP PERIOD — how far the text travels
+      // before repeating; match it roughly to the length of one repetition of the string.
       var marquees = [];
       Array.prototype.forEach.call(section.querySelectorAll('[' + FLOW + '="marquee"]'), function (wrapEl) {
         var textEl = wrapEl.querySelector('text');
+        var svgEl  = wrapEl.querySelector('svg');
         if (!textEl) { return; }
-        var x0 = parseFloat(textEl.getAttribute('x'));
-        if (isNaN(x0) || x0 >= 0) { x0 = -4000; }
+        var period = Math.abs(parseFloat(textEl.getAttribute('x'))) || 4000;
+        var vbw    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width)  || 928;
+        var vbh    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || 76;
         marquees.push({
-          text: textEl, x0: x0, pos: x0,
+          text: textEl, svg: svgEl, period: period, start: vbw + MQ_PAD,
+          vbw: vbw, vbh: vbh, len: 0, travel: 0,
           mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1,
-          inKb: !!(kb && kb.contains(wrapEl))                  // the slow one gets the P0 scrub-in
+          inKb: !!(kb && kb.contains(wrapEl))   // kb text is fully entered by the end of P0
         });
+        textEl.setAttribute('x', String(vbw + MQ_PAD));        // initial paint: off-screen right
       });
 
-      var scrubIn = 0;   // 0..1, P0 progress — adds IN_DIST of travel to the kb marquee
-      var pinProg = 0;   // overall pin progress, ramps the drift speed
+      var pinProg = 0;   // overall pin progress, ramps the marquee speed
+      var scrubIn = 0;   // 0..1 over P0 — walks the kb text fully in regardless of its speed
 
-      // position always lives in [x0, 0]; wrapped so the repeated text loops seamlessly
-      function wrapPos(x, x0) {
-        var span = -x0 || 1;
-        return -(((-x % span) + span) % span);
-      }
-
+      var lastScrollY = window.pageYOffset || 0;
       var mqTicker = function () {
         try {
+          var y = window.pageYOffset || 0;
+          var dy = y - lastScrollY;
+          lastScrollY = y;
+          if (!dy) { return; }                                          // no scroll = no movement
           var r = section.getBoundingClientRect();
           if (r.bottom < 0 || r.top > window.innerHeight) { return; }   // offscreen: idle
-          var dt   = gsap.ticker.deltaRatio();
           var ramp = 1 + MQ_RAMP * pinProg;
           for (var i = 0; i < marquees.length; i++) {
             var m = marquees[i];
-            m.pos = wrapPos(m.pos + MQ_DIR * MQ_SPEED * m.mult * ramp * dt, m.x0);
-            var x = m.pos + (m.inKb ? MQ_DIR * IN_DIST * scrubIn : 0);  // scrub-in travels the same direction
-            m.text.setAttribute('x', String(wrapPos(x, m.x0)));
+            // travel is a pure function of scroll: fully scrubbed, reversible to the empty start
+            m.travel = Math.max(0, m.travel - MQ_DIR * MQ_SCRUB * m.mult * ramp * dy);
+            var x = m.start - m.travel - (m.inKb ? m.start * scrubIn : 0);
+            if (x < 0) {
+              var per = m.len > 0 ? Math.min(m.period, Math.max(100, m.len - m.vbw - MQ_PAD)) : m.period;
+              x = -((-x) % per);                                        // loop, never exposing the string's end
+            }
+            m.text.setAttribute('x', String(x));
           }
         } catch (e) { /* keep the shared ticker alive */ }
       };
@@ -242,22 +264,22 @@
       // right) so the text never rescales — the cards' overflow crops it into two windows
       // of one continuous line.
       guardStyle(stage);
-      stage.style.display        = 'flex';
-      stage.style.alignItems     = 'center';
-      stage.style.justifyContent = 'center';
-      stage.style.width          = '100%';
+      stage.style.display = 'block';
+      stage.style.width   = '100%';
+      if (window.getComputedStyle(stage).position === 'static') { stage.style.position = 'relative'; }
       guardStyle(card);
-      card.style.flex      = '0 0 auto';
-      card.style.minWidth  = '0';
-      card.style.margin    = '0';
-      card.style.overflow  = 'hidden';
-      card.style.boxSizing = 'border-box';
+      card.style.position   = 'absolute';   // coordinates computed directly — no flex packing
+      card.style.margin     = '0';
+      card.style.overflow   = 'hidden';
+      card.style.boxSizing  = 'border-box';
       card.style.willChange = 'width, transform';
-      if (window.getComputedStyle(card).position === 'static') { card.style.position = 'relative'; }
+      // the photo reveals leftward from a pinned right edge
+      Array.prototype.forEach.call(card.querySelectorAll('img'), function (im) {
+        guardStyle(im);
+        im.style.objectPosition = 'right center';
+      });
       if (kb) {
         guardStyle(kb);
-        kb.style.flex      = '0 0 auto';
-        kb.style.minWidth  = '0';
         kb.style.margin    = '0';
         kb.style.overflow  = 'hidden';
         kb.style.boxSizing = 'border-box';
@@ -265,34 +287,49 @@
       // pin each marquee wrapper to the stage width; kb's sits left, the card's sits right
       var kbMq   = kb   ? kb.querySelector('[' + FLOW + '="marquee"]')   : null;
       var cardMq = card ? card.querySelector('[' + FLOW + '="marquee"]') : null;
-      if (kbMq)   { guardStyle(kbMq);   kbMq.style.marginRight  = 'auto'; }
-      if (cardMq) { guardStyle(cardMq); cardMq.style.marginLeft = 'auto'; }
+      if (kbMq)   { guardStyle(kbMq);   kbMq.style.marginRight = 'auto'; }
+      if (cardMq) { guardStyle(cardMq); cardMq.style.position  = 'absolute'; }   // stage-fixed backdrop; left set per frame
       [kbMq, cardMq].forEach(function (mq) {
         if (!mq) { return; }
         var svg = mq.querySelector('svg');
         if (svg) { guardStyle(svg); svg.style.width = '100%'; }
       });
 
-      var stageW = 0, stageH = 0;
+      var stageW = 0, stageH = 0, padL = 0, padT = 0;
       function measureStage() {
         // natural sizes while measuring, so a mid-morph refresh can't feed back
         if (kb) { kb.style.width = ''; kb.style.height = ''; kb.style.visibility = ''; }
         card.style.width = ''; card.style.height = '';
-        var r = stage.getBoundingClientRect();
-        stageW = r.width  || 1;
-        stageH = r.height || 1;
+        // the CONTENT box: padding on the stage must not count, or the cards overflow it
+        var cs = window.getComputedStyle(stage);
+        padL = parseFloat(cs.paddingLeft) || 0;
+        padT = parseFloat(cs.paddingTop)  || 0;
+        stageW = (stage.clientWidth  - padL - (parseFloat(cs.paddingRight)  || 0)) || 1;
+        stageH = (stage.clientHeight - padT - (parseFloat(cs.paddingBottom) || 0)) || 1;
         if (kbMq)   { kbMq.style.width   = stageW + 'px'; }
         if (cardMq) { cardMq.style.width = stageW + 'px'; }
+        // size each svg to its viewBox aspect at the stage width: scale is then exactly the
+        // width ratio (no meet/slice bands), so text always spans the full width. also
+        // re-measure text lengths (webfonts change them) for the loop clamp below.
+        for (var mi = 0; mi < marquees.length; mi++) {
+          var mm = marquees[mi];
+          if (mm.svg) {
+            mm.svg.style.width    = stageW + 'px';
+            mm.svg.style.height   = (stageW * mm.vbh / mm.vbw) + 'px';
+            mm.svg.style.overflow = 'visible';   // wave crests may ride above the viewBox
+          }
+          try { mm.len = mm.text.getComputedTextLength ? mm.text.getComputedTextLength() : 0; } catch (e) { mm.len = 0; }
+        }
       }
 
       // width split per phase. Lp = where the photo card's left edge sits (px from stage left)
       function applyMorph(p) {
-        var cardW, cardH = stageH, kbW = 0, gap = 0;
+        var cardW, cardH = stageH, kbW = 0;
         if (p < pB) {                        // P0 + P1: photo edge sweeps right -> left
-          var Lp = stageW * (p < pA ? 1 : 1 - phaseT(p, pA, pB));
+          var gt = (p < pA || pB <= pA) ? 0 : (p - pA) / (pB - pA);
+          var Lp = stageW * (1 - snapEnds(gt));
           cardW = stageW - Lp;
-          kbW   = Math.max(0, Lp - CARD_GAP);
-          gap   = Lp - kbW;                  // shrinks to 0 with the kb card: no end-of-phase jump
+          kbW   = Math.max(0, Lp - CARD_GAP);   // gap emerges implicitly between kb's end and the card
         } else if (p < pBh) {                // hold at full bleed
           cardW = stageW;
         } else {                             // P2 + after: shrink to the centred final card
@@ -303,11 +340,18 @@
         }
         if (p < pBh) { card.style.borderRadius = ''; }   // class radius before the shrink
         if (kb) {
-          kb.style.width       = kbW + 'px';
-          kb.style.height      = stageH + 'px';   // both cards always full stage height
-          kb.style.marginRight = gap + 'px';
-          kb.style.visibility  = kbW < 2 ? 'hidden' : '';
+          kb.style.width      = kbW + 'px';
+          kb.style.height     = stageH + 'px';    // both cards always full stage height
+          kb.style.visibility = kbW < 2 ? 'hidden' : '';
         }
+        // grow: right edge fixed at the stage's content-right, growth is leftward only.
+        // shrink: centred. (continuous at the boundary — both give left = padL at full width)
+        var left = (p < pBh) ? padL + (stageW - cardW) : padL + (stageW - cardW) / 2;
+        // card marquee: always centred on the card — the wave's bump sits over the pill at
+        // every card size, in every phase (the full-stage-wide wrapper centre = card centre)
+        if (cardMq) { cardMq.style.left = ((cardW - stageW) / 2) + 'px'; }
+        card.style.left       = left + 'px';
+        card.style.top        = (padT + (stageH - cardH) / 2) + 'px';
         card.style.width      = cardW + 'px';
         card.style.height     = cardH + 'px';
         card.style.visibility = cardW < 2 ? 'hidden' : '';
@@ -447,7 +491,7 @@
 
       function applyScroll(p) {
         pinProg = p;
-        scrubIn = pA > 0 ? Math.min(1, p / pA) : 1;
+        scrubIn = pA > 0 ? smooth(p / (pA * MQ_IN_FRAC)) : 1;
         applyMorph(p);
 
         if (isDesktop) {
@@ -468,12 +512,23 @@
         }
 
         if (isDesktop) {
-          var tn = 0;
-          if (p > pHold && pHold < 1) {
-            tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
-            if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
+          // a tab click owns the active state until its scroll glide arrives, so tabs the
+          // glide passes through don't flicker active and restart the animations
+          if (clickLockP != null && (Math.abs(p - clickLockP) < 0.005 || Date.now() - clickLockT > 1200)) {
+            clickLockP = null;
           }
-          setActiveTab(tn);
+          if (clickLockP == null) {
+            // nothing is active until the card is nearly landed, so tab 0's entrance animates
+            var tn = -1;
+            if (p >= pHold - 0.02) {
+              tn = 0;
+              if (p > pHold && pHold < 1) {
+                tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
+                if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
+              }
+            }
+            setActiveTab(tn);
+          }
           bgTargetP = (p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0;
         }
       }
@@ -548,7 +603,9 @@
       gsap.ticker.add(bgTicker);
       teardown.push(function () { gsap.ticker.remove(bgTicker); });
 
-      // click a tab -> jump to the middle of that tab's slice
+      // click a tab -> activate it NOW, then glide the scroll to its slice (the lock above
+      // keeps pass-through tabs from hijacking the active state mid-glide)
+      var clickLockP = null, clickLockT = 0;
       tabItems.forEach(function (item, i) {
         guardStyle(item);
         item.style.cursor = 'pointer';
@@ -559,6 +616,8 @@
           var centreP = pHold + centerProg * (1 - pHold);
           var N = bgSvgs.length || 1;
           bgCurrentP = Math.min(N - 1, Math.floor(centerProg * N)) / N;
+          clickLockP = centreP; clickLockT = Date.now();
+          setActiveTab(i);
           window.scrollTo({ top: st.start + centreP * (st.end - st.start), behavior: 'auto' });
         };
         item.addEventListener('click', onClick);
