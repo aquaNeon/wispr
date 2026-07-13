@@ -148,7 +148,9 @@
     }
     gsap.registerPlugin(ScrollTrigger);
 
-    // injected once: hide the off-mode block per data-stack-mode, and narrow the tabs copy
+    // injected once: hide the off-mode block per data-stack-mode, narrow the tabs copy, and the
+    // tab-panel hide/reveal transitions. the panel rules live HERE (not in a Webflow embed) so
+    // the Designer — where no script runs — shows the panels for editing.
     if (!document.getElementById('stack-mode-style')) {
       var ms = document.createElement('style');
       ms.id = 'stack-mode-style';
@@ -156,7 +158,13 @@
         'html[data-stack-mode="desktop"] ' + MOBILE_SEL  + '{display:none !important;}' +
         'html[data-stack-mode="mobile"] '  + DESKTOP_SEL + '{display:none !important;}' +
         (COPY_SEL ? ('@media (max-width:' + COPY_NARROW_BP + 'px){' + COPY_SEL +
-          '{max-width:' + COPY_NARROW_MAXW + ';}}') : '');
+          '{max-width:' + COPY_NARROW_MAXW + ';}}') : '') +
+        '[data-tab-anim],[data-tab-text]{opacity:0;visibility:hidden;transition:opacity .4s ease;}' +
+        '[data-tab-anim].is-active,[data-tab-text].is-active{opacity:1;visibility:visible;}' +
+        '[data-tab-text] .meeting_tabs_heading,[data-tab-text] .meeting_tabs_paragraph{' +
+          'opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s ease;}' +
+        '[data-tab-text].is-active .meeting_tabs_heading{opacity:1;transform:none;transition-delay:.06s;}' +
+        '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}';
       document.head.appendChild(ms);
     }
 
