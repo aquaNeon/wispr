@@ -1,5 +1,79 @@
 (function () {
 
+  // ---- corners: scroll-scrubbed corner radius ----
+  // tag an element with data-corners (optional value = max px, default 80): corners round
+  // while it floats in the viewport, square off flush with an edge. per-edge, driven by the
+  // element's current position (fast scroll can't desync) + a small lerp so it never pops.
+
+  var ATTR        = 'data-corners';
+  var DEFAULT_MAX = 80;
+  var SMOOTH      = 0.16;  // per-frame ease toward target radius; higher = snappier
+  var DEBUG       = false;
+
+  var els = [];
+
+  function scan() {
+    var found = document.querySelectorAll('[' + ATTR + ']');
+    for (var i = 0; i < found.length; i++) {
+      var el = found[i], known = false;
+      for (var j = 0; j < els.length; j++) { if (els[j].el === el) { known = true; break; } }
+      if (!known) {
+        els.push({ el: el, max: parseFloat(el.getAttribute(ATTR)) || DEFAULT_MAX, t: -1, b: -1, wt: -1, wb: -1 });
+        if (DEBUG) { console.log('[corners] tracking', el, 'max=' + els[els.length - 1].max + 'px'); }
+      }
+    }
+    if (DEBUG && !found.length) { console.warn('[corners] scan found no [' + ATTR + '] elements (yet)'); }
+  }
+  window.Corners = { scan: scan };
+
+  function frame(dt) {
+    var vh = window.innerHeight;
+    var k  = 1 - Math.pow(1 - SMOOTH, dt);
+    for (var i = 0; i < els.length; i++) {
+      var s = els[i];
+      var r = s.el.getBoundingClientRect();
+      if (!r.width && !r.height) { continue; }                     // display:none
+      var tT = Math.max(0, Math.min(s.max, r.top));
+      var tB = Math.max(0, Math.min(s.max, vh - r.bottom));
+      if (s.t < 0) { s.t = tT; s.b = tB; }                         // first frame: snap
+      else {
+        s.t += (tT - s.t) * k; if (Math.abs(tT - s.t) < 0.1) { s.t = tT; }
+        s.b += (tB - s.b) * k; if (Math.abs(tB - s.b) < 0.1) { s.b = tB; }
+      }
+      if (s.t === s.wt && s.b === s.wb) { continue; }              // settled
+      s.wt = s.t; s.wb = s.b;
+      s.el.style.setProperty('border-top-left-radius',     s.t + 'px', 'important');
+      s.el.style.setProperty('border-top-right-radius',    s.t + 'px', 'important');
+      s.el.style.setProperty('border-bottom-left-radius',  s.b + 'px', 'important');
+      s.el.style.setProperty('border-bottom-right-radius', s.b + 'px', 'important');
+    }
+  }
+
+  function cornersStart() {
+    if (DEBUG) { console.log('[corners] init (gsap=' + !!window.gsap + ')'); }
+    scan();
+    if (window.gsap) {
+      // register ST first so its pin correction runs before our rect reads each frame
+      if (window.ScrollTrigger) { gsap.registerPlugin(ScrollTrigger); }
+      gsap.ticker.add(function () { try { frame(gsap.ticker.deltaRatio()); } catch (e) { if (DEBUG) { console.error('[corners]', e); } } });
+    } else {
+      var last = performance.now();
+      (function loop(now) {
+        var dt = (now - last) / (1000 / 60); last = now;
+        try { frame(dt || 1); } catch (e) { if (DEBUG) { console.error('[corners]', e); } }
+        requestAnimationFrame(loop);
+      }(last));
+    }
+    window.addEventListener('load', scan);
+  }
+
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', cornersStart); }
+  else { cornersStart(); }
+
+}());
+
+(function () {
+
   // ---- config ----
   var STEP_VH       = 0.7;
   var SNAP          = false;   // magnetic scroll-to-nearest-step
@@ -35,7 +109,7 @@
   var END_HOLD_VH    = 0.35;   // short hold on the last tab before release
   var BG_SMOOTH      = 0.12;   // ease of the bg-line paint toward scroll
 
-  var GREEN_RADIUS   = '80px'; // forced inline (!important); '' = leave to CSS
+  var GREEN_RADIUS   = '80px'; // max corner radius; auto-tags the green panel for corners.js. '' = off
 
   // dark/light split reveal (desktop only)
   var LIGHT_REVEAL   = true;
@@ -330,7 +404,11 @@
       }
       var canLeave = greenPanel !== card;
       guardStyle(greenPanel);
-      if (canLeave && GREEN_RADIUS) { greenPanel.style.setProperty('border-radius', GREEN_RADIUS, 'important'); }
+      // rounding handled by the corners module; just tag the panel
+      if (canLeave && GREEN_RADIUS && !greenPanel.hasAttribute('data-corners')) {
+        greenPanel.setAttribute('data-corners', String(parseFloat(GREEN_RADIUS) || 80));
+        if (window.Corners) { window.Corners.scan(); }
+      }
 
       // mobile: clip the green panel to one viewport (stack below stays free to scroll)
       if (!isDesktop && canLeave) {
@@ -532,18 +610,10 @@
           gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
         }
 
-        // green panel corners per edge: flush to the viewport = square, floating inside = rounded
-        if (canLeave && GREEN_RADIUS) {
-          var maxR = parseFloat(GREEN_RADIUS) || 0;
-          var gr   = greenPanel.getBoundingClientRect();
-          var vh   = window.innerHeight;
-          var topR = (gr.top    <= 1)      ? 0 : Math.min(maxR, gr.top);
-          var botR = (gr.bottom >= vh - 1) ? 0 : Math.min(maxR, vh - gr.bottom);
-          greenPanel.style.setProperty('border-top-left-radius',     topR + 'px', 'important');
-          greenPanel.style.setProperty('border-top-right-radius',    topR + 'px', 'important');
-          greenPanel.style.setProperty('border-bottom-left-radius',  botR + 'px', 'important');
-          greenPanel.style.setProperty('border-bottom-right-radius', botR + 'px', 'important');
-          if (topCover) { topCover.style.display = (topR === 0 && gr.bottom > 3) ? 'block' : 'none'; }
+        // seam cover: show while the green panel is docked flush to the viewport top
+        if (canLeave && topCover) {
+          var gr = greenPanel.getBoundingClientRect();
+          topCover.style.display = (gr.top <= 1 && gr.bottom > 3) ? 'block' : 'none';
         }
 
         // light split: clip the clone at the green/white boundary; recolor the real card to light
@@ -581,16 +651,10 @@
         }
       }
 
-      // restore the rounded top once released (applyScroll only runs while pinned)
-      function restoreTopRadius() {
-        if (!canLeave || !GREEN_RADIUS) { return; }
-        greenPanel.style.setProperty('border-radius', GREEN_RADIUS, 'important');
-      }
-
       var st = ScrollTrigger.create({
         trigger: section, start: 'top top',
         end: function () { return '+=' + (window.innerHeight * totalVH); },
-        pin: true, invalidateOnRefresh: true,
+        pin: true, anticipatePin: 1, invalidateOnRefresh: true,   // anticipatePin: no jerk when fast scroll hits the pin
         refreshPriority: 1,   // this pin sits above the slider pin; refresh it first (slider stays 0)
         onRefresh: function (self) { prevStart = self.start; prevEnd = self.end; },
         onRefreshInit: refresh,
@@ -610,8 +674,8 @@
           }
           applyScroll(p);
         },
-        onLeave:     function () { if (topCover) { topCover.style.display = 'none'; } restoreTopRadius(); },
-        onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } if (topCover) { topCover.style.display = 'none'; } restoreTopRadius(); },
+        onLeave:     function () { if (topCover) { topCover.style.display = 'none'; } },
+        onLeaveBack: function () { if (cardClone) { cardClone.style.display = 'none'; } if (topCover) { topCover.style.display = 'none'; } },
         snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
       });
 
