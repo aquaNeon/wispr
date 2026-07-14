@@ -82,12 +82,26 @@
   var GROW_VH      = 0.8;    // P1: photo card grows right -> left to full stage width
   var FULL_HOLD_VH = 0.25;   // beat at full bleed
   var SHRINK_VH    = 0.7;    // P2: sides shrink in to the final card
-  var TAB_STEP_VH  = 1.0;    // scroll length per tab while sticky
-  var END_HOLD_VH  = 1.0;    // hold on the last tab before release (its whole dwell time)
+  var TAB_STEP_VH  = 1.0;    // fallback scroll length per tab (used if CH_VH doesn't fit numTabs)
+  var END_HOLD_VH  = 1.0;    // fallback hold on the last tab
+  // weighted chapter scroll lengths (vh) — chapter 1 (typing) longest. one entry per tab.
+  var CH_VH        = [2.6, 1.8, 1.6];
+  var TYPE_END     = 0.9;    // fraction of chapter 1's slice by which the transcript finishes typing
+
+  var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
+  // audio pill: authored at its LANDED spot (per image #9); lands there (identity). the recording
+  // pose is a transform offset — lift it up (negative REC_Y) to sit centred while recording.
+  var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
+  var PILL_REC_Y     = -180; // px the pill lifts toward the card centre during recording (tune)
+  var PILL_ICONS_AT  = 0.55; // handoff fraction (0..1) at which the 2 extra icons start scaling in
+  var PILL_ICON_SIZE = 18;   // px the extra icons scale out to
 
   var CARD_TARGET  = 0.5;    // viewport fraction the card centres on during the ride
   var CARD_W       = 400;    // px final card width after the shrink (clamped to stage)
-  var CARD_H       = 560;    // px final card height after the shrink (clamped to stage)
+  var CARD_H       = 'auto'; // px number, or 'auto' to fit the in-flow content of [data-flow="screen"]
+  var CARD_H_FALLBACK = 560; // used when 'auto' but no screen wrapper is found to measure
+  var CARD_H_MAX   = 0.92;   // never let the card exceed this fraction of the stage height
+  var CARD_PAD_BOTTOM = 42;  // px added below the measured content (breathing room under the pills)
   var CARD_DIP     = 70;     // px the card sags below centre mid-ride (0 at start and landing)
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
@@ -95,12 +109,29 @@
   var SNAP_W       = 0.15;   // fraction of the grow travel that snaps at each end (sliver zones)
   var SNAP_S       = 0.05;   // fraction of the grow scroll spent on each snap; smaller = snappier
 
-  // marquee (svg <text> x attribute) — moves ONLY with scroll, scrubbed both directions
-  var MQ_DIR       = -1;     // -1 = text streams left on scroll down, 1 = right
-  var MQ_SCRUB     = 0.35;   // px of text travel per px of scroll (multiplied by data-speed)
-  var MQ_RAMP      = 1.2;    // extra speed at full pin progress (0 = constant)
+  // marquee (svg <text> x attribute) — pure function of pin progress, so fully scrubbed
+  // both directions and frozen when scroll stops. NOT a raw-scroll delta: travel is tied
+  // to the pin length, so movement is precise and guaranteed visible across the section.
+  var MQ_DIR       = -1;     // -1 = text streams left over the pin, 1 = right
+  var MQ_TRAVEL    = 10000;  // SCREEN px a data-speed="1" string travels across the WHOLE pin.
+                             // normalized by the svg's rendered scale, so pace is identical no
+                             // matter how wide the parent is / how the card width animates.
+                             // (speed = MQ_TRAVEL × data-speed; period only wraps the loop, not speed)
   var MQ_PAD       = 60;     // extra viewBox units the text starts beyond the right edge
-  var MQ_IN_FRAC   = 0.5;    // fraction of P0 by which the kb text has fully entered
+
+  // audio recorder: <rect> bars inside [data-anim="audio"] pulse in height on scroll (pure
+  // scrub, like the marquee). each bar grows from its own centre; a per-bar phase offset
+  // makes the set ripple like a live waveform.
+  var AUDIO_SEL    = '[data-anim="audio"]';
+  var AUDIO_MIN    = 0.10;   // shortest a bar ever gets, as a fraction of the svg viewBox height
+  var AUDIO_MAX    = 0.94;   // tallest a bar can reach, as a fraction of the viewBox height
+  var AUDIO_CYCLES = 8;      // base activity rate across the WHOLE pin (higher = busier)
+  var AUDIO_ENV    = 0.72;   // 0 = per-bar jitter only, 1 = strong syllable bursts (loud/quiet swells)
+
+  // slight lerp on the scrub: marquee + audio ease toward the scroll position instead of
+  // snapping to it, so motion feels smooth and settles gently when scroll stops. 1 = no lerp
+  // (instant), smaller = more trailing. morph/card position stay 1:1 with scroll (not lerped).
+  var SCRUB_LERP   = 0.18;
 
   var GREEN_RADIUS = '80px'; // auto-tags the green panel for the corners module. '' = off
   var BG_SMOOTH    = 0.12;
@@ -158,7 +189,11 @@
         '[data-tab-text] .meeting_tabs_heading,[data-tab-text] .meeting_tabs_paragraph{' +
           'opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s ease;}' +
         '[data-tab-text].is-active .meeting_tabs_heading{opacity:1;transform:none;transition-delay:.06s;}' +
-        '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}';
+        '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}' +
+        '.flow_w{transition:opacity .12s linear;}' +
+        '[data-pill]{transition:opacity .25s ease;}' +
+        '[data-flow="intro"]{transition:opacity ' + INTRO_FADE_MS + 'ms ease;}' +
+        '[data-flow="pill-audio"]{transition:opacity .3s ease;}';
       document.head.appendChild(ms);
     }
 
@@ -222,41 +257,87 @@
         var vbh    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || 76;
         marquees.push({
           text: textEl, svg: svgEl, period: period, start: vbw + MQ_PAD,
-          vbw: vbw, vbh: vbh, len: 0, travel: 0,
-          mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1,
-          inKb: !!(kb && kb.contains(wrapEl))   // kb text is fully entered by the end of P0
+          vbw: vbw, vbh: vbh, len: 0,
+          rand: Math.random(),                  // per-pageload loop offset: different words each visit
+          mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1
         });
         textEl.setAttribute('x', String(vbw + MQ_PAD));        // initial paint: off-screen right
       });
 
-      var pinProg = 0;   // overall pin progress, ramps the marquee speed
-      var scrubIn = 0;   // 0..1 over P0 — walks the kb text fully in regardless of its speed
-
-      var lastScrollY = window.pageYOffset || 0;
-      var mqTicker = function () {
-        try {
-          var y = window.pageYOffset || 0;
-          var dy = y - lastScrollY;
-          lastScrollY = y;
-          if (!dy) { return; }                                          // no scroll = no movement
-          var r = section.getBoundingClientRect();
-          if (r.bottom < 0 || r.top > window.innerHeight) { return; }   // offscreen: idle
-          var ramp = 1 + MQ_RAMP * pinProg;
-          for (var i = 0; i < marquees.length; i++) {
-            var m = marquees[i];
-            // travel is a pure function of scroll: fully scrubbed, reversible to the empty start
-            m.travel = Math.max(0, m.travel - MQ_DIR * MQ_SCRUB * m.mult * ramp * dy);
-            var x = m.start - m.travel - (m.inKb ? m.start * scrubIn : 0);
-            if (x < 0) {
-              var per = m.len > 0 ? Math.min(m.period, Math.max(100, m.len - m.vbw - MQ_PAD)) : m.period;
-              x = -((-x) % per);                                        // loop, never exposing the string's end
-            }
-            m.text.setAttribute('x', String(x));
+      // marquee position = pure function of pin progress p (driven from applyScroll). Every
+      // string runs off the SAME clock (p) so the two text lines stay locked together; their
+      // data-speed is a PURE speed knob (higher = faster), independent of each string's period
+      // — period only sets where the loop wraps below. Speed = MQ_TRAVEL × data-speed.
+      function updateMarquees(p) {
+        for (var i = 0; i < marquees.length; i++) {
+          var m = marquees[i];
+          // scale = rendered px per viewBox unit; MQ_TRAVEL is in SCREEN px, so divide to get
+          // viewBox travel. pace on screen stays constant however wide the svg is drawn.
+          var svgW  = m.svg ? m.svg.getBoundingClientRect().width : 0;
+          if (svgW <= 0) { continue; }                                  // display:none / unmeasured
+          var scale = svgW / m.vbw;
+          var travel = -MQ_DIR * p * (MQ_TRAVEL * m.mult) / scale;      // 0 at p=0, reversible
+          var x = m.start - travel;                                     // every string streams in at its own steady pace
+          if (x < 0) {
+            var per = m.len > 0 ? Math.min(m.period, Math.max(100, m.len - m.vbw - MQ_PAD)) : m.period;
+            // random per-load offset eased in over the first lap: no jump at the intro
+            // handoff, but every page visit shows different words at the same landmarks
+            var xx = -x;
+            x = -((xx + Math.min(xx, per) * m.rand) % per);
           }
-        } catch (e) { /* keep the shared ticker alive */ }
-      };
-      gsap.ticker.add(mqTicker);
-      teardown.push(function () { gsap.ticker.remove(mqTicker); });
+          m.text.setAttribute('x', String(x));
+        }
+      }
+
+      // ---- audio recorder bars: each rect's height pulses with pin progress ----
+      var audioBars = [];
+      (function collectAudio() {
+        // data-anim="audio" is the intended hook, but it isn't always present in the published
+        // DOM — fall back to the Webflow class so the bars animate either way.
+        var host = section.querySelector(AUDIO_SEL) || document.querySelector(AUDIO_SEL) ||
+                   section.querySelector('.flow_svg-inner') || document.querySelector('.flow_svg-inner');
+        if (!host) { if (DEBUG) { console.warn('[flow-stack] no audio svg found'); } return; }
+        var svg  = (host.tagName && host.tagName.toLowerCase() === 'svg') ? host : host.querySelector('svg');
+        var vbh  = (svg && svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height) || 33;
+        Array.prototype.forEach.call(host.querySelectorAll('rect'), function (r) {
+          var y = parseFloat(r.getAttribute('y')) || 0;
+          var h = parseFloat(r.getAttribute('height')) || parseFloat(window.getComputedStyle(r).height) || 0;
+          audioBars.push({
+            el: r, cy: y + h / 2, vbh: vbh,
+            ceil: AUDIO_MIN + (AUDIO_MAX - AUDIO_MIN) * (0.55 + 0.45 * Math.random()), // per-bar max, jagged
+            // two detuned frequencies + random phase per bar → bars move independently, no clean wave
+            f1: 0.8 + Math.random() * 1.5, f2: 2.0 + Math.random() * 3.0,
+            ph1: Math.random() * 6.2832, ph2: Math.random() * 6.2832
+          });
+        });
+        if (DEBUG) { console.log('[flow-stack] audio bars:', audioBars.length, 'vbh', vbh); }
+      }());
+
+      var envPh1 = Math.random() * 6.2832, envPh2 = Math.random() * 6.2832;   // per-load syllable phase
+
+      function updateAudio(p) {
+        var TWO_PI = Math.PI * 2;
+        var t = p * AUDIO_CYCLES;
+        // global loudness envelope: two beat frequencies multiply → uneven bursts and near-silent
+        // gaps, the way speech has loud syllables and pauses (not a steady hum)
+        var e = (0.5 + 0.5 * Math.sin(t * TWO_PI * 0.9 + envPh1)) *
+                (0.5 + 0.5 * Math.sin(t * TWO_PI * 2.3 + envPh2));               // 0..1, spends time low
+        for (var i = 0; i < audioBars.length; i++) {
+          var b = audioBars[i];
+          // per-bar jitter: detuned sines with unique phase — neighbouring bars disagree
+          var v = 0.55 * Math.sin(t * TWO_PI * b.f1 + b.ph1) +
+                  0.45 * Math.sin(t * TWO_PI * b.f2 + b.ph2);                    // ~ -1..1
+          var s = 0.5 + 0.5 * v;                                                 // 0..1
+          s *= AUDIO_ENV * e + (1 - AUDIO_ENV);                                  // loud bursts push up, pauses collapse
+          var h = (AUDIO_MIN + (b.ceil - AUDIO_MIN) * s) * b.vbh;                // floor..this bar's ceil
+          var y = b.cy - h / 2;                                                  // grow from the bar's own centre
+          // set BOTH: inline style wins if Webflow authored height via CSS, attribute otherwise
+          b.el.style.setProperty('height', h + 'px');
+          b.el.style.setProperty('y', y + 'px');
+          b.el.setAttribute('height', String(h));
+          b.el.setAttribute('y', String(y));
+        }
+      }
 
       // ---- morph: both cards are in-flow flex children sharing the stage width; the script
       // splits the 100% between them. real boxes -> class border-radius just works. each
@@ -273,10 +354,12 @@
       card.style.overflow   = 'hidden';
       card.style.boxSizing  = 'border-box';
       card.style.willChange = 'width, transform';
-      // the photo reveals leftward from a pinned right edge
+      // the photo reveals leftward from a pinned right edge, then re-centres as the card shrinks
+      var cardImgs = [];
       Array.prototype.forEach.call(card.querySelectorAll('img'), function (im) {
         guardStyle(im);
         im.style.objectPosition = 'right center';
+        cardImgs.push(im);
       });
       if (kb) {
         guardStyle(kb);
@@ -295,7 +378,7 @@
         if (svg) { guardStyle(svg); svg.style.width = '100%'; }
       });
 
-      var stageW = 0, stageH = 0, padL = 0, padT = 0;
+      var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK;
       function measureStage() {
         // natural sizes while measuring, so a mid-morph refresh can't feed back
         if (kb) { kb.style.width = ''; kb.style.height = ''; kb.style.visibility = ''; }
@@ -320,10 +403,27 @@
           }
           try { mm.len = mm.text.getComputedTextLength ? mm.text.getComputedTextLength() : 0; } catch (e) { mm.len = 0; }
         }
+        // resolve the landed card height: 'auto' fits the screen's in-flow content at the final width
+        if (CARD_H === 'auto' && screenEl) {
+          var saved = screenEl.style.cssText;
+          screenEl.style.position = 'static';
+          screenEl.style.height   = 'auto';
+          screenEl.style.width    = Math.min(CARD_W, stageW) + 'px';
+          screenEl.style.opacity  = '0';                 // no flash during the measure
+          var m = screenEl.offsetHeight;
+          screenEl.style.cssText = saved;                // restore exactly
+          cardHpx = (m > 0 ? m : CARD_H_FALLBACK) + CARD_PAD_BOTTOM;
+        } else {
+          cardHpx = (typeof CARD_H === 'number') ? CARD_H : CARD_H_FALLBACK;
+        }
+        cardHpx = Math.min(cardHpx, stageH * CARD_H_MAX);
       }
 
       // width split per phase. Lp = where the photo card's left edge sits (px from stage left)
       function applyMorph(p) {
+        // photo stays right-pinned through the reveal, then eases to centre as the card shrinks
+        var objX = 100 - 50 * phaseT(p, pBh, pC);   // 100% (right) → 50% (centre)
+        for (var im = 0; im < cardImgs.length; im++) { cardImgs[im].style.objectPosition = objX + '% center'; }
         var cardW, cardH = stageH, kbW = 0;
         if (p < pB) {                        // P0 + P1: photo edge sweeps right -> left
           var gt = (p < pA || pB <= pA) ? 0 : (p - pA) / (pB - pA);
@@ -335,7 +435,7 @@
         } else {                             // P2 + after: shrink to the centred final card
           var t = phaseT(p, pBh, pC);
           cardW = stageW - (stageW - Math.min(CARD_W, stageW)) * t;
-          cardH = stageH - (stageH - Math.min(CARD_H, stageH)) * t;
+          cardH = stageH - (stageH - Math.min(cardHpx, stageH)) * t;
           card.style.borderRadius = (RADIUS_FULL + (RADIUS_END - RADIUS_FULL) * t) + 'px';
         }
         if (p < pBh) { card.style.borderRadius = ''; }   // class radius before the shrink
@@ -408,6 +508,82 @@
       var activeTab = -1;
       var bgTargetP = 0, bgCurrentP = 0;
 
+      // ---- card scene: chapter 1 transcript typing + status pills ----
+      // handoff (card ride pC->pHold) crossfades the intro out and the transcript/composer/pills in;
+      // then within tab 0's scroll slice the transcript types word-by-word and the pill tracks the
+      // category of the latest revealed highlight word.
+      var introEl      = oneF(section, 'intro');                 // 220wpm + marquee — quick triggered fade
+      var screenEl     = oneF(section, 'screen');                // optional: one cover holding all chapter content
+      var composerEl   = oneF(section, 'composer');
+      var pillAudioEl  = oneF(section, 'pill-audio');            // recorder — glides down + shrinks at handoff
+      var pillExtras   = pillAudioEl ? Array.prototype.slice.call(pillAudioEl.querySelectorAll('[data-pill-extra]')) : [];
+      if (pillAudioEl) { guardStyle(pillAudioEl); pillAudioEl.style.transformOrigin = '50% 50%'; }
+      // extras start at 0×0 (no space in the pill) and scale out to PILL_ICON_SIZE on the handoff
+      pillExtras.forEach(function (el) {
+        guardStyle(el);
+        el.style.flex = '0 0 auto';
+        el.style.overflow = 'hidden';
+        el.style.opacity = '0';
+        el.style.width = '0px';
+        el.style.height = '0px';
+      });
+      var transcriptEl = card ? card.querySelector('[data-type="raw"]') : null;
+      var polishedEl   = card ? card.querySelector('[data-type="polished"]') : null;
+      var destWrap     = card ? card.querySelector('.flow_icons-destination') : null;
+      var pillEls      = card ? Array.prototype.slice.call(card.querySelectorAll('[data-pill]')) : [];
+      var pillMap = {};
+      pillEls.forEach(function (el) {
+        guardStyle(el);
+        var key = (el.getAttribute('data-pill') || '').trim().toLowerCase();
+        if (key) { pillMap[key] = el; }
+        el.style.opacity = '0';
+      });
+
+      // wrap every word of the transcript in a reveal span; highlight words keep their
+      // flow_type-* colour class and carry that class's suffix as their category.
+      var words = [];
+      (function buildTranscript() {
+        if (!transcriptEl) { return; }
+        function catOf(el) {
+          var m = el && el.className ? /(?:^|\s)flow_type-([a-z]+)/.exec(el.className) : null;
+          return m ? m[1] : null;
+        }
+        // rebuild (breakpoint cross): DOM already wrapped — just recollect, don't re-wrap
+        if (transcriptEl.querySelector('.flow_w')) {
+          Array.prototype.forEach.call(transcriptEl.querySelectorAll('.flow_w'), function (w) {
+            w.style.opacity = '0';
+            words.push({ el: w, cat: catOf(w.parentNode) });
+          });
+          return;
+        }
+        function wrapWords(container, cat) {
+          var raw = container.textContent;
+          container.textContent = '';
+          raw.split(/(\s+)/).forEach(function (chunk) {
+            if (chunk === '') { return; }
+            if (/^\s+$/.test(chunk)) { container.appendChild(document.createTextNode(chunk)); return; }
+            var w = document.createElement('span');
+            w.className = 'flow_w';
+            w.textContent = chunk;
+            w.style.opacity = '0';
+            container.appendChild(w);
+            words.push({ el: w, cat: cat });
+          });
+        }
+        var nodes = Array.prototype.slice.call(transcriptEl.childNodes);
+        nodes.forEach(function (node) {
+          if (node.nodeType === 3) {                              // text node → plain words
+            var frag = document.createElement('span');
+            transcriptEl.replaceChild(frag, node);
+            frag.style.display = 'contents';
+            frag.textContent = node.textContent;
+            wrapWords(frag, null);
+          } else if (node.nodeType === 1) {                       // highlight span → coloured words
+            wrapWords(node, catOf(node));
+          }
+        });
+      }());
+
       Array.prototype.forEach.call(bgSvgs, function (svg) {
         Array.prototype.forEach.call(svg.querySelectorAll('path'), function (p) {
           guardStyle(p);
@@ -474,10 +650,16 @@
 
       // ---- pin timing ----
       var totalVH = 1, pA = 0, pB = 0, pBh = 0, pC = 0, pHold = 1, tabSpan = 1;
-      var snapPoints = [];
+      var snapPoints = [], tabStops = [];        // tabStops: p-boundaries [pHold, end0, end1, …, 1]
+      function tabVHs() {                        // per-tab scroll length in vh
+        if (CH_VH && CH_VH.length === numTabs) { return CH_VH.slice(); }
+        var a = []; for (var i = 0; i < numTabs; i++) { a.push(i < numTabs - 1 ? TAB_STEP_VH : END_HOLD_VH); }
+        return a;
+      }
       function computeTiming() {
         var contentVH = (isDesktop && window.innerHeight) ? (sCenter / window.innerHeight) : 0;
-        var tabsVH    = isDesktop ? ((numTabs - 1) * TAB_STEP_VH + END_HOLD_VH) : 0;
+        var vhs = tabVHs();
+        var tabsVH = 0; if (isDesktop) { for (var i = 0; i < vhs.length; i++) { tabsVH += vhs[i]; } }
         tabSpan = tabsVH / TAB_STEP_VH || 1;
         totalVH = IN_VH + GROW_VH + FULL_HOLD_VH + SHRINK_VH + contentVH + tabsVH;
         pA    = IN_VH / totalVH;                                           // scrub-in ends, grow begins
@@ -485,16 +667,93 @@
         pBh   = (IN_VH + GROW_VH + FULL_HOLD_VH) / totalVH;                // hold ends, shrink begins
         pC    = (IN_VH + GROW_VH + FULL_HOLD_VH + SHRINK_VH) / totalVH;    // final card, ride begins
         pHold = (IN_VH + GROW_VH + FULL_HOLD_VH + SHRINK_VH + contentVH) / totalVH;   // tabs begin
+        tabStops = [pHold];
+        var acc = 0, sum = tabsVH || 1;
+        for (var j = 0; j < vhs.length; j++) { acc += vhs[j]; tabStops.push(pHold + (acc / sum) * (1 - pHold)); }
         snapPoints = [0, pA, pB, pC, pHold, 1];
       }
       computeTiming();
 
+      // which chapter p is in + local progress 0..1 through that chapter's scroll slice
+      function tabLocal(p) {
+        for (var i = 0; i < numTabs; i++) {
+          if (p < tabStops[i + 1] || i === numTabs - 1) {
+            var a = tabStops[i], b = tabStops[i + 1];
+            var tp = b > a ? (p - a) / (b - a) : 1;
+            return { idx: i, tp: tp < 0 ? 0 : (tp > 1 ? 1 : tp) };
+          }
+        }
+        return { idx: 0, tp: 0 };
+      }
+
+      // ---- card scene driver: handoff crossfade + chapter-1 typing + pill ----
+      var wordsShown = -1, pillShown = 0;
+      function sceneUpdate(p) {
+        // intro (220 + marquee): quick TRIGGERED fade at the shrink start — CSS-timed, not scrubbed
+        if (introEl) { introEl.style.opacity = (p >= pBh) ? '0' : '1'; }
+
+        // audio pill: one continuous motion over the shrink -> land window (pBh -> pHold).
+        // recording pose (bigger, higher, icons hidden) eases into the landed pose; the 2 extra
+        // icons animate in over the tail so the pill leads the handoff.
+        if (pillAudioEl) {
+          var hp = phaseT(p, pBh, pHold);                        // 0 recording → 1 landed (authored spot)
+          var sc = PILL_REC_SCALE + (1 - PILL_REC_SCALE) * hp;   // REC_SCALE → 1 (shrinks to landed)
+          var ty = PILL_REC_Y * (1 - hp);                        // REC_Y (lifted) → 0 (settles at landed)
+          pillAudioEl.style.transform = 'translateY(' + ty + 'px) scale(' + sc + ')';
+          var ei = PILL_ICONS_AT < 1 ? smooth((hp - PILL_ICONS_AT) / (1 - PILL_ICONS_AT)) : (hp >= 1 ? 1 : 0);
+          var isz = (PILL_ICON_SIZE * ei) + 'px';
+          for (var pe = 0; pe < pillExtras.length; pe++) {
+            pillExtras[pe].style.opacity = String(ei);
+            pillExtras[pe].style.width  = isz;
+            pillExtras[pe].style.height = isz;
+          }
+        }
+
+        // handoff: chapter content fades in over the card's ride (pC -> pHold)
+        var hf = (pHold > pC) ? smooth((p - pC) / (pHold - pC)) : (p >= pHold ? 1 : 0);
+        if (screenEl) {
+          screenEl.style.opacity = String(hf);                   // one cover fades in — everything inside comes together
+        } else {                                                 // no screen wrapper: fade the pieces individually
+          if (transcriptEl) { transcriptEl.style.opacity = String(hf); }
+          if (composerEl)   { composerEl.style.opacity = String(hf); }
+        }
+        if (polishedEl) { polishedEl.style.opacity = '0'; }      // chapter 2 — not built yet
+        if (destWrap)   { destWrap.style.opacity = '0'; }        // chapter 3 — not built yet
+
+        var idx = -1, tp = 0;
+        if (p >= pHold) { var loc = tabLocal(p); idx = loc.idx; tp = loc.tp; }
+
+        // audio/recorder is gone from chapter 2 on (polish); keep it through recording + chapter 1
+        if (pillAudioEl) { pillAudioEl.style.opacity = (idx >= 1) ? '0' : '1'; }
+
+        var n = words.length, count;
+        if (idx < 0)        { count = 0; }
+        else if (idx === 0) { count = Math.round(Math.min(1, tp / TYPE_END) * n); }
+        else                { count = n; }                       // fully typed once past chapter 1
+        count = count < 0 ? 0 : (count > n ? n : count);
+        if (count !== wordsShown) {
+          for (var i = 0; i < n; i++) { words[i].el.style.opacity = i < count ? '1' : '0'; }
+          wordsShown = count;
+        }
+
+        // pill = category of the latest revealed highlight word, chapter 1 only
+        var cat = null;
+        if (idx === 0) { for (var j = count - 1; j >= 0; j--) { if (words[j].cat) { cat = words[j].cat; break; } } }
+        if (cat !== pillShown) {
+          for (var k in pillMap) { if (pillMap.hasOwnProperty(k)) { pillMap[k].style.opacity = (k === cat) ? '1' : '0'; } }
+          pillShown = cat;
+        }
+      }
+
+      // scrub lerp state: morph/card follow p 1:1; marquee + audio ease toward pTarget in a ticker
+      var pTarget = 0, pSmooth = 0, painted = -1;
+
       function applyScroll(p) {
-        pinProg = p;
-        scrubIn = pA > 0 ? smooth(p / (pA * MQ_IN_FRAC)) : 1;
         applyMorph(p);
+        pTarget = p;                 // marquee + audio ease toward this in scrubTick
 
         if (isDesktop) {
+          sceneUpdate(p);
           var S;
           if (p <= pC)         { S = 0; }
           else if (p >= pHold) { S = sCenter; }
@@ -520,13 +779,7 @@
           if (clickLockP == null) {
             // nothing is active until the card is nearly landed, so tab 0's entrance animates
             var tn = -1;
-            if (p >= pHold - 0.02) {
-              tn = 0;
-              if (p > pHold && pHold < 1) {
-                tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
-                if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
-              }
-            }
+            if (p >= pHold - 0.02) { tn = (p <= pHold) ? 0 : tabLocal(p).idx; }
             setActiveTab(tn);
           }
           bgTargetP = (p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0;
@@ -540,6 +793,8 @@
         measurePositions();
         computeTiming();
         applyScroll(st ? st.progress : 0);
+        pSmooth = pTarget; painted = -1;      // no scrub sweep from 0 on load/rebuild
+        updateMarquees(pSmooth); updateAudio(pSmooth);
         if (activeTab >= 0) { moveIndicator(activeTab); }
       }
 
@@ -557,16 +812,34 @@
           onLeaveBack: function () { if (topCover) { topCover.style.display = 'none'; } },
           snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
         });
+        // ease the marquee + audio toward the scroll position; settles gently when scroll stops
+        var scrubTick = function () {
+          if (SCRUB_LERP >= 1) { pSmooth = pTarget; }
+          else {
+            var k = 1 - Math.pow(1 - SCRUB_LERP, gsap.ticker.deltaRatio());
+            pSmooth += (pTarget - pSmooth) * k;
+            if (Math.abs(pTarget - pSmooth) < 0.0002) { pSmooth = pTarget; }
+          }
+          if (pSmooth !== painted) { updateMarquees(pSmooth); updateAudio(pSmooth); painted = pSmooth; }
+        };
+        gsap.ticker.add(scrubTick);
+        teardown.push(function () { gsap.ticker.remove(scrubTick); });
       } else {
-        // mobile: no pin/morph — show the card in its final centred state, marquees drift
+        // mobile: no pin/morph — show the card in its final centred state, text mid-line
         measureStage();
         applyMorph(1);
+        updateMarquees(0.5);   // no scrub on mobile; park the strings mid-travel so words show
+        updateAudio(0.25);     // park bars in a mid-pose so the recorder reads as bars, not flat
+        sceneUpdate(1);        // mobile: transcript fully typed, intro hidden (mobile choreo deferred)
       }
 
       if (DEBUG) {
         console.log('[flow-stack] build mode=' + (isDesktop ? 'desktop' : 'mobile') +
           ' rebuild=' + isRebuild + ' marquees=' + marquees.length +
           ' numTabs=' + numTabs + ' totalVH=' + totalVH.toFixed(2));
+        console.log('[flow-stack] scene: transcript=' + !!transcriptEl + ' words=' + words.length +
+          ' composer=' + !!composerEl + ' intro=' + !!introEl + ' pills=' + pillEls.length +
+          ' pillKeys=' + JSON.stringify(Object.keys(pillMap)));
       }
 
       // rebuild only: refresh once layout settles, then anchor scroll onto the rebuilt layout
