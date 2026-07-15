@@ -88,13 +88,35 @@
   var CH_VH        = [2.6, 1.8, 1.6];
   var TYPE_END     = 0.9;    // fraction of chapter 1's slice by which the transcript finishes typing
 
+  // chapter 2 (polish), in fractions of tab-1's scroll slice (gradient itself loops via CSS):
+  var POLISH_GRAD   = [0.0, 0.38];  // the gradient waves ONTO the text word-by-word over this range
+  var POLISH_RAWOUT = [0.38, 0.66]; // raw transcript waves OUT here — its OWN window, BEFORE the box
+  var POLISH_DROP   = [0.62, 1.0];  // box grow + polished-in — after the raw-out so it never covers the fade
+  var POLISH_BAND   = 0.22;  // width of each word's fade within the wave (bigger = softer wave edge)
+  var POLISH_GAP    = 0.12;  // how far the polished-in lags behind the raw-out at the wavefront
+  var POLISH_RISE   = 16;    // px the polished text lifts up to sit where the "Message…" placeholder was
+
   var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
-  // audio pill: authored at its LANDED spot (per image #9); lands there (identity). the recording
-  // pose is a transform offset — lift it up (negative REC_Y) to sit centred while recording.
+  // audio pill: authored at its LANDED spot; recording pose is a transform offset (negative REC_Y lifts it)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
   var PILL_REC_Y     = -180; // px the pill lifts toward the card centre during recording (tune)
   var PILL_ICONS_AT  = 0.55; // handoff fraction (0..1) at which the 2 extra icons start scaling in
   var PILL_ICON_SIZE = 18;   // px the extra icons scale out to
+  var POLISH_PILL_Y  = 25;   // px nudge the polishing pill DOWN onto the audio-pill spot (+down / −up)
+
+  // chapter 3 (Distribute) — the destination cards arc through centre like a hand of cards.
+  // pivot is BELOW the card so rotateZ swings them on an arc (＼ ｜ ／). scrubbed by the tab's tp.
+  var FAN_ANGLE = 45;          // deg a card is rotated at its off (left/right) position
+  var FAN_TX    = 300;         // px a card is translated sideways at its off position
+  var FAN_SCALE = 1;           // scale of an off card (1 = no shrink; cards just swing + clip)
+  var FAN_PIVOT = '50% 100%';  // transform-origin at the card's bottom-middle → swings on that hinge
+  var FAN_FADE  = 0.6;         // card-units past ±1 over which an off card fades fully out
+  var FAN_CENTER_NUDGE = 0;    // px fine-tune for the centred slack note (— = up, + = down)
+  var FAN_LIFT_END = 0.15;     // fraction of ch3 spent lifting the note up to centre before swinging
+  var SLACK_PAD    = 48;       // px white space below the slack text in ch3 (eases in after the type-in)
+  var LOGO_ROT     = 90;       // deg a logo rotates in as it centres (same direction as the swing; flip to reverse)
+  var LOGO_FADE    = 1;        // card-units over which a logo fades + rotates in/out around centre
+  var LOGO_SCALE   = 0.6;      // scale of a logo when off-centre (pops up to 1 as it centres)
 
   var CARD_TARGET  = 0.5;    // viewport fraction the card centres on during the ride
   var CARD_W       = 400;    // px final card width after the shrink (clamped to stage)
@@ -191,9 +213,80 @@
         '[data-tab-text].is-active .meeting_tabs_heading{opacity:1;transform:none;transition-delay:.06s;}' +
         '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}' +
         '.flow_w{transition:opacity .12s linear;}' +
-        '[data-pill]{transition:opacity .25s ease;}' +
+        // pills: grow out on X (playful overshoot), then the label ripples in per-character.
+        // baton-pass — the outgoing collapses while the next grows at the shared anchor.
+        '[data-pill]{opacity:0;transform:scaleX(0);transform-origin:center;' +
+          'transition:transform .3s cubic-bezier(.34,1.56,.64,1),opacity .18s ease;}' +
+        '[data-pill].is-on{opacity:1;transform:scaleX(1);}' +
+        '[data-pill] .pill-ch{display:inline-block;opacity:0;transform:translateY(.4em);' +
+          'transition:opacity .2s ease,transform .28s cubic-bezier(.34,1.56,.64,1);}' +
+        '[data-pill].is-on .pill-ch{opacity:1;transform:none;}' +
+        // "sun" spinner: 12 conic-gradient spokes + a conic mask so the bright wavefront ticks around
+        '[data-flow="spinner"]{box-sizing:border-box;display:inline-block;flex:0 0 auto;' +
+          'width:1em;height:1em;border-radius:50%;' +
+          'background:repeating-conic-gradient(#71716e 0deg 10deg,transparent 10deg 30deg);' +
+          '-webkit-mask:radial-gradient(closest-side,transparent 52%,#000 55%),conic-gradient(#000 8%,rgba(0,0,0,.18) 82%,transparent);' +
+          '-webkit-mask-composite:source-in;' +
+          'mask:radial-gradient(closest-side,transparent 52%,#000 55%),conic-gradient(#000 8%,rgba(0,0,0,.18) 82%,transparent);' +
+          'mask-composite:intersect;' +
+          'animation:flowSpin .9s steps(12) infinite;}' +
+        '@keyframes flowSpin{to{transform:rotate(360deg);}}' +
+        '@media (prefers-reduced-motion:reduce){[data-flow="spinner"]{animation-duration:3s;}}' +
+        // polishing pill: a gradient orbits the border (angle animates via @property; ring stays put)
+        '@property --flowang{syntax:"<angle>";inherits:false;initial-value:0deg;}' +
+        // ring lives on the pill wrap and inherits its radius, so it hugs the real edge
+        '[data-pill="polishing"] .flow_pill-polish_wrap,[data-pill="polishing"]{position:relative;}' +
+        // don't let the flex column stretch it full-width — hug content, stay centred
+        '[data-pill="polishing"]{align-self:center;}' +
+        '[data-pill="polishing"] .flow_pill-polish_wrap::before,' +
+        '[data-pill="polishing"]:not(:has(.flow_pill-polish_wrap))::before{' +
+          'content:"";position:absolute;inset:0;border-radius:inherit;padding:2px;' +
+          'background:conic-gradient(from var(--flowang),transparent 0deg,#FF6C4C 90deg,#FFA946 170deg,#FFBCF2 250deg,#7232A6 320deg,transparent 360deg);' +
+          '-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;' +
+          'mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;' +
+          'animation:flowBorder 2.2s linear infinite;pointer-events:none;z-index:2;}' +
+        // pill inner content sits under the ring so the 2px edge is never covered
+        '[data-pill="polishing"] .flow_pill-polish_wrap>*,[data-pill="polishing"]>*{position:relative;z-index:1;}' +
+        '@keyframes flowBorder{to{--flowang:360deg;}}' +
+        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"] .flow_pill-polish_wrap::before,[data-pill="polishing"]::before{animation:none;}}' +
+        // ---- chapter-3 "done" morph (.is-done): #EEEBE3 ring draws in over the gradient, dots wave in ----
+        '@property --drawang{syntax:"<angle>";inherits:false;initial-value:0deg;}' +
+        '[data-pill="polishing"] .flow_pill-polish_wrap::after,' +
+        '[data-pill="polishing"]:not(:has(.flow_pill-polish_wrap))::after{' +
+          'content:"";position:absolute;inset:0;border-radius:inherit;padding:2px;' +
+          'background:conic-gradient(from -90deg,#EEEBE3 0deg,#EEEBE3 var(--drawang),transparent var(--drawang),transparent 360deg);' +
+          '-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;' +
+          'mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;' +
+          'opacity:0;pointer-events:none;z-index:3;}' +
+        // the drawn ring sits above the still-running gradient and covers it as it completes
+        '[data-pill="polishing"].is-done .flow_pill-polish_wrap::after,' +
+        '[data-pill="polishing"].is-done::after{opacity:1;animation:flowDraw .75s ease forwards;}' +
+        '@keyframes flowDraw{from{--drawang:0deg;}to{--drawang:360deg;}}' +
+        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-polish_wrap::after,[data-pill="polishing"].is-done::after{animation:none;--drawang:360deg;}}' +
+        // done: spinner+label collapse to zero width (display:none), dots lay out instead — pill hugs
+        // one content set at a time (never both widths). fallback (no-wrap) selector must skip the wrap.
+        '[data-pill="polishing"].is-done .flow_pill-polish_wrap>*:not(.flow_pill-dots),' +
+        '[data-pill="polishing"].is-done:not(:has(.flow_pill-polish_wrap))>*:not(.flow_pill-dots){display:none;}' +
+        // centred dot cluster (in flow only when done → it defines the pill width; 16px each edge)
+        '.flow_pill-dots{display:none;align-items:center;justify-content:center;' +
+          'gap:2px;padding:8px 16px;pointer-events:none;position:relative;z-index:1;box-sizing:border-box;}' +
+        '[data-pill="polishing"].is-done .flow_pill-dots{display:flex;}' +
+        '.flow_pill-dot{width:2px;height:2px;border-radius:50%;background:#71716e;opacity:0;flex:0 0 auto;}' +
+        // wave-in via a keyframe (plays reliably on a just-shown element; a transition would not)
+        '[data-pill="polishing"].is-done .flow_pill-dot{animation:flowDotIn .42s cubic-bezier(.34,1.56,.64,1) forwards;}' +
+        '@keyframes flowDotIn{from{opacity:0;transform:translateY(.4em) scale(.6);}to{opacity:1;transform:none;}}' +
+        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-dot{animation-duration:.01ms;}}' +
         '[data-flow="intro"]{transition:opacity ' + INTRO_FADE_MS + 'ms ease;}' +
-        '[data-flow="pill-audio"]{transition:opacity .3s ease;}';
+        '[data-flow="pill-audio"]{transition:opacity .3s ease;}' +
+        // chapter 2: the whole transcript recolours to a looping gradient while "polishing".
+        // background-clip:text on the container + transparent glyphs = one gradient over all text.
+        '[data-type="raw"].is-polishing{background-image:linear-gradient(100deg,' +
+          '#F0D7FF 0%,#FFA946 23%,#FF6C4C 39%,#FFBCF2 67%,#7232A6 91%);background-size:220% 100%;' +
+          '-webkit-background-clip:text;background-clip:text;' +
+          'animation:flowPolish 3.2s ease-in-out infinite alternate;}' +
+        // per-word colour is driven in JS so the gradient waves ONTO the text instead of popping
+        '@keyframes flowPolish{0%{background-position:0% 0;}100%{background-position:100% 0;}}' +
+        '@media (prefers-reduced-motion:reduce){[data-type="raw"].is-polishing{animation:none;}}';
       document.head.appendChild(ms);
     }
 
@@ -378,11 +471,17 @@
         if (svg) { guardStyle(svg); svg.style.width = '100%'; }
       });
 
-      var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK;
+      var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
       function measureStage() {
         // natural sizes while measuring, so a mid-morph refresh can't feed back
         if (kb) { kb.style.width = ''; kb.style.height = ''; kb.style.visibility = ''; }
         card.style.width = ''; card.style.height = '';
+        // neutralise any in-progress chapter-2 styling (a refresh can fire mid-scroll); otherwise the
+        // grown/shifted message box + collapsed transcript pollute the measurement → card shrinks.
+        if (transcriptEl) { transcriptEl.style.height = ''; transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
+        if (msgGrowEl)    { msgGrowEl.style.height = ''; msgGrowEl.style.marginTop = '0px'; }
+        if (msgContainEl) { msgContainEl.style.height = ''; msgContainEl.style.marginTop = '0px'; }
+        if (polishedEl)   { polishedEl.style.display = ''; }
         // the CONTENT box: padding on the stage must not count, or the cards overflow it
         var cs = window.getComputedStyle(stage);
         padL = parseFloat(cs.paddingLeft) || 0;
@@ -403,20 +502,47 @@
           }
           try { mm.len = mm.text.getComputedTextLength ? mm.text.getComputedTextLength() : 0; } catch (e) { mm.len = 0; }
         }
-        // resolve the landed card height: 'auto' fits the screen's in-flow content at the final width
+        // measure everything at the FINAL card width, inside one screen-at-final-width context,
+        // so text wraps exactly as it will when landed (natural-width measures are wildly wrong).
         if (CARD_H === 'auto' && screenEl) {
           var saved = screenEl.style.cssText;
           screenEl.style.position = 'static';
           screenEl.style.height   = 'auto';
           screenEl.style.width    = Math.min(CARD_W, stageW) + 'px';
           screenEl.style.opacity  = '0';                 // no flash during the measure
-          var m = screenEl.offsetHeight;
+
+          transcriptH = transcriptEl ? transcriptEl.offsetHeight : 0;
+
+          // message box collapsed (polished hidden) vs expanded (polished laid out).
+          // we also grab the WHITE box (contain) collapsed height — that's the element that
+          // actually grows upward, so the white rises with the text (see sceneUpdate).
+          if (msgGrowEl) {
+            var mv = msgGrowEl.style.cssText;
+            var mcv = msgContainEl ? msgContainEl.style.cssText : null;
+            msgGrowEl.style.height = 'auto'; msgGrowEl.style.maxHeight = 'none'; msgGrowEl.style.overflow = 'visible';
+            if (polishedEl) { polishedEl.style.display = 'none'; }
+            msgCollapsedH = msgGrowEl.offsetHeight;
+            if (msgContainEl) { msgContainEl.style.height = 'auto'; msgContainBaseH = msgContainEl.offsetHeight; }
+            if (polishedEl) { polishedEl.style.display = ''; }
+            msgExpandedH = msgGrowEl.offsetHeight;
+            msgGrowEl.style.cssText = mv; msgGrowEl.style.overflow = 'hidden';
+            if (msgContainEl && mcv != null) { msgContainEl.style.cssText = mcv; }
+          }
+          // screen baseline = chapter-1 state (message box collapsed), so we don't double-count polished
+          var mgh = msgGrowEl ? msgGrowEl.style.cssText : null;
+          if (msgGrowEl) { msgGrowEl.style.height = msgCollapsedH + 'px'; msgGrowEl.style.overflow = 'hidden'; }
+          var screenBase = screenEl.offsetHeight;
+          if (msgGrowEl && mgh != null) { msgGrowEl.style.cssText = mgh; }
+
           screenEl.style.cssText = saved;                // restore exactly
-          cardHpx = (m > 0 ? m : CARD_H_FALLBACK) + CARD_PAD_BOTTOM;
+          // constant landed height = the chapter-1 layout. the message box grows UPWARD over the
+          // (faded, space-kept) transcript, so its footprint never changes and the card holds height.
+          cardHpx = (screenBase > 0 ? screenBase : CARD_H_FALLBACK) + CARD_PAD_BOTTOM;
         } else {
           cardHpx = (typeof CARD_H === 'number') ? CARD_H : CARD_H_FALLBACK;
         }
-        cardHpx = Math.min(cardHpx, stageH * CARD_H_MAX);
+        // cap against the VIEWPORT (the card rides down over the tabs), not the little stage row
+        cardHpx = Math.min(cardHpx, (window.innerHeight || 900) * CARD_H_MAX);
       }
 
       // width split per phase. Lp = where the photo card's left edge sits (px from stage left)
@@ -435,7 +561,7 @@
         } else {                             // P2 + after: shrink to the centred final card
           var t = phaseT(p, pBh, pC);
           cardW = stageW - (stageW - Math.min(CARD_W, stageW)) * t;
-          cardH = stageH - (stageH - Math.min(cardHpx, stageH)) * t;
+          cardH = stageH + (cardHpx - stageH) * t;      // grows from the full-bleed height to the landed height
           card.style.borderRadius = (RADIUS_FULL + (RADIUS_END - RADIUS_FULL) * t) + 'px';
         }
         if (p < pBh) { card.style.borderRadius = ''; }   // class radius before the shrink
@@ -528,16 +654,110 @@
         el.style.height = '0px';
       });
       var transcriptEl = card ? card.querySelector('[data-type="raw"]') : null;
+      // raw-out wipe masks the transcript's WRAPPER, not the transcript (masking the same element
+      // that has background-clip:text fights it on Blink/WebKit).
+      var rawWrap = (transcriptEl && transcriptEl.parentNode) ? transcriptEl.parentNode : transcriptEl;
       var polishedEl   = card ? card.querySelector('[data-type="polished"]') : null;
       var destWrap     = card ? card.querySelector('.flow_icons-destination') : null;
-      var pillEls      = card ? Array.prototype.slice.call(card.querySelectorAll('[data-pill]')) : [];
+      // ---- chapter 3 (Distribute) fan ----
+      // slack card = the live composer note (card 0, reused). claude + gmail are authored copies:
+      // duplicate .flow_message-wrap, tag data-dest, drop in a [data-flow="fan"] absolute overlay.
+      var fanScope   = screenEl || section;
+      var fanLayer   = oneF(section, 'fan') || fanScope.querySelector('[data-flow="fan"]');
+      // LOGOS = the [data-dest] SVGs that live inside .flow_icons-destination (top of the card).
+      var destLogos  = destWrap ? Array.prototype.slice.call(destWrap.querySelectorAll('[data-dest]')) : [];
+      // CARDS = the [data-dest] note copies NOT in the logo wrap, and not slack (slack = live note).
+      var destExtra  = Array.prototype.slice.call(fanScope.querySelectorAll('[data-dest]')).filter(function (el) {
+        if (destWrap && destWrap.contains(el)) { return false; }       // it's a logo, not a card
+        return (el.getAttribute('data-dest') || '').trim().toLowerCase() !== 'slack';
+      });
+      // fan order: live note (slack) first, then the authored copies in slack→claude→gmail order
+      var DEST_ORDER = { claude: 1, gmail: 2 };
+      destExtra.sort(function (a, b) {
+        return (DEST_ORDER[a.getAttribute('data-dest')] || 9) - (DEST_ORDER[b.getAttribute('data-dest')] || 9);
+      });
+      var slackCenterY = 0;   // reserved; vertical placement handled via FAN_CENTER_NUDGE (manual)
+      var fanPositioned = false;   // cards get placed over the note lazily, once the card is landed
+      // NB: don't touch screenEl's position — it's an absolute cover; overriding it drops the
+      // transcript + note out of view. it's already a positioned ancestor, so it anchors the cards.
+      if (fanLayer) { guardStyle(fanLayer); fanLayer.style.position = 'absolute'; fanLayer.style.opacity = '0'; }
+      destExtra.forEach(function (el) {
+        guardStyle(el);
+        el.style.position = 'absolute';         // out of flow so they don't inflate the card height
+        el.style.willChange = 'transform,opacity';
+        el.style.transformOrigin = FAN_PIVOT;
+        el.style.backfaceVisibility = 'hidden';
+        el.style.opacity = '0';                 // hidden until chapter 3 (avoid a pre-fan flash)
+      });
+      destLogos.forEach(function (el) { guardStyle(el); el.style.transformOrigin = '50% 50%'; el.style.opacity = '0'; });
+      // place the absolute cards over the live note; each card's lift centres its OWN box in the
+      // frame (regardless of height → no downward drift).
+      function positionFanCards() {
+        if (!composerEl) { return; }
+        var scr = screenEl || composerEl.offsetParent;
+        var scH = scr ? scr.clientHeight : 0;
+        var t = composerEl.offsetTop, l = composerEl.offsetLeft, w = composerEl.offsetWidth;
+        // slack: centre by TEXT height only (SLACK_PAD grows the box DOWN, doesn't lift it)
+        composerEl._fanCY = Math.round(scH / 2 - (t + composerEl.offsetHeight / 2));
+        for (var i = 0; i < destExtra.length; i++) {
+          var el = destExtra[i];
+          el.style.top   = t + 'px';
+          el.style.left  = l + 'px';
+          el.style.width = w + 'px';
+          el._fanCY = Math.round(scH / 2 - (t + el.offsetHeight / 2));
+        }
+      }
+      var pillEls      = Array.prototype.slice.call(section.querySelectorAll('[data-pill]'));
       var pillMap = {};
       pillEls.forEach(function (el) {
         guardStyle(el);
         var key = (el.getAttribute('data-pill') || '').trim().toLowerCase();
         if (key) { pillMap[key] = el; }
-        el.style.opacity = '0';
+        // char-wrap the label so it can ripple; CSS drives visibility via the .is-on class.
+        // prefer .flow_text-type, else the first leaf element that actually holds text (variants
+        // and the separate polishing component may class their label differently).
+        var txt = el.querySelector('.flow_text-type');
+        if (!txt) {
+          var cand = el.querySelectorAll('*');
+          for (var qi = 0; qi < cand.length; qi++) {
+            if (cand[qi].children.length === 0 && (cand[qi].textContent || '').trim()) { txt = cand[qi]; break; }
+          }
+        }
+        if (txt && !txt.querySelector('.pill-ch')) {
+          var s = txt.textContent; txt.textContent = '';
+          for (var ci = 0; ci < s.length; ci++) {
+            var ch = document.createElement('span');
+            ch.className = 'pill-ch';
+            ch.textContent = s.charAt(ci) === ' ' ? ' ' : s.charAt(ci);
+            ch.style.transitionDelay = (0.16 + ci * 0.018) + 's';   // starts after the pill grows out
+            txt.appendChild(ch);
+          }
+        }
       });
+
+      // chapter-3 "done" state morphs the polishing pill (spinner+label → dots). inject the dot row.
+      var polishPill = pillMap.polishing || null;
+      if (polishPill) {
+        var polishWrap = polishPill.querySelector('.flow_pill-polish_wrap') || polishPill;
+        if (!polishWrap.querySelector('.flow_pill-dots')) {
+          var dw = document.createElement('div'); dw.className = 'flow_pill-dots';
+          for (var di = 0; di < 10; di++) {
+            var dot = document.createElement('span'); dot.className = 'flow_pill-dot';
+            dot.style.animationDelay = (0.05 + di * 0.045) + 's';     // left-to-right wave-in
+            dw.appendChild(dot);
+          }
+          polishWrap.appendChild(dw);
+        }
+        // hug content (not full-width) — !important to beat an authored width:100% rule
+        polishPill.style.setProperty('align-self', 'center', 'important');
+        polishPill.style.setProperty('flex', '0 0 auto', 'important');
+        polishPill.style.setProperty('width', 'fit-content', 'important');
+        polishPill.style.setProperty('min-width', '0', 'important');
+        polishPill.style.setProperty('max-width', '100%', 'important');
+        // pill height comes from the dots row's own padding (see .flow_pill-dots), not the outer pill.
+        // manual nudge onto the audio-pill spot (top, not transform, so it never fights scaleX).
+        if (POLISH_PILL_Y) { polishPill.style.position = 'relative'; polishPill.style.top = POLISH_PILL_Y + 'px'; }
+      }
 
       // wrap every word of the transcript in a reveal span; highlight words keep their
       // flow_type-* colour class and carry that class's suffix as their category.
@@ -583,6 +803,56 @@
           }
         });
       }());
+
+      // polished message: wrap words for the wave-in; the composer's placeholder hides as it fills
+      var pwords = [];
+      (function buildPolished() {
+        if (!polishedEl) { return; }
+        guardStyle(polishedEl);
+        // override any authored height:0 / opacity:0 / position:absolute — the container must be
+        // in normal flow (so it grows the box), visible, natural height. words do the fade.
+        polishedEl.style.position = 'relative';
+        polishedEl.style.overflow = 'visible';
+        polishedEl.style.opacity = '1';
+        polishedEl.style.height = 'auto';
+        // lift the polished text up over where the placeholder sat (transform → doesn't disturb
+        // the measured box heights, so the grow math stays intact)
+        polishedEl.style.transform = 'translateY(-' + POLISH_RISE + 'px)';
+        if (polishedEl.querySelector('.flow_pw')) {                // rebuild: already wrapped, just recollect
+          Array.prototype.forEach.call(polishedEl.querySelectorAll('.flow_pw'), function (w) { w.style.opacity = '0'; pwords.push(w); });
+          return;
+        }
+        var raw = polishedEl.textContent; polishedEl.textContent = '';
+        raw.split(/(\s+)/).forEach(function (chunk) {
+          if (chunk === '') { return; }
+          if (/^\s+$/.test(chunk)) { polishedEl.appendChild(document.createTextNode(chunk)); return; }
+          var w = document.createElement('span'); w.className = 'flow_pw'; w.textContent = chunk; w.style.opacity = '0';
+          polishedEl.appendChild(w); pwords.push(w);
+        });
+      }());
+      var placeholderEl = (composerEl && composerEl.querySelector('.flow_message-placeholder')) ||
+                          section.querySelector('.flow_message-placeholder');
+      if (placeholderEl) { guardStyle(placeholderEl); }
+      var msgGrowEl = oneF(section, 'msg-grow');                 // the box that grows to hold the message
+      // reveal = clip (overflow hidden) + grow height, riding the top up via negative margin so the
+      // footprint (icons below) stays put. the box carries the WHITE so the rising edge shows white.
+      var msgContainEl = msgGrowEl ? msgGrowEl.parentNode : null;
+      if (!(msgContainEl && msgContainEl.nodeType === 1)) { msgContainEl = null; }
+      if (msgGrowEl) {
+        guardStyle(msgGrowEl);
+        msgGrowEl.style.overflow = 'hidden';
+        // inherit the composer's white surface so the growing box IS the white box
+        if (msgContainEl) {
+          var ccs = window.getComputedStyle(msgContainEl);
+          if (ccs.backgroundColor && ccs.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+            msgGrowEl.style.backgroundColor    = ccs.backgroundColor;
+          }
+          msgGrowEl.style.borderTopLeftRadius  = ccs.borderTopLeftRadius;
+          msgGrowEl.style.borderTopRightRadius = ccs.borderTopRightRadius;
+        }
+      }
+      // parent must not clip the upward-grown box (it rides above the contain's own top edge)
+      if (msgContainEl) { guardStyle(msgContainEl); msgContainEl.style.overflow = 'visible'; }
 
       Array.prototype.forEach.call(bgSvgs, function (svg) {
         Array.prototype.forEach.call(svg.querySelectorAll('path'), function (p) {
@@ -687,7 +957,64 @@
       }
 
       // ---- card scene driver: handoff crossfade + chapter-1 typing + pill ----
-      var wordsShown = -1, pillShown = 0;
+      var wordsShown = -1, pillShown = 0, polishColored = false;
+      function resetPolishColor() {                              // clear the gradient per-word colours (once)
+        if (!polishColored) { return; }
+        for (var i = 0; i < words.length; i++) { words[i].el.style.color = ''; }
+        polishColored = false;
+      }
+
+      // chapter-3 fan: card 0 = live note (slack), then authored copies. tp scrubs which is centred;
+      // offset-from-centre → rotate+translate about the pivot = arc. live note resets to normal when OFF.
+      function fanUpdate(tp, show) {
+        var live = composerEl;
+        var n = (live ? 1 : 0) + destExtra.length;
+        if (n < 2) { if (live && !show) { live.style.transform = ''; live.style.transformOrigin = ''; } return; }
+        if (fanLayer) { fanLayer.style.opacity = show ? '1' : '0'; }
+        // position lazily on first show — by then the card is LANDED, so the note's offset is correct
+        if (show && !fanPositioned) { positionFanCards(); fanPositioned = true; }
+        // two scrubbed phases: LIFT the note to centre (no jump from ch2), then SWING the cards through
+        var liftT   = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
+        var swingTp = FAN_LIFT_END < 1 ? Math.max(0, (tp - FAN_LIFT_END) / (1 - FAN_LIFT_END)) : 0;
+        var f = swingTp * (n - 1);
+        function place(el, i, isLive) {
+          var rel = i - f, ar = Math.abs(rel);
+          if (!show) {
+            if (isLive) { el.style.transform = ''; el.style.transformOrigin = ''; }  // back to normal
+            else { el.style.opacity = '0'; }
+            return;
+          }
+          var op = 1 - Math.max(0, Math.min(1, (ar - 1) / FAN_FADE));
+          var cy = ((el._fanCY || 0) + FAN_CENTER_NUDGE) * liftT;   // ramp the centring lift (smooth)
+          el.style.transformOrigin = FAN_PIVOT;
+          el.style.transform = 'translate(' + (FAN_TX * rel) + 'px,' + cy + 'px) rotate(' + (FAN_ANGLE * rel) +
+            'deg) scale(' + (1 - (1 - FAN_SCALE) * Math.min(1, ar)) + ')';
+          el.style.opacity = String(op < 0 ? 0 : op);
+          el.style.zIndex  = String(100 - Math.round(ar * 10));
+          if (!isLive) { el.style.pointerEvents = 'none'; }
+        }
+        var ci = 0;
+        if (live) { place(live, ci++, true); }
+        for (var e = 0; e < destExtra.length; e++) { place(destExtra[e], ci++, false); }
+        // each logo tracks its card's offset from centre: fades + rotates in (LOGO_ROT·rel → 0)
+        for (var g = 0; g < destLogos.length; g++) {
+          var lk = (destLogos[g].getAttribute('data-dest') || '').trim().toLowerCase();
+          var li = (lk === 'slack') ? 0 : -1;
+          if (li < 0) {
+            for (var x = 0; x < destExtra.length; x++) {
+              if ((destExtra[x].getAttribute('data-dest') || '').trim().toLowerCase() === lk) { li = x + 1; break; }
+            }
+          }
+          if (!show || li < 0) { destLogos[g].style.opacity = '0'; continue; }
+          // slack (index 0) is centred from the start → entrance via the lift; others enter via the swing
+          var lrel = (li === 0) ? ((li - f) + (1 - liftT)) : (li - f);
+          var lar  = Math.abs(lrel);
+          destLogos[g].style.opacity   = String(Math.max(0, 1 - lar / LOGO_FADE));
+          destLogos[g].style.transform = 'rotate(' + (LOGO_ROT * lrel) + 'deg) scale(' +
+            (1 - (1 - LOGO_SCALE) * Math.min(1, lar)) + ')';
+        }
+      }
+
       function sceneUpdate(p) {
         // intro (220 + marquee): quick TRIGGERED fade at the shrink start — CSS-timed, not scrubbed
         if (introEl) { introEl.style.opacity = (p >= pBh) ? '0' : '1'; }
@@ -717,8 +1044,7 @@
           if (transcriptEl) { transcriptEl.style.opacity = String(hf); }
           if (composerEl)   { composerEl.style.opacity = String(hf); }
         }
-        if (polishedEl) { polishedEl.style.opacity = '0'; }      // chapter 2 — not built yet
-        if (destWrap)   { destWrap.style.opacity = '0'; }        // chapter 3 — not built yet
+        // destWrap (logo row) shown only in chapter 3 — set alongside the fan below
 
         var idx = -1, tp = 0;
         if (p >= pHold) { var loc = tabLocal(p); idx = loc.idx; tp = loc.tp; }
@@ -736,13 +1062,73 @@
           wordsShown = count;
         }
 
-        // pill = category of the latest revealed highlight word, chapter 1 only
-        var cat = null;
-        if (idx === 0) { for (var j = count - 1; j >= 0; j--) { if (words[j].cat) { cat = words[j].cat; break; } } }
-        if (cat !== pillShown) {
-          for (var k in pillMap) { if (pillMap.hasOwnProperty(k)) { pillMap[k].style.opacity = (k === cat) ? '1' : '0'; } }
-          pillShown = cat;
+        // ---- chapter 2 (polish): gradient waves onto the raw text, raw wipes out, polished staggers
+        // in as the message box grows ----
+        var np = pwords.length;
+        if (idx === 1) {
+          if (transcriptEl) { transcriptEl.classList.add('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
+          // gradient-in front: each word switches into the gradient (colour → transparent) as it passes
+          var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
+          // polished-in front: polished staggers in behind the box grow (later window)
+          var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
+          for (var i = 0; i < n; i++) {
+            var ph = n > 1 ? i / (n - 1) : 0;
+            words[i].el.style.color = (Fg > ph) ? 'transparent' : '';     // gradient waves on (top→bottom)
+          }
+          // raw-out: a soft mask wipes the whole transcript BOTTOM→TOP. per-word opacity can't fade it
+          // (the gradient is painted at the container via background-clip:text — needs a wrapper mask).
+          if (rawWrap) {
+            var wipe = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
+            var soft = 16, stop = wipe * (100 + soft);
+            var m = 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
+              '%, #000 ' + stop.toFixed(1) + '%)';
+            rawWrap.style.webkitMaskImage = m;
+            rawWrap.style.maskImage = m;
+          }
+          for (var j = 0; j < np; j++) {
+            pwords[j].style.opacity = String(smooth((F - (np > 1 ? j / (np - 1) : 0) - POLISH_GAP) / POLISH_BAND));
+          }
+          wordsShown = -1; polishColored = true;                    // force ch1 re-reveal + colour reset later
+          var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
+          var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
+          // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
+          // constant (marginTop cancels the extra height) → card holds. box is white → white rises.
+          if (msgGrowEl)    { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
+          if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * 2.4))); }
+        } else if (idx >= 2) {                                       // chapter 3: polished only
+          if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = '0'; }
+          if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
+          resetPolishColor();
+          for (var j2 = 0; j2 < np; j2++) { pwords[j2].style.opacity = '1'; }
+          // extend the box DOWN by SLACK_PAD (white below the text), eased in over the lift
+          var padLiftT = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
+          if (msgGrowEl)    { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; }
+          if (placeholderEl){ placeholderEl.style.opacity = '0'; }
+        } else {                                                     // recording / chapter 1: raw only
+          if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
+          if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
+          resetPolishColor();
+          for (var j3 = 0; j3 < np; j3++) { pwords[j3].style.opacity = '0'; }
+          if (msgGrowEl)    { msgGrowEl.style.height = msgCollapsedH ? (msgCollapsedH + 'px') : ''; msgGrowEl.style.marginTop = '0px'; }
+          if (placeholderEl){ placeholderEl.style.opacity = ''; }
         }
+
+        // pill: ch1 → latest highlight category; ch2+3 → "polishing" (same pill, stays ON across 2→3;
+        // ch3 flips its inner state to the "done" dots via is-done).
+        var activePill = null;
+        if (idx === 0) { for (var j = count - 1; j >= 0; j--) { if (words[j].cat) { activePill = words[j].cat; break; } } }
+        else if (idx >= 1) { activePill = 'polishing'; }
+        if (activePill !== pillShown) {
+          // baton-pass: outgoing pill collapses on X while the incoming grows out + ripples (CSS)
+          for (var k in pillMap) { if (pillMap.hasOwnProperty(k)) { pillMap[k].classList.toggle('is-on', k === activePill); } }
+          pillShown = activePill;
+        }
+        if (polishPill) { polishPill.classList.toggle('is-done', idx >= 2); }
+
+        // chapter 3 (Distribute): fan the cards through centre, scrubbed by this tab's tp
+        // (0 → slack/live note, → claude, → gmail). hidden/normal before chapter 3.
+        if (destWrap) { destWrap.style.opacity = (idx >= 2) ? '1' : '0'; }   // logo row on in ch3
+        fanUpdate(idx >= 2 ? tp : 0, idx >= 2);
       }
 
       // scrub lerp state: morph/card follow p 1:1; marquee + audio ease toward pTarget in a ticker
@@ -792,6 +1178,7 @@
         measureStage();
         measurePositions();
         computeTiming();
+        fanPositioned = false;                 // re-place cards on next fan show (layout may have changed)
         applyScroll(st ? st.progress : 0);
         pSmooth = pTarget; painted = -1;      // no scrub sweep from 0 on load/rebuild
         updateMarquees(pSmooth); updateAudio(pSmooth);
@@ -840,6 +1227,9 @@
         console.log('[flow-stack] scene: transcript=' + !!transcriptEl + ' words=' + words.length +
           ' composer=' + !!composerEl + ' intro=' + !!introEl + ' pills=' + pillEls.length +
           ' pillKeys=' + JSON.stringify(Object.keys(pillMap)));
+        console.log('[flow-stack] heights: msgGrow=' + !!msgGrowEl + ' collapsed=' + msgCollapsedH +
+          ' expanded=' + msgExpandedH + ' delta=' + (msgExpandedH - msgCollapsedH) +
+          ' polishedWords=' + pwords.length + ' transcriptH=' + transcriptH + ' cardHpx=' + cardHpx.toFixed(0));
       }
 
       // rebuild only: refresh once layout settles, then anchor scroll onto the rebuilt layout
