@@ -106,6 +106,10 @@
   var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
   var BG_FADE_MS      = 500; // crossfade between the card's chapter background images (data-bg="0/1/2")
+  // melt: bg swaps warp through an SVG fractal-noise displacement (generated in-filter — no image).
+  var MELT_SCALE      = 60;  // px peak displacement mid-swap (0 = plain crossfade, no melt)
+  var MELT_FREQ       = 0.011; // feTurbulence baseFrequency — cloud scale (lower = bigger, softer blobs)
+  var MELT_OCT        = 2;   // feTurbulence octaves (noise detail)
   var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
                              // the end so the message frame animates in just before the raw text types
   // chapter-3 pill "voice mode": the done pill shows a cream waveform — bars that animate OUT to
@@ -529,7 +533,7 @@
       bgImgs.forEach(function (im, k) {
         guardStyle(im);
         // author them hidden in Webflow if you like — we take over: force them displayed and
-        // stacked, opacity is the only thing that shows/hides them (the crossfade).
+        // stacked, opacity is the only thing that shows/hides them (JS drives the crossfade).
         im.style.setProperty('display', 'block', 'important');
         im.style.setProperty('visibility', 'visible', 'important');
         im.style.position = 'absolute';
@@ -538,17 +542,70 @@
         im.style.objectFit = 'cover';
         im.style.zIndex = '0';                            // behind the card content (screen/composer)
         im.style.pointerEvents = 'none';
-        im.style.transition = 'opacity ' + BG_FADE_MS + 'ms ease';
         im.style.opacity = k === 0 ? '1' : '0';           // start on the wpm image
       });
-      var bgShown = 0;
+
+      // ---- melt filter: an SVG fractal-noise displacement (same character as the codrops 4.png,
+      // generated so there's no asset). the displacement `scale` is 0 at rest (identity — the grow
+      // reveal is untouched) and ramps up-then-back only DURING a bg swap → a melt/warp crossfade.
+      var meltDisp = null;
+      if (MELT_SCALE > 0 && bgImgs.length > 1) {
+        var NS = 'http://www.w3.org/2000/svg';
+        var old = document.getElementById('flow-melt-svg'); if (old && old.parentNode) { old.parentNode.removeChild(old); }
+        var msvg = document.createElementNS(NS, 'svg');
+        msvg.setAttribute('id', 'flow-melt-svg');
+        msvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;';
+        var filt = document.createElementNS(NS, 'filter');
+        filt.setAttribute('id', 'flowMelt');
+        filt.setAttribute('x', '-25%'); filt.setAttribute('y', '-25%');
+        filt.setAttribute('width', '150%'); filt.setAttribute('height', '150%');
+        filt.setAttribute('color-interpolation-filters', 'sRGB');
+        var turb = document.createElementNS(NS, 'feTurbulence');
+        turb.setAttribute('type', 'fractalNoise');
+        turb.setAttribute('baseFrequency', String(MELT_FREQ));
+        turb.setAttribute('numOctaves', String(MELT_OCT));
+        turb.setAttribute('seed', '4');
+        turb.setAttribute('stitchTiles', 'stitch');
+        turb.setAttribute('result', 'noise');
+        meltDisp = document.createElementNS(NS, 'feDisplacementMap');
+        meltDisp.setAttribute('in', 'SourceGraphic');
+        meltDisp.setAttribute('in2', 'noise');
+        meltDisp.setAttribute('scale', '0');
+        meltDisp.setAttribute('xChannelSelector', 'R');
+        meltDisp.setAttribute('yChannelSelector', 'G');
+        filt.appendChild(turb); filt.appendChild(meltDisp);
+        msvg.appendChild(filt);
+        document.body.appendChild(msvg);
+        teardown.push(function () { if (msvg.parentNode) { msvg.parentNode.removeChild(msvg); } });
+      }
+
+      var bgShown = 0, bgMeltTween = null;
       function setBgChapter(idx) {                          // recording+ch1 -> 0, ch2 -> 1, ch3 -> 2
         if (bgImgs.length < 2) { return; }
         var want = idx < 1 ? 0 : Math.min(idx, bgImgs.length - 1);
         if (want === bgShown) { return; }
+        var from = bgImgs[bgShown], to = bgImgs[want];
         bgShown = want;
-        for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
+        if (bgMeltTween) { bgMeltTween.kill(); }
+        var doMelt = !!meltDisp;
+        if (doMelt) { from.style.filter = 'url(#flowMelt)'; to.style.filter = 'url(#flowMelt)'; }
+        var proxy = { p: 0 };
+        bgMeltTween = gsap.to(proxy, {
+          p: 1, duration: BG_FADE_MS / 1000, ease: 'power1.inOut',
+          onUpdate: function () {
+            var pr = proxy.p;
+            to.style.opacity = String(pr);
+            from.style.opacity = String(1 - pr);
+            if (doMelt) { meltDisp.setAttribute('scale', String(MELT_SCALE * Math.sin(Math.PI * pr))); }  // 0→peak→0
+          },
+          onComplete: function () {
+            if (doMelt) { meltDisp.setAttribute('scale', '0'); from.style.filter = ''; to.style.filter = ''; }
+            for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
+            bgMeltTween = null;
+          }
+        });
       }
+      teardown.push(function () { if (bgMeltTween) { bgMeltTween.kill(); } });
       if (kb) {
         guardStyle(kb);
         kb.style.margin    = '0';
