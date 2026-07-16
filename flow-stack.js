@@ -105,8 +105,21 @@
 
   var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
+  var BG_FADE_MS      = 500; // crossfade between the card's chapter background images (data-bg="0/1/2")
   var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
                              // the end so the message frame animates in just before the raw text types
+  // chapter-3 pill "voice mode": the done pill shows a cream waveform — bars that animate OUT to
+  // varying heights (left→right ripple). shape = per-bar height fractions; count = its length.
+  var BAR_COLOR = '#FFFFEB';
+  var BAR_W      = 3;        // px width of each bar
+  var BAR_GAP    = 3;        // px gap between bars
+  var BAR_MIN    = 3;        // px shortest bar (the tiny end dots)
+  var BAR_MAX    = 18;       // px tallest bar — the row locks to this height so the pill never resizes
+  var PILL_WAVE_H = 24;      // px the waveform row occupies; vert padding = (PILL_WAVE_H-BAR_MAX)/2 = 3px
+  var PILL_OUT_MS = 240;     // ms the spinner+label take to fade/shrink out before the waveform comes in
+  var BULLET_MS  = 300;      // ms the bullets wave in + row grows BEFORE they grow out to the audio heights
+  var BAR_SHAPE  = [0.12, 0.28, 0.5, 0.42, 0.72, 0.88, 1, 0.8, 0.62, 0.48, 0.34, 0.22, 0.12];
+
   // audio pill: authored at its LANDED spot; recording pose is a transform offset (negative REC_Y lifts it)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
   var PILL_REC_Y     = -180; // px the pill lifts toward the card centre during recording (tune)
@@ -264,17 +277,13 @@
         '[data-pill] .pill-ch{display:inline-block;opacity:0;transform:translateY(.4em);' +
           'transition:opacity .2s ease,transform .28s cubic-bezier(.34,1.56,.64,1);}' +
         '[data-pill].is-on .pill-ch{opacity:1;transform:none;}' +
-        // "sun" spinner: 12 conic-gradient spokes + a conic mask so the bright wavefront ticks around
-        '[data-flow="spinner"]{box-sizing:border-box;display:inline-block;flex:0 0 auto;' +
-          'width:1em;height:1em;border-radius:50%;' +
-          'background:repeating-conic-gradient(#71716e 0deg 10deg,transparent 10deg 30deg);' +
-          '-webkit-mask:radial-gradient(closest-side,transparent 52%,#000 55%),conic-gradient(#000 8%,rgba(0,0,0,.18) 82%,transparent);' +
-          '-webkit-mask-composite:source-in;' +
-          'mask:radial-gradient(closest-side,transparent 52%,#000 55%),conic-gradient(#000 8%,rgba(0,0,0,.18) 82%,transparent);' +
-          'mask-composite:intersect;' +
-          'animation:flowSpin .9s steps(12) infinite;}' +
+        // spinner: a 4-point sparkle SVG (injected in build) that rotates smoothly
+        '[data-flow="spinner"]{box-sizing:border-box;display:inline-flex;align-items:center;' +
+          'justify-content:center;flex:0 0 auto;width:1em;height:1em;color:#71716e;' +
+          'animation:flowSpin 1.6s linear infinite;}' +
+        '[data-flow="spinner"] svg{width:100%;height:100%;display:block;}' +
         '@keyframes flowSpin{to{transform:rotate(360deg);}}' +
-        '@media (prefers-reduced-motion:reduce){[data-flow="spinner"]{animation-duration:3s;}}' +
+        '@media (prefers-reduced-motion:reduce){[data-flow="spinner"]{animation-duration:4s;}}' +
         // polishing pill: a gradient orbits the border (angle animates via @property; ring stays put)
         '@property --flowang{syntax:"<angle>";inherits:false;initial-value:0deg;}' +
         // ring lives on the pill wrap and inherits its radius, so it hugs the real edge
@@ -292,33 +301,43 @@
         '[data-pill="polishing"] .flow_pill-polish_wrap>*,[data-pill="polishing"]>*{position:relative;z-index:1;}' +
         '@keyframes flowBorder{to{--flowang:360deg;}}' +
         '@media (prefers-reduced-motion:reduce){[data-pill="polishing"] .flow_pill-polish_wrap::before,[data-pill="polishing"]::before{animation:none;}}' +
-        // ---- chapter-3 "done" morph (.is-done): #EEEBE3 ring draws in over the gradient, dots wave in ----
-        '@property --drawang{syntax:"<angle>";inherits:false;initial-value:0deg;}' +
-        '[data-pill="polishing"] .flow_pill-polish_wrap::after,' +
-        '[data-pill="polishing"]:not(:has(.flow_pill-polish_wrap))::after{' +
-          'content:"";position:absolute;inset:0;border-radius:inherit;padding:2px;' +
-          'background:conic-gradient(from -90deg,#EEEBE3 0deg,#EEEBE3 var(--drawang),transparent var(--drawang),transparent 360deg);' +
-          '-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;' +
-          'mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;' +
-          'opacity:0;pointer-events:none;z-index:3;}' +
-        // the drawn ring sits above the still-running gradient and covers it as it completes
-        '[data-pill="polishing"].is-done .flow_pill-polish_wrap::after,' +
-        '[data-pill="polishing"].is-done::after{opacity:1;animation:flowDraw .75s ease forwards;}' +
-        '@keyframes flowDraw{from{--drawang:0deg;}to{--drawang:360deg;}}' +
-        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-polish_wrap::after,[data-pill="polishing"].is-done::after{animation:none;--drawang:360deg;}}' +
-        // done: spinner+label collapse to zero width (display:none), dots lay out instead — pill hugs
-        // one content set at a time (never both widths). fallback (no-wrap) selector must skip the wrap.
+        // ---- voice mode (.is-done): the SAME single border recolours from the rainbow gradient to a
+        // clean white/cream ring. one element only → it can never draw twice. the orbit keeps a subtle
+        // shimmer. (no separate ::after ring, no draw-sweep — that was the double-paint.)
+        '[data-pill="polishing"].is-done .flow_pill-polish_wrap::before,' +
+        '[data-pill="polishing"].is-done:not(:has(.flow_pill-polish_wrap))::before{' +
+          'background:conic-gradient(from var(--flowang),#EEEBE3 0deg,#FFFFEB 120deg,#EEEBE3 240deg,#FFFFEB 360deg);}' +
+        // ---- cleaning-up → voice-mode choreography ----
+        // STAGE 1 (is-done): spinner + label fade + shrink OUT (in flow, no jump) while the ring draws.
+        '[data-pill="polishing"] .flow_pill-polish_wrap>*:not(.flow_pill-dots),' +
+        '[data-pill="polishing"]:not(:has(.flow_pill-polish_wrap))>*:not(.flow_pill-dots){' +
+          'transition:opacity .24s ease,transform .24s ease;transform-origin:center;}' +
         '[data-pill="polishing"].is-done .flow_pill-polish_wrap>*:not(.flow_pill-dots),' +
-        '[data-pill="polishing"].is-done:not(:has(.flow_pill-polish_wrap))>*:not(.flow_pill-dots){display:none;}' +
-        // centred dot cluster (in flow only when done → it defines the pill width; 16px each edge)
-        '.flow_pill-dots{display:none;align-items:center;justify-content:center;' +
-          'gap:2px;padding:8px 16px;pointer-events:none;position:relative;z-index:1;box-sizing:border-box;}' +
-        '[data-pill="polishing"].is-done .flow_pill-dots{display:flex;}' +
-        '.flow_pill-dot{width:2px;height:2px;border-radius:50%;background:#71716e;opacity:0;flex:0 0 auto;}' +
-        // wave-in via a keyframe (plays reliably on a just-shown element; a transition would not)
-        '[data-pill="polishing"].is-done .flow_pill-dot{animation:flowDotIn .42s cubic-bezier(.34,1.56,.64,1) forwards;}' +
-        '@keyframes flowDotIn{from{opacity:0;transform:translateY(.4em) scale(.6);}to{opacity:1;transform:none;}}' +
-        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-dot{animation-duration:.01ms;}}' +
+        '[data-pill="polishing"].is-done:not(:has(.flow_pill-polish_wrap))>*:not(.flow_pill-dots){' +
+          'opacity:0;transform:scale(.4);}' +
+        // STAGE 2 (is-in): they leave the flow so the pill hugs the waveform; the row bounces taller.
+        '[data-pill="polishing"].is-in .flow_pill-polish_wrap>*:not(.flow_pill-dots),' +
+        '[data-pill="polishing"].is-in:not(:has(.flow_pill-polish_wrap))>*:not(.flow_pill-dots){display:none;}' +
+        // centred "voice mode" waveform row. resting height is FIXED (BAR_MAX + auto vertical padding =
+        // PILL_WAVE_H) so bars growing inside it never resize the pill. content-box for exact math.
+        '.flow_pill-dots{display:none;align-items:center;justify-content:center;box-sizing:content-box;' +
+          'height:' + BAR_MAX + 'px;padding:' + ((PILL_WAVE_H - BAR_MAX) / 2) + 'px 16px;' +
+          'gap:' + BAR_GAP + 'px;pointer-events:none;position:relative;z-index:1;}' +
+        // STAGE 2 (is-in): row appears. its bouncy height GROW is driven by a JS transition (not a
+        // keyframe) so a ScrollTrigger re-pin / re-insert can't restart it — keyframes replay on
+        // re-insertion, transitions don't. see setPillDone.
+        '[data-pill="polishing"].is-in .flow_pill-dots{display:flex;}' +
+        // each bar is a cream pill. entrance uses TRANSFORM (rise + pop) so it never fights the
+        // height-based grow. per-bar transition-delay ripples both phases left→right.
+        '.flow_pill-dot{width:' + BAR_W + 'px;height:0;border-radius:999px;background:' + BAR_COLOR + ';' +
+          'opacity:0;flex:0 0 auto;transform:translateY(4px) scale(.6);transform-origin:center;' +
+          'transition:opacity .22s ease,transform .38s cubic-bezier(.34,1.56,.64,1),height .45s cubic-bezier(.34,1.56,.64,1);}' +
+        // STAGE 2 (is-in): bullets wave + fade in (rise + pop to a round dot), with the row grow
+        '[data-pill="polishing"].is-in .flow_pill-dot{opacity:1;transform:none;height:' + BAR_W + 'px;}' +
+        // STAGE 3 (is-wave): the audio animation — bars grow OUT to their waveform heights
+        '[data-pill="polishing"].is-in.is-wave .flow_pill-dot{height:var(--h);}' +
+        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-in .flow_pill-dots{animation:none;}}' +
+        '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-dot{transition-duration:.01ms;}}' +
         '[data-flow="intro"]{transition:opacity ' + INTRO_FADE_MS + 'ms ease;}' +
         // message/composer content fades IN on a trigger (see sceneUpdate) — a timed fade, no scrub
         '[data-flow="screen"],[data-flow="composer"]{transition:opacity ' + MSG_FADE_MS + 'ms ease;}' +
@@ -502,6 +521,34 @@
         im.style.objectPosition = 'right center';
         cardImgs.push(im);
       });
+      // chapter background images: stacked in the card, crossfaded per chapter. author 3 imgs tagged
+      // data-bg="0|1|2"; 0 = wpm/recording + chapter 1 (same photo as the card), 1 = ch2, 2 = ch3.
+      var bgImgs = Array.prototype.slice.call(card.querySelectorAll('[data-bg]')).sort(function (a, b) {
+        return (parseInt(a.getAttribute('data-bg'), 10) || 0) - (parseInt(b.getAttribute('data-bg'), 10) || 0);
+      });
+      bgImgs.forEach(function (im, k) {
+        guardStyle(im);
+        // author them hidden in Webflow if you like — we take over: force them displayed and
+        // stacked, opacity is the only thing that shows/hides them (the crossfade).
+        im.style.setProperty('display', 'block', 'important');
+        im.style.setProperty('visibility', 'visible', 'important');
+        im.style.position = 'absolute';
+        im.style.top = '0'; im.style.left = '0';
+        im.style.width = '100%'; im.style.height = '100%';
+        im.style.objectFit = 'cover';
+        im.style.zIndex = '0';                            // behind the card content (screen/composer)
+        im.style.pointerEvents = 'none';
+        im.style.transition = 'opacity ' + BG_FADE_MS + 'ms ease';
+        im.style.opacity = k === 0 ? '1' : '0';           // start on the wpm image
+      });
+      var bgShown = 0;
+      function setBgChapter(idx) {                          // recording+ch1 -> 0, ch2 -> 1, ch3 -> 2
+        if (bgImgs.length < 2) { return; }
+        var want = idx < 1 ? 0 : Math.min(idx, bgImgs.length - 1);
+        if (want === bgShown) { return; }
+        bgShown = want;
+        for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
+      }
       if (kb) {
         guardStyle(kb);
         kb.style.margin    = '0';
@@ -783,16 +830,30 @@
         }
       });
 
-      // chapter-3 "done" state morphs the polishing pill (spinner+label → dots). inject the dot row.
+      // spinner: drop the 4-point sparkle SVG into any [data-flow="spinner"] that doesn't have one
+      // (the CSS spins it). fill uses currentColor so it inherits the spinner's colour.
+      Array.prototype.forEach.call(section.querySelectorAll('[' + FLOW + '="spinner"]'), function (sp) {
+        if (sp.querySelector('svg')) { return; }
+        sp.innerHTML = '<svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+          '<path d="M7.53991 0.363512L8.60385 2.9853C9.04863 4.08175 9.91825 4.95137 11.0147 5.39615L13.6365 ' +
+          '6.46009C14.1212 6.65699 14.1212 7.34338 13.6365 7.53991L11.0147 8.60385C9.91825 9.04863 9.04863 ' +
+          '9.91825 8.60385 11.0147L7.53991 13.6365C7.34301 14.1212 6.65662 14.1212 6.46009 13.6365L5.39615 ' +
+          '11.0147C4.95137 9.91825 4.08175 9.04863 2.9853 8.60385L0.363512 7.53991C-0.121171 7.34301 ' +
+          '-0.121171 6.65662 0.363512 6.46009L2.9853 5.39615C4.08175 4.95137 4.95137 4.08175 5.39615 ' +
+          '2.9853L6.46009 0.363512C6.65662 -0.121171 7.34301 -0.121171 7.53991 0.363512Z" fill="currentColor"/></svg>';
+      });
+
+      // chapter-3 "done" state morphs the polishing pill (spinner+label → voice waveform). inject bars.
       var polishPill = pillMap.polishing || null;
       if (polishPill) {
         var polishWrap = polishPill.querySelector('.flow_pill-polish_wrap') || polishPill;
         if (!polishWrap.querySelector('.flow_pill-dots')) {
           var dw = document.createElement('div'); dw.className = 'flow_pill-dots';
-          for (var di = 0; di < 10; di++) {
-            var dot = document.createElement('span'); dot.className = 'flow_pill-dot';
-            dot.style.animationDelay = (0.05 + di * 0.045) + 's';     // left-to-right wave-in
-            dw.appendChild(dot);
+          for (var di = 0; di < BAR_SHAPE.length; di++) {
+            var bar = document.createElement('span'); bar.className = 'flow_pill-dot';
+            bar.style.setProperty('--h', (BAR_MIN + BAR_SHAPE[di] * (BAR_MAX - BAR_MIN)) + 'px');  // grow-out target
+            bar.style.transitionDelay = (di * 0.03) + 's';           // left→right ripple (both phases)
+            dw.appendChild(bar);
           }
           polishWrap.appendChild(dw);
         }
@@ -806,6 +867,47 @@
         // manual nudge onto the audio-pill spot (top, not transform, so it never fights scaleX).
         if (POLISH_PILL_Y) { polishPill.style.position = 'relative'; polishPill.style.top = POLISH_PILL_Y + 'px'; }
       }
+      // chapter-3 pill choreography: STAGE1 is-done (spinner+label out, ring draws) → STAGE2 is-in
+      // (row grows bouncy + bullets wave in) → STAGE3 is-wave (bars grow to audio heights).
+      // leaving ch3 drops all three so it replays from scratch next time.
+      var pillDoneOn = false, pillCalls = [], pillOffCall = null, voiceLatched = false;
+      function killPillCalls() { for (var c = 0; c < pillCalls.length; c++) { pillCalls[c].kill(); } pillCalls = []; }
+      function setPillDone(on) {
+        if (!polishPill) { return; }
+        if (on) {
+          if (pillOffCall) { pillOffCall.kill(); pillOffCall = null; }   // a brief dip below ch3 — cancel the exit
+          if (pillDoneOn) { return; }
+          pillDoneOn = true;
+          killPillCalls();
+          polishPill.classList.add('is-done');                                   // stage 1
+          pillCalls.push(gsap.delayedCall(PILL_OUT_MS / 1000, function () {
+            polishPill.classList.add('is-in');                                   // stage 2
+            // bouncy row grow via a JS transition (not a CSS keyframe → a ST re-pin can't replay it)
+            var row = polishPill.querySelector('.flow_pill-dots');
+            if (row) {
+              row.style.transition = 'none';
+              row.style.height = '0px';
+              void row.offsetHeight;                                             // reflow so the next set transitions
+              row.style.transition = 'height .5s cubic-bezier(.34,1.56,.64,1)';
+              row.style.height = BAR_MAX + 'px';
+            }
+          }));
+          pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS) / 1000, function () {
+            polishPill.classList.add('is-wave');                                 // stage 3
+          }));
+        } else {
+          if (!pillDoneOn || pillOffCall) { return; }
+          // debounce the exit: only leave voice mode if we STAY below ch3 — a one-frame scrub dip at
+          // the ch2/ch3 boundary must not tear down + re-draw the white ring (that was the "twice").
+          pillOffCall = gsap.delayedCall(0.2, function () {
+            pillOffCall = null; pillDoneOn = false; killPillCalls();
+            polishPill.classList.remove('is-wave');
+            polishPill.classList.remove('is-in');
+            polishPill.classList.remove('is-done');
+          });
+        }
+      }
+      teardown.push(function () { killPillCalls(); if (pillOffCall) { pillOffCall.kill(); } });
 
       // wrap every word of the transcript in a reveal span; highlight words keep their
       // flow_type-* colour class and carry that class's suffix as their category.
@@ -1191,6 +1293,8 @@
         var idx = -1, tp = 0;
         if (p >= pHold) { var loc = tabLocal(p); idx = loc.idx; tp = loc.tp; }
 
+        setBgChapter(idx);   // crossfade the card background image to this chapter (data-bg="0/1/2")
+
         // audio/recorder is gone from chapter 2 on (polish); keep it through recording + chapter 1
         if (pillAudioEl) { pillAudioEl.style.opacity = (idx >= 1) ? '0' : '1'; }
 
@@ -1242,7 +1346,14 @@
           for (var k in pillMap) { if (pillMap.hasOwnProperty(k)) { pillMap[k].classList.toggle('is-on', k === activePill); } }
           pillShown = activePill;
         }
-        if (polishPill) { polishPill.classList.toggle('is-done', idx >= 2); }
+        // voice mode is LATCHED with hysteresis: it turns on at the ch3 boundary and only turns off
+        // once we scroll well back into ch2. the fan lift ("card moves up") sits right on that
+        // boundary, so without this a slow scroll flickers idx 2↔1 and re-draws the white ring.
+        var ch3Start = tabStops[numTabs - 1];
+        var voiceHyst = 0.15 * (1 - ch3Start);
+        if (p >= ch3Start) { voiceLatched = true; }
+        else if (p < ch3Start - voiceHyst) { voiceLatched = false; }
+        setPillDone(voiceLatched);   // bullets pop in, then grow out to the voice-mode waveform
 
         // chapter 3 (Distribute): fan the cards through centre, scrubbed by this tab's tp
         // (0 → slack/live note, → claude, → gmail). hidden/normal before chapter 3.
