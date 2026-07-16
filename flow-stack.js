@@ -545,6 +545,22 @@
         im.style.opacity = k === 0 ? '1' : '0';           // start on the wpm image
       });
 
+      // clip layer: the melt filter warps the image, but a filtered element is NOT clipped by the
+      // card's border-radius (only its rectangle) — so the warp pokes past the rounded corners and the
+      // card looks deformed. wrap the bg imgs in a card-sized layer with overflow:hidden +
+      // border-radius:inherit (auto-tracks the card radius) so the warp is cropped to the card shape.
+      if (bgImgs.length) {
+        var bgWrap = card.querySelector('.flow-bg-layer');
+        if (!bgWrap) {
+          bgWrap = document.createElement('div');
+          bgWrap.className = 'flow-bg-layer';
+          card.insertBefore(bgWrap, card.firstChild);
+        }
+        bgWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;border-radius:inherit;' +
+          'z-index:0;pointer-events:none;';
+        bgImgs.forEach(function (im) { bgWrap.appendChild(im); });   // move them into the clip layer
+      }
+
       // ---- melt filter: an SVG fractal-noise displacement (same character as the codrops 4.png,
       // generated so there's no asset). the displacement `scale` is 0 at rest (identity — the grow
       // reveal is untouched) and ramps up-then-back only DURING a bg swap → a melt/warp crossfade.
