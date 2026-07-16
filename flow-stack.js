@@ -95,13 +95,18 @@
   var POLISH_BAND   = 0.22;  // width of each word's fade within the wave (bigger = softer wave edge)
   var POLISH_GAP    = 0.12;  // how far the polished-in lags behind the raw-out at the wavefront
   var POLISH_RISE   = 16;    // px the polished text lifts up to sit where the "Message…" placeholder was
+  var GRAD_WORD_MS  = 350;   // ms each word's colour→gradient fade plays through as the wavefront passes
+                             // it (a CSS transition — TRIGGERED per word, so it never scrubs word-by-word)
 
   var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
+  var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
+  var MSG_TRIGGER     = 0.08;// where in the card ride (pC→pHold fraction) the message fade fires
   // audio pill: authored at its LANDED spot; recording pose is a transform offset (negative REC_Y lifts it)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
   var PILL_REC_Y     = -180; // px the pill lifts toward the card centre during recording (tune)
   var PILL_ICONS_AT  = 0.55; // handoff fraction (0..1) at which the 2 extra icons start scaling in
   var PILL_ICON_SIZE = 18;   // px the extra icons scale out to
+  var PILL_LERP      = 0.16; // audio-pill handoff: eased follow (trails scroll, settles soft). higher = quicker settle
   var POLISH_PILL_Y  = 25;   // px nudge the polishing pill DOWN onto the audio-pill spot (+down / −up)
 
   // chapter 3 (Distribute) — the destination cards arc through centre like a hand of cards.
@@ -113,6 +118,17 @@
   var FAN_FADE  = 0.6;         // card-units past ±1 over which an off card fades fully out
   var FAN_CENTER_NUDGE = 0;    // px fine-tune for the centred slack note (— = up, + = down)
   var FAN_LIFT_END = 0.15;     // fraction of ch3 spent lifting the note up to centre before swinging
+  // ch3 rhythm: each card gets a PARKED beat (centred, logo full) then a fast eased swing to the
+  // next. FAN_HOLD = fraction of ch3's swing range spent parked vs moving. 0 = old linear scrub,
+  // →1 = near-instant snaps between centred cards. the swing itself keeps its ease (smooth()).
+  var FAN_HOLD     = 0.6;
+  // ch3 easing: the fan RENDER chases the scrubbed beat instead of tracking raw scroll 1:1, so it
+  // glides in and settles on each card instead of feeling coupled to every scroll tick. lower =
+  // smoother / floatier, 1 = instant (raw scrub, old behaviour). same idea as SCRUB_LERP.
+  var FAN_LERP     = 0.12;
+  // ch2 (message box open): eased follow for the polished-text wave-in, raw-text wipe-out and box
+  // grow — the render chases the scrubbed tp instead of tracking raw scroll 1:1. same as FAN_LERP.
+  var POLISH_LERP  = 0.12;
   var SLACK_PAD    = 48;       // px white space below the slack text in ch3 (eases in after the type-in)
   var LOGO_ROT     = 90;       // deg a logo rotates in as it centres (same direction as the swing; flip to reverse)
   var LOGO_FADE    = 1;        // card-units over which a logo fades + rotates in/out around centre
@@ -188,6 +204,24 @@
     if (t < SNAP_S)     { return SNAP_W * (t / SNAP_S); }
     if (t > 1 - SNAP_S) { return 1 - SNAP_W * ((1 - t) / SNAP_S); }
     return SNAP_W + ((t - SNAP_S) / (1 - 2 * SNAP_S)) * (1 - 2 * SNAP_W);
+  }
+  // ch3 fan rhythm: map t (0..1) -> f (0..count-1) with a PARKED beat at each integer and a
+  // fast eased swing between. count holds + (count-1) transitions share the axis; FAN_HOLD sets
+  // how much of the axis is spent parked. bigger FAN_HOLD = shorter, snappier swings.
+  function fanStep(t, count) {
+    if (count <= 1) { return 0; }
+    var wH = FAN_HOLD / count;                 // width of each hold beat
+    var wT = (1 - FAN_HOLD) / (count - 1);     // width of each swing
+    var x = 0;
+    for (var i = 0; i < count; i++) {
+      if (t <= x + wH) { return i; }           // parked on beat i
+      x += wH;
+      if (i < count - 1) {
+        if (t <= x + wT) { return i + smooth((t - x) / wT); }   // swinging i -> i+1
+        x += wT;
+      }
+    }
+    return count - 1;
   }
 
   function init() {
@@ -277,6 +311,8 @@
         '@keyframes flowDotIn{from{opacity:0;transform:translateY(.4em) scale(.6);}to{opacity:1;transform:none;}}' +
         '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-dot{animation-duration:.01ms;}}' +
         '[data-flow="intro"]{transition:opacity ' + INTRO_FADE_MS + 'ms ease;}' +
+        // message/composer content fades IN on a trigger (see sceneUpdate) — a timed fade, no scrub
+        '[data-flow="screen"],[data-flow="composer"]{transition:opacity ' + MSG_FADE_MS + 'ms ease;}' +
         '[data-flow="pill-audio"]{transition:opacity .3s ease;}' +
         // chapter 2: the whole transcript recolours to a looping gradient while "polishing".
         // background-clip:text on the container + transparent glyphs = one gradient over all text.
@@ -284,9 +320,12 @@
           '#F0D7FF 0%,#FFA946 23%,#FF6C4C 39%,#FFBCF2 67%,#7232A6 91%);background-size:220% 100%;' +
           '-webkit-background-clip:text;background-clip:text;' +
           'animation:flowPolish 3.2s ease-in-out infinite alternate;}' +
-        // per-word colour is driven in JS so the gradient waves ONTO the text instead of popping
+        // per-word colour is driven in JS (the eased wavefront), but each word's colour→gradient
+        // flip TWEENS via this transition, so it fades in on trigger instead of popping / scrubbing
+        '[data-type="raw"].is-polishing .flow_w{transition:color ' + GRAD_WORD_MS + 'ms ease;}' +
         '@keyframes flowPolish{0%{background-position:0% 0;}100%{background-position:100% 0;}}' +
-        '@media (prefers-reduced-motion:reduce){[data-type="raw"].is-polishing{animation:none;}}';
+        '@media (prefers-reduced-motion:reduce){[data-type="raw"].is-polishing{animation:none;}' +
+          '[data-type="raw"].is-polishing .flow_w{transition:none;}}';
       document.head.appendChild(ms);
     }
 
@@ -966,17 +1005,30 @@
 
       // chapter-3 fan: card 0 = live note (slack), then authored copies. tp scrubs which is centred;
       // offset-from-centre → rotate+translate about the pivot = arc. live note resets to normal when OFF.
-      function fanUpdate(tp, show) {
+      // fan smoothing state: fanUpdate sets TARGETS from scroll; fanTick eases the rendered
+      // values (fanFCur/fanLiftCur) toward them and calls fanRender — so the fan glides + settles
+      // on each beat instead of tracking raw scroll. fanShow flips draw on/off (ch3 only).
+      var fanFCur = 0, fanFTgt = 0, fanLiftCur = 1, fanLiftTgt = 1, fanShow = false, fanShownState = null, fanN = 0;
+
+      function fanUpdate(tp, show) {                 // set targets from the scrubbed tp (no render)
         var live = composerEl;
         var n = (live ? 1 : 0) + destExtra.length;
-        if (n < 2) { if (live && !show) { live.style.transform = ''; live.style.transformOrigin = ''; } return; }
+        fanN = n; fanShow = show;
+        if (n < 2) { return; }                       // render handled in fanTick / fanRender
         if (fanLayer) { fanLayer.style.opacity = show ? '1' : '0'; }
         // position lazily on first show — by then the card is LANDED, so the note's offset is correct
         if (show && !fanPositioned) { positionFanCards(); fanPositioned = true; }
         // two scrubbed phases: LIFT the note to centre (no jump from ch2), then SWING the cards through
-        var liftT   = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
+        fanLiftTgt = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
         var swingTp = FAN_LIFT_END < 1 ? Math.max(0, (tp - FAN_LIFT_END) / (1 - FAN_LIFT_END)) : 0;
-        var f = swingTp * (n - 1);
+        fanFTgt = fanStep(swingTp, n);   // parked beats at each card, fast swing between (see FAN_HOLD)
+      }
+
+      // render the fan at an explicit eased position (f = which card is centred, liftT = note lift)
+      function fanRender(f, liftT, show) {
+        var live = composerEl;
+        var n = fanN;
+        if (n < 2) { if (live && !show) { live.style.transform = ''; live.style.transformOrigin = ''; } return; }
         function place(el, i, isLive) {
           var rel = i - f, ar = Math.abs(rel);
           if (!show) {
@@ -1015,34 +1067,112 @@
         }
       }
 
+      // ease the rendered fan toward the scrubbed target each frame; settles gently on each beat.
+      // while hidden, keep cur == tgt so re-entering ch3 starts on the slack beat (no glide-in jump).
+      function fanTick() {
+        if (fanN < 2) { return; }
+        if (!fanShow) {
+          if (fanShownState !== false) { fanRender(fanFCur, fanLiftCur, false); fanShownState = false; }
+          fanFCur = fanFTgt; fanLiftCur = fanLiftTgt;      // track silently so the next show is clean
+          return;
+        }
+        var k = FAN_LERP >= 1 ? 1 : 1 - Math.pow(1 - FAN_LERP, gsap.ticker.deltaRatio());
+        fanFCur    += (fanFTgt    - fanFCur)    * k;
+        fanLiftCur += (fanLiftTgt - fanLiftCur) * k;
+        if (Math.abs(fanFTgt    - fanFCur)    < 0.0004) { fanFCur    = fanFTgt; }
+        if (Math.abs(fanLiftTgt - fanLiftCur) < 0.0004) { fanLiftCur = fanLiftTgt; }
+        fanRender(fanFCur, fanLiftCur, true);
+        fanShownState = true;
+      }
+
+      // ---- chapter 2 (polish) render, driven by an eased tp (see polishTick) ----
+      // gradient waves onto the raw text, raw wipes out bottom→top, polished staggers in as the
+      // message box grows. all a pure function of tp so it can be lerped exactly like the fan.
+      function renderPolish(tp) {
+        var n = words.length, np = pwords.length;
+        // gradient-in front: each word switches into the gradient (colour → transparent) as it passes
+        var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
+        // polished-in front: polished staggers in behind the box grow (later window)
+        var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
+        for (var i = 0; i < n; i++) {
+          var ph = n > 1 ? i / (n - 1) : 0;
+          words[i].el.style.color = (Fg > ph) ? 'transparent' : '';     // gradient waves on (top→bottom)
+        }
+        // raw-out: a soft mask wipes the whole transcript BOTTOM→TOP (needs a wrapper mask — per-word
+        // opacity can't fade the gradient painted at the container via background-clip:text).
+        if (rawWrap) {
+          var wipe = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
+          var soft = 16, stop = wipe * (100 + soft);
+          var m = 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
+            '%, #000 ' + stop.toFixed(1) + '%)';
+          rawWrap.style.webkitMaskImage = m;
+          rawWrap.style.maskImage = m;
+        }
+        for (var j = 0; j < np; j++) {
+          pwords[j].style.opacity = String(smooth((F - (np > 1 ? j / (np - 1) : 0) - POLISH_GAP) / POLISH_BAND));
+        }
+        var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
+        var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
+        // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
+        // constant (marginTop cancels the extra height) → card holds. box is white → white rises.
+        if (msgGrowEl)    { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
+        if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * 2.4))); }
+      }
+
+      // ease the ch2 render toward the scrubbed tp; while inactive, track silently so re-entry is clean
+      var polishCur = 0, polishTgt = 0, polishActive = false;
+      function polishTick() {
+        if (!polishActive) { polishCur = polishTgt; return; }
+        var k = POLISH_LERP >= 1 ? 1 : 1 - Math.pow(1 - POLISH_LERP, gsap.ticker.deltaRatio());
+        polishCur += (polishTgt - polishCur) * k;
+        if (Math.abs(polishTgt - polishCur) < 0.0004) { polishCur = polishTgt; }
+        renderPolish(polishCur);
+      }
+
+      // audio pill handoff render at an explicit eased position (hp: 0 recording → 1 landed).
+      // recording pose (bigger, higher, icons hidden) eases into the landed pose; the 2 extra
+      // icons animate in over the tail so the pill leads the handoff.
+      function renderPill(hp) {
+        if (!pillAudioEl) { return; }
+        var sc = PILL_REC_SCALE + (1 - PILL_REC_SCALE) * hp;    // REC_SCALE → 1 (shrinks to landed)
+        var ty = PILL_REC_Y * (1 - hp);                         // REC_Y (lifted) → 0 (settles at landed)
+        pillAudioEl.style.transform = 'translateY(' + ty + 'px) scale(' + sc + ')';
+        var ei = PILL_ICONS_AT < 1 ? smooth((hp - PILL_ICONS_AT) / (1 - PILL_ICONS_AT)) : (hp >= 1 ? 1 : 0);
+        var isz = (PILL_ICON_SIZE * ei) + 'px';
+        for (var pe = 0; pe < pillExtras.length; pe++) {
+          pillExtras[pe].style.opacity = String(ei);
+          pillExtras[pe].style.width  = isz;
+          pillExtras[pe].style.height = isz;
+        }
+      }
+
+      // ease the pill toward the scrubbed handoff target; trails the scroll, settles soft
+      var pillCur = 0, pillTgt = 0;
+      function pillTick() {
+        if (!pillAudioEl) { return; }
+        var k = PILL_LERP >= 1 ? 1 : 1 - Math.pow(1 - PILL_LERP, gsap.ticker.deltaRatio());
+        pillCur += (pillTgt - pillCur) * k;
+        if (Math.abs(pillTgt - pillCur) < 0.0004) { pillCur = pillTgt; }
+        renderPill(pillCur);
+      }
+
       function sceneUpdate(p) {
         // intro (220 + marquee): quick TRIGGERED fade at the shrink start — CSS-timed, not scrubbed
         if (introEl) { introEl.style.opacity = (p >= pBh) ? '0' : '1'; }
 
-        // audio pill: one continuous motion over the shrink -> land window (pBh -> pHold).
-        // recording pose (bigger, higher, icons hidden) eases into the landed pose; the 2 extra
-        // icons animate in over the tail so the pill leads the handoff.
+        // audio pill: hand the scrubbed handoff progress (shrink→land window) to the eased ticker
         if (pillAudioEl) {
-          var hp = phaseT(p, pBh, pHold);                        // 0 recording → 1 landed (authored spot)
-          var sc = PILL_REC_SCALE + (1 - PILL_REC_SCALE) * hp;   // REC_SCALE → 1 (shrinks to landed)
-          var ty = PILL_REC_Y * (1 - hp);                        // REC_Y (lifted) → 0 (settles at landed)
-          pillAudioEl.style.transform = 'translateY(' + ty + 'px) scale(' + sc + ')';
-          var ei = PILL_ICONS_AT < 1 ? smooth((hp - PILL_ICONS_AT) / (1 - PILL_ICONS_AT)) : (hp >= 1 ? 1 : 0);
-          var isz = (PILL_ICON_SIZE * ei) + 'px';
-          for (var pe = 0; pe < pillExtras.length; pe++) {
-            pillExtras[pe].style.opacity = String(ei);
-            pillExtras[pe].style.width  = isz;
-            pillExtras[pe].style.height = isz;
-          }
+          pillTgt = phaseT(p, pBh, pHold);                       // 0 recording → 1 landed (authored spot)
         }
 
-        // handoff: chapter content fades in over the card's ride (pC -> pHold)
-        var hf = (pHold > pC) ? smooth((p - pC) / (pHold - pC)) : (p >= pHold ? 1 : 0);
+        // handoff: chapter content is TRIGGERED in (CSS-timed fade), not scrubbed — fires once the
+        // card starts riding (pC + MSG_TRIGGER of the ride) so the message fades in clean, no scrub
+        var lit = (p >= pC + MSG_TRIGGER * Math.max(0, pHold - pC)) ? '1' : '0';
         if (screenEl) {
-          screenEl.style.opacity = String(hf);                   // one cover fades in — everything inside comes together
+          screenEl.style.opacity = lit;                          // one cover fades in — everything inside comes together
         } else {                                                 // no screen wrapper: fade the pieces individually
-          if (transcriptEl) { transcriptEl.style.opacity = String(hf); }
-          if (composerEl)   { composerEl.style.opacity = String(hf); }
+          if (transcriptEl) { transcriptEl.style.opacity = lit; }
+          if (composerEl)   { composerEl.style.opacity = lit; }
         }
         // destWrap (logo row) shown only in chapter 3 — set alongside the fan below
 
@@ -1067,35 +1197,11 @@
         var np = pwords.length;
         if (idx === 1) {
           if (transcriptEl) { transcriptEl.classList.add('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
-          // gradient-in front: each word switches into the gradient (colour → transparent) as it passes
-          var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
-          // polished-in front: polished staggers in behind the box grow (later window)
-          var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
-          for (var i = 0; i < n; i++) {
-            var ph = n > 1 ? i / (n - 1) : 0;
-            words[i].el.style.color = (Fg > ph) ? 'transparent' : '';     // gradient waves on (top→bottom)
-          }
-          // raw-out: a soft mask wipes the whole transcript BOTTOM→TOP. per-word opacity can't fade it
-          // (the gradient is painted at the container via background-clip:text — needs a wrapper mask).
-          if (rawWrap) {
-            var wipe = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
-            var soft = 16, stop = wipe * (100 + soft);
-            var m = 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
-              '%, #000 ' + stop.toFixed(1) + '%)';
-            rawWrap.style.webkitMaskImage = m;
-            rawWrap.style.maskImage = m;
-          }
-          for (var j = 0; j < np; j++) {
-            pwords[j].style.opacity = String(smooth((F - (np > 1 ? j / (np - 1) : 0) - POLISH_GAP) / POLISH_BAND));
-          }
+          // hand the scrubbed tp to the eased ticker (polishTick → renderPolish); no direct draw here
+          polishTgt = tp; polishActive = true;
           wordsShown = -1; polishColored = true;                    // force ch1 re-reveal + colour reset later
-          var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
-          var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
-          // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
-          // constant (marginTop cancels the extra height) → card holds. box is white → white rises.
-          if (msgGrowEl)    { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
-          if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * 2.4))); }
         } else if (idx >= 2) {                                       // chapter 3: polished only
+          polishActive = false;
           if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = '0'; }
           if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
           resetPolishColor();
@@ -1105,6 +1211,7 @@
           if (msgGrowEl)    { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; }
           if (placeholderEl){ placeholderEl.style.opacity = '0'; }
         } else {                                                     // recording / chapter 1: raw only
+          polishActive = false;
           if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
           if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
           resetPolishColor();
@@ -1181,6 +1288,9 @@
         fanPositioned = false;                 // re-place cards on next fan show (layout may have changed)
         applyScroll(st ? st.progress : 0);
         pSmooth = pTarget; painted = -1;      // no scrub sweep from 0 on load/rebuild
+        fanFCur = fanFTgt; fanLiftCur = fanLiftTgt;   // fan starts settled, no glide-in on load
+        polishCur = polishTgt;                        // ch2 starts settled too (no wipe sweep on load)
+        pillCur = pillTgt;                            // pill starts settled (no glide-in on load)
         updateMarquees(pSmooth); updateAudio(pSmooth);
         if (activeTab >= 0) { moveIndicator(activeTab); }
       }
@@ -1211,6 +1321,12 @@
         };
         gsap.ticker.add(scrubTick);
         teardown.push(function () { gsap.ticker.remove(scrubTick); });
+        gsap.ticker.add(fanTick);
+        teardown.push(function () { gsap.ticker.remove(fanTick); });
+        gsap.ticker.add(polishTick);
+        teardown.push(function () { gsap.ticker.remove(polishTick); });
+        gsap.ticker.add(pillTick);
+        teardown.push(function () { gsap.ticker.remove(pillTick); });
       } else {
         // mobile: no pin/morph — show the card in its final centred state, text mid-line
         measureStage();
@@ -1218,6 +1334,10 @@
         updateMarquees(0.5);   // no scrub on mobile; park the strings mid-travel so words show
         updateAudio(0.25);     // park bars in a mid-pose so the recorder reads as bars, not flat
         sceneUpdate(1);        // mobile: transcript fully typed, intro hidden (mobile choreo deferred)
+        // rendering moved to a ticker (desktop only) — draw the eased scenes' end-state once for mobile
+        fanFCur = fanFTgt; fanLiftCur = fanLiftTgt; fanRender(fanFCur, fanLiftCur, fanShow);
+        if (polishActive) { polishCur = polishTgt; renderPolish(polishCur); }
+        pillCur = pillTgt; renderPill(pillCur);
       }
 
       if (DEBUG) {
