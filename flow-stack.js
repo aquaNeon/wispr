@@ -87,6 +87,11 @@
   // weighted chapter scroll lengths (vh) — chapter 1 (typing) longest. one entry per tab.
   var CH_VH        = [2.6, 1.8, 1.6];
   var TYPE_END     = 0.9;    // fraction of chapter 1's slice by which the transcript finishes typing
+  // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
+  // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
+  // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
+  var TAB_FADE_MS  = 220;         // ms each half of the crossfade (out, then in)
+  var INDICATOR_MS = 500;         // ms the tab indicator slides/resizes to the active tab
 
   // chapter 2 (polish), in fractions of tab-1's scroll slice (gradient itself loops via CSS):
   var POLISH_GRAD   = [0.0, 0.38];  // the gradient waves ONTO the text word-by-word over this range
@@ -100,7 +105,8 @@
 
   var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
-  var MSG_TRIGGER     = 0.08;// where in the card ride (pC→pHold fraction) the message fade fires
+  var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
+                             // the end so the message frame animates in just before the raw text types
   // audio pill: authored at its LANDED spot; recording pose is a transform offset (negative REC_Y lifts it)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
   var PILL_REC_Y     = -180; // px the pill lifts toward the card centre during recording (tune)
@@ -246,6 +252,9 @@
           'opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s ease;}' +
         '[data-tab-text].is-active .meeting_tabs_heading{opacity:1;transform:none;transition-delay:.06s;}' +
         '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}' +
+        // indicator always glides to the active tab (any distance), independent of Webflow authoring
+        '[data-tab-indicator]{transition:transform ' + INDICATOR_MS + 'ms cubic-bezier(.4,0,.2,1),' +
+          'height ' + INDICATOR_MS + 'ms cubic-bezier(.4,0,.2,1);}' +
         '.flow_w{transition:opacity .12s linear;}' +
         // pills: grow out on X (playful overshoot), then the label ripples in per-character.
         // baton-pass — the outgoing collapses while the next grows at the shared anchor.
@@ -1166,13 +1175,16 @@
         }
 
         // handoff: chapter content is TRIGGERED in (CSS-timed fade), not scrubbed — fires once the
-        // card starts riding (pC + MSG_TRIGGER of the ride) so the message fades in clean, no scrub
-        var lit = (p >= pC + MSG_TRIGGER * Math.max(0, pHold - pC)) ? '1' : '0';
-        if (screenEl) {
-          screenEl.style.opacity = lit;                          // one cover fades in — everything inside comes together
-        } else {                                                 // no screen wrapper: fade the pieces individually
-          if (transcriptEl) { transcriptEl.style.opacity = lit; }
-          if (composerEl)   { composerEl.style.opacity = lit; }
+        // card starts riding (pC + MSG_TRIGGER of the ride) so the message fades in clean, no scrub.
+        // while a tab CROSSFADE is running, the click owns scene opacity — don't fight it here.
+        if (!tabFade) {
+          var lit = (p >= pC + MSG_TRIGGER * Math.max(0, pHold - pC)) ? '1' : '0';
+          if (screenEl) {
+            screenEl.style.opacity = lit;                        // one cover fades in — everything inside comes together
+          } else {                                               // no screen wrapper: fade the pieces individually
+            if (transcriptEl) { transcriptEl.style.opacity = lit; }
+            if (composerEl)   { composerEl.style.opacity = lit; }
+          }
         }
         // destWrap (logo row) shown only in chapter 3 — set alongside the fan below
 
@@ -1266,7 +1278,7 @@
         if (isDesktop) {
           // a tab click owns the active state until its scroll glide arrives, so tabs the
           // glide passes through don't flicker active and restart the animations
-          if (clickLockP != null && (Math.abs(p - clickLockP) < 0.005 || Date.now() - clickLockT > 1200)) {
+          if (clickLockP != null && (Math.abs(p - clickLockP) < 0.005 || Date.now() - clickLockT > (TAB_FADE_MS * 2 + 500))) {
             clickLockP = null;
           }
           if (clickLockP == null) {
@@ -1386,22 +1398,57 @@
       gsap.ticker.add(bgTicker);
       teardown.push(function () { gsap.ticker.remove(bgTicker); });
 
-      // click a tab -> activate it NOW, then glide the scroll to its slice (the lock above
-      // keeps pass-through tabs from hijacking the active state mid-glide)
-      var clickLockP = null, clickLockT = 0;
+      // click a tab -> crossfade the card scene to that tab's slice. the lock keeps pass-through
+      // tabs from hijacking the active state; tabFade tells sceneUpdate to leave scene opacity to us.
+      var clickLockP = null, clickLockT = 0, tabFade = false, tabFadeCall = null;
+      // scene cover(s) whose opacity the crossfade drives (the one wrapper, or the pieces)
+      var sceneEls = (screenEl ? [screenEl] : [transcriptEl, composerEl]).filter(Boolean);
+      function setSceneOpacity(a, ms) {
+        for (var s = 0; s < sceneEls.length; s++) {
+          sceneEls[s].style.transition = 'opacity ' + ms + 'ms ease';
+          sceneEls[s].style.opacity = String(a);
+        }
+      }
+      function clearSceneTransition() { for (var s = 0; s < sceneEls.length; s++) { sceneEls[s].style.transition = ''; } }
+      function snapEased() {                                    // settle fan/polish/pill to the target chapter
+        fanFCur = fanFTgt; fanLiftCur = fanLiftTgt; polishCur = polishTgt; pillCur = pillTgt;
+      }
+      function killTabFade() { if (tabFadeCall) { tabFadeCall.kill(); tabFadeCall = null; } }
+      function interruptTab() {                                 // user scrolled/keyed mid-crossfade → hand back
+        if (!tabFade && !tabFadeCall) { return; }
+        killTabFade(); tabFade = false; clearSceneTransition();
+        if (st) { applyScroll(st.progress); }                  // repaint scene opacity from real progress
+      }
+      ['wheel', 'touchstart', 'keydown'].forEach(function (ev) {
+        window.addEventListener(ev, interruptTab, { passive: true });
+        teardown.push(function () { window.removeEventListener(ev, interruptTab, { passive: true }); });
+      });
       tabItems.forEach(function (item, i) {
         guardStyle(item);
         item.style.cursor = 'pointer';
         var onClick = function () {
           if (!st) { return; }
-          var last = numTabs - 1;
-          var centerProg = (i < last) ? (i + 0.5) / tabSpan : ((last / tabSpan) + 1) / 2;
-          var centreP = pHold + centerProg * (1 - pHold);
+          // true centre of this tab's scroll slice (tabStops already accounts for the CH_VH weights,
+          // so the last/weighted tabs land correctly — no drift into the neighbouring slice)
+          var centreP = (tabStops[i] + tabStops[i + 1]) / 2;
+          var tabFrac = (1 - pHold) > 0 ? (centreP - pHold) / (1 - pHold) : 0;
           var N = bgSvgs.length || 1;
-          bgCurrentP = Math.min(N - 1, Math.floor(centerProg * N)) / N;
+          bgCurrentP = Math.min(N - 1, Math.floor(tabFrac * N)) / N;
+          var to = st.start + centreP * (st.end - st.start);
           clickLockP = centreP; clickLockT = Date.now();
-          setActiveTab(i);
-          window.scrollTo({ top: st.start + centreP * (st.end - st.start), behavior: 'auto' });
+          setActiveTab(i);                                      // indicator + text animate now (CSS)
+          killTabFade();
+          tabFade = true;
+          setSceneOpacity(0, TAB_FADE_MS);                      // fade the current chapter out
+          tabFadeCall = gsap.delayedCall(TAB_FADE_MS / 1000, function () {
+            window.scrollTo(0, to);                             // jump while hidden — no scrub is seen
+            applyScroll(centreP);                              // set scene targets to the destination NOW
+            snapEased();                                        // settle them (no eased speed-run on reveal)
+            setSceneOpacity(1, TAB_FADE_MS);                    // fade the target chapter in
+            tabFadeCall = gsap.delayedCall(TAB_FADE_MS / 1000, function () {
+              tabFade = false; tabFadeCall = null; clearSceneTransition();
+            });
+          });
         };
         item.addEventListener('click', onClick);
         teardown.push(function () { item.removeEventListener('click', onClick); });
