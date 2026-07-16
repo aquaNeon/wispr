@@ -579,6 +579,17 @@
         teardown.push(function () { if (msvg.parentNode) { msvg.parentNode.removeChild(msvg); } });
       }
 
+      // over-scan an image by MELT_SCALE px so the displacement warps INSIDE the overscan and the
+      // card edge always stays covered (no edge-bending / gaps). only on during a swap.
+      function setOverscan(el, on) {
+        if (on) {
+          el.style.top = (-MELT_SCALE) + 'px'; el.style.left = (-MELT_SCALE) + 'px';
+          el.style.width = 'calc(100% + ' + (2 * MELT_SCALE) + 'px)';
+          el.style.height = 'calc(100% + ' + (2 * MELT_SCALE) + 'px)';
+        } else {
+          el.style.top = '0'; el.style.left = '0'; el.style.width = '100%'; el.style.height = '100%';
+        }
+      }
       var bgShown = 0, bgMeltTween = null;
       function setBgChapter(idx) {                          // recording+ch1 -> 0, ch2 -> 1, ch3 -> 2
         if (bgImgs.length < 2) { return; }
@@ -588,18 +599,28 @@
         bgShown = want;
         if (bgMeltTween) { bgMeltTween.kill(); }
         var doMelt = !!meltDisp;
-        if (doMelt) { from.style.filter = 'url(#flowMelt)'; to.style.filter = 'url(#flowMelt)'; }
+        if (doMelt) {
+          from.style.filter = 'url(#flowMelt)'; to.style.filter = 'url(#flowMelt)';
+          setOverscan(from, true); setOverscan(to, true);
+        }
+        // NO opacity fade — both images stay opaque; we hard-swap under the peak warp (the strongest
+        // distortion hides the cut), so it reads as a melt-through, not a crossfade.
+        to.style.opacity = '0'; from.style.opacity = '1';
         var proxy = { p: 0 };
         bgMeltTween = gsap.to(proxy, {
           p: 1, duration: BG_FADE_MS / 1000, ease: 'power1.inOut',
           onUpdate: function () {
-            var pr = proxy.p;
-            to.style.opacity = String(pr);
-            from.style.opacity = String(1 - pr);
+            var pr = proxy.p, swapped = pr >= 0.5;
+            to.style.opacity = swapped ? '1' : '0';
+            from.style.opacity = swapped ? '0' : '1';
             if (doMelt) { meltDisp.setAttribute('scale', String(MELT_SCALE * Math.sin(Math.PI * pr))); }  // 0→peak→0
           },
           onComplete: function () {
-            if (doMelt) { meltDisp.setAttribute('scale', '0'); from.style.filter = ''; to.style.filter = ''; }
+            if (doMelt) {
+              meltDisp.setAttribute('scale', '0');
+              from.style.filter = ''; to.style.filter = '';
+              setOverscan(from, false); setOverscan(to, false);
+            }
             for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
             bgMeltTween = null;
           }
