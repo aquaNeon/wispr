@@ -556,8 +556,11 @@
           bgWrap.className = 'flow-bg-layer';
           card.insertBefore(bgWrap, card.firstChild);
         }
+        // clip-path (NOT overflow:hidden) — overflow fails to clip a filtered child, clip-path works.
+        // radius is synced to the card each frame in applyMorph.
         bgWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;border-radius:inherit;' +
-          'z-index:0;pointer-events:none;';
+          'z-index:0;pointer-events:none;-webkit-clip-path:inset(0 round ' + RADIUS_FULL + 'px);' +
+          'clip-path:inset(0 round ' + RADIUS_FULL + 'px);';
         bgImgs.forEach(function (im) { bgWrap.appendChild(im); });   // move them into the clip layer
       }
 
@@ -756,6 +759,13 @@
           card.style.borderRadius = (RADIUS_FULL + (RADIUS_END - RADIUS_FULL) * t) + 'px';
         }
         if (p < pBh) { card.style.borderRadius = ''; }   // class radius before the shrink
+        // keep the bg clip layer's rounded clip matched to the card radius (so the melt is cropped
+        // exactly to the card shape at every phase — clip-path clips the filtered image, overflow won't)
+        if (bgWrap) {
+          var rr = (p < pBh) ? RADIUS_FULL : (RADIUS_FULL + (RADIUS_END - RADIUS_FULL) * phaseT(p, pBh, pC));
+          var clip = 'inset(0 round ' + rr + 'px)';
+          bgWrap.style.webkitClipPath = clip; bgWrap.style.clipPath = clip;
+        }
         if (kb) {
           kb.style.width      = kbW + 'px';
           kb.style.height     = stageH + 'px';    // both cards always full stage height
