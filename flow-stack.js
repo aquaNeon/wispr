@@ -556,11 +556,9 @@
           bgWrap.className = 'flow-bg-layer';
           card.insertBefore(bgWrap, card.firstChild);
         }
-        // clip-path (NOT overflow:hidden) — overflow fails to clip a filtered child, clip-path works.
-        // radius is synced to the card each frame in applyMorph.
+        // plain layer for z-order; the actual melt clip lives on each img (see setOverscan)
         bgWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;border-radius:inherit;' +
-          'z-index:0;pointer-events:none;-webkit-clip-path:inset(0 round ' + RADIUS_FULL + 'px);' +
-          'clip-path:inset(0 round ' + RADIUS_FULL + 'px);';
+          'z-index:0;pointer-events:none;';
         bgImgs.forEach(function (im) { bgWrap.appendChild(im); });   // move them into the clip layer
       }
 
@@ -599,14 +597,20 @@
       }
 
       // over-scan an image by MELT_SCALE px so the displacement warps INSIDE the overscan and the
-      // card edge always stays covered (no edge-bending / gaps). only on during a swap.
+      // card edge always stays covered (no gaps). the CLIP-PATH lives on the img itself (same element
+      // as the filter) — an ancestor's overflow/clip can't crop a filtered child, but clip-path on the
+      // filtered element clips AFTER the filter. inset(MELT_SCALE) crops the overscan back to the card
+      // box; round RADIUS_END rounds those corners so the card shape stays crisp.
       function setOverscan(el, on) {
         if (on) {
           el.style.top = (-MELT_SCALE) + 'px'; el.style.left = (-MELT_SCALE) + 'px';
           el.style.width = 'calc(100% + ' + (2 * MELT_SCALE) + 'px)';
           el.style.height = 'calc(100% + ' + (2 * MELT_SCALE) + 'px)';
+          var clip = 'inset(' + MELT_SCALE + 'px round ' + RADIUS_END + 'px)';
+          el.style.webkitClipPath = clip; el.style.clipPath = clip;
         } else {
           el.style.top = '0'; el.style.left = '0'; el.style.width = '100%'; el.style.height = '100%';
+          el.style.webkitClipPath = ''; el.style.clipPath = '';
         }
       }
       var bgShown = 0, bgMeltTween = null;
@@ -759,13 +763,6 @@
           card.style.borderRadius = (RADIUS_FULL + (RADIUS_END - RADIUS_FULL) * t) + 'px';
         }
         if (p < pBh) { card.style.borderRadius = ''; }   // class radius before the shrink
-        // keep the bg clip layer's rounded clip matched to the card radius (so the melt is cropped
-        // exactly to the card shape at every phase — clip-path clips the filtered image, overflow won't)
-        if (bgWrap) {
-          var rr = (p < pBh) ? RADIUS_FULL : (RADIUS_FULL + (RADIUS_END - RADIUS_FULL) * phaseT(p, pBh, pC));
-          var clip = 'inset(0 round ' + rr + 'px)';
-          bgWrap.style.webkitClipPath = clip; bgWrap.style.clipPath = clip;
-        }
         if (kb) {
           kb.style.width      = kbW + 'px';
           kb.style.height     = stageH + 'px';    // both cards always full stage height
