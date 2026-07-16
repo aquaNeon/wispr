@@ -586,8 +586,8 @@
           'float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*vnoise(p);p*=2.;a*=.5;}return v;}',
           'void main(){',
           ' float n=fbm(vUv*uNoise);float amt=n*uIntensity;',
-          ' vec2 uF=clamp(vUv+amt*uDisp,0.,1.)*uCoverFrom.xy+uCoverFrom.zw;',
-          ' vec2 uT=clamp(vUv-amt*(1.0-uDisp),0.,1.)*uCoverTo.xy+uCoverTo.zw;',
+          ' vec2 uF=clamp(vUv+vec2(amt*uDisp,0.0),0.,1.)*uCoverFrom.xy+uCoverFrom.zw;',       // X only = horizontal',
+          ' vec2 uT=clamp(vUv-vec2(amt*(1.0-uDisp),0.0),0.,1.)*uCoverTo.xy+uCoverTo.zw;',
           ' gl_FragColor=mix(texture2D(uFrom,uF),texture2D(uTo,uT),uDisp);',
           '}'
         ].join('\n');
