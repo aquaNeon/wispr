@@ -642,8 +642,10 @@
 
       // width split per phase. Lp = where the photo card's left edge sits (px from stage left)
       function applyMorph(p) {
-        // photo stays right-pinned through the reveal, then eases to centre as the card shrinks
-        var objX = 100 - 50 * phaseT(p, pBh, pC);   // 100% (right) → 50% (centre)
+        // photo stays right-pinned through the reveal, re-centres DURING the full-bleed hold (pB→pBh)
+        // so it's already centred before the shrink — then both sides crop at the same pace and the
+        // image stays put (recentring during the shrink made the sides cut unevenly).
+        var objX = 100 - 50 * phaseT(p, pB, pBh);   // 100% (right, reveal) → 50% (centre, before shrink)
         for (var im = 0; im < cardImgs.length; im++) { cardImgs[im].style.objectPosition = objX + '% center'; }
         var cardW, cardH = stageH, kbW = 0;
         if (p < pB) {                        // P0 + P1: photo edge sweeps right -> left
