@@ -105,11 +105,11 @@
 
   var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
-  var BG_FADE_MS      = 500; // crossfade between the card's chapter background images (data-bg="0/1/2")
-  // melt: bg swaps warp through an SVG fractal-noise displacement (generated in-filter — no image).
-  var MELT_SCALE      = 60;  // px peak displacement mid-swap (0 = plain crossfade, no melt)
-  var MELT_FREQ       = 0.011; // feTurbulence baseFrequency — cloud scale (lower = bigger, softer blobs)
-  var MELT_OCT        = 2;   // feTurbulence octaves (noise detail)
+  var BG_FADE_MS      = 700; // duration of the melt swap between chapter bg images (data-bg="0/1/2")
+  // melt: a self-contained WebGL displacement crossfade (codrops technique, no three.js). texture
+  // clamped (no edge gaps) + smooth dual-image mix (matches the demo, not a hard swap).
+  var MELT_INTENSITY  = 0.35; // displacement strength as a fraction of the image (~demo 0.2). 0 = plain crossfade
+  var MELT_NOISE      = 3.0;  // cloud scale of the displacement noise (higher = smaller, busier blobs)
   var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
                              // the end so the message frame animates in just before the raw text types
   // chapter-3 pill "voice mode": the done pill shows a cream waveform — bars that animate OUT to
@@ -545,113 +545,155 @@
         im.style.opacity = k === 0 ? '1' : '0';           // start on the wpm image
       });
 
-      // clip layer: the melt filter warps the image, but a filtered element is NOT clipped by the
-      // card's border-radius (only its rectangle) — so the warp pokes past the rounded corners and the
-      // card looks deformed. wrap the bg imgs in a card-sized layer with overflow:hidden +
-      // border-radius:inherit (auto-tracks the card radius) so the warp is cropped to the card shape.
+      // bg layer: holds the chapter images + the melt canvas, below the card content
+      var bgWrap = null;
       if (bgImgs.length) {
-        var bgWrap = card.querySelector('.flow-bg-layer');
+        bgWrap = card.querySelector('.flow-bg-layer');
         if (!bgWrap) {
           bgWrap = document.createElement('div');
           bgWrap.className = 'flow-bg-layer';
           card.insertBefore(bgWrap, card.firstChild);
         }
-        // plain layer for z-order; the actual melt clip lives on each img (see setOverscan)
         bgWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;border-radius:inherit;' +
           'z-index:0;pointer-events:none;';
-        bgImgs.forEach(function (im) { bgWrap.appendChild(im); });   // move them into the clip layer
+        bgImgs.forEach(function (im) { bgWrap.appendChild(im); });
       }
 
-      // ---- melt filter: an SVG fractal-noise displacement (same character as the codrops 4.png,
-      // generated so there's no asset). the displacement `scale` is 0 at rest (identity — the grow
-      // reveal is untouched) and ramps up-then-back only DURING a bg swap → a melt/warp crossfade.
-      var meltDisp = null;
-      if (MELT_SCALE > 0 && bgImgs.length > 1) {
-        var NS = 'http://www.w3.org/2000/svg';
-        var old = document.getElementById('flow-melt-svg'); if (old && old.parentNode) { old.parentNode.removeChild(old); }
-        var msvg = document.createElementNS(NS, 'svg');
-        msvg.setAttribute('id', 'flow-melt-svg');
-        msvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;';
-        var filt = document.createElementNS(NS, 'filter');
-        filt.setAttribute('id', 'flowMelt');
-        filt.setAttribute('x', '-25%'); filt.setAttribute('y', '-25%');
-        filt.setAttribute('width', '150%'); filt.setAttribute('height', '150%');
-        filt.setAttribute('color-interpolation-filters', 'sRGB');
-        var turb = document.createElementNS(NS, 'feTurbulence');
-        turb.setAttribute('type', 'fractalNoise');
-        turb.setAttribute('baseFrequency', String(MELT_FREQ));
-        turb.setAttribute('numOctaves', String(MELT_OCT));
-        turb.setAttribute('seed', '4');
-        turb.setAttribute('stitchTiles', 'stitch');
-        turb.setAttribute('result', 'noise');
-        meltDisp = document.createElementNS(NS, 'feDisplacementMap');
-        meltDisp.setAttribute('in', 'SourceGraphic');
-        meltDisp.setAttribute('in2', 'noise');
-        meltDisp.setAttribute('scale', '0');
-        meltDisp.setAttribute('xChannelSelector', 'R');
-        meltDisp.setAttribute('yChannelSelector', 'G');
-        filt.appendChild(turb); filt.appendChild(meltDisp);
-        msvg.appendChild(filt);
-        document.body.appendChild(msvg);
-        teardown.push(function () { if (msvg.parentNode) { msvg.parentNode.removeChild(msvg); } });
-      }
+      // ---- WebGL melt: a canvas overlays the card ONLY during a bg swap and runs a texture-clamped
+      // displacement crossfade between the two chapter images (codrops technique, self-contained — no
+      // three.js). texture clamp = no edge gaps; smooth dual-image mix (not a hard swap) = matches the
+      // demo; GPU = no jank. the <img>s stay for the idle state + the grow reveal; the canvas only
+      // appears mid-swap. if WebGL/CORS is unavailable it silently falls back to a plain crossfade.
+      var meltGL = null;
+      (function initMeltGL() {
+        if (!bgWrap || bgImgs.length < 2 || MELT_INTENSITY <= 0) { return; }
+        var canvas = document.createElement('canvas');
+        canvas.className = 'flow-melt-canvas';
+        canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;pointer-events:none;z-index:1;';
+        bgWrap.appendChild(canvas);
+        var gl = null;
+        try { gl = canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true }) || canvas.getContext('experimental-webgl'); } catch (e) {}
+        if (!gl) { if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); } return; }
 
-      // over-scan an image by MELT_SCALE px so the displacement warps INSIDE the overscan and the
-      // card edge always stays covered (no gaps). the CLIP-PATH lives on the img itself (same element
-      // as the filter) — an ancestor's overflow/clip can't crop a filtered child, but clip-path on the
-      // filtered element clips AFTER the filter. inset(MELT_SCALE) crops the overscan back to the card
-      // box; round RADIUS_END rounds those corners so the card shape stays crisp.
-      // overscan RAMPS with the melt: 0 at the start/end (image is exactly card-size → no shrink),
-      // max only at the peak where the distortion hides the object-fit re-crop. clip-path (on the img,
-      // same element as the filter) always crops the overscan back to the card's rounded box.
-      function meltOverscan(el, os) {
-        if (os <= 0.5) {
-          el.style.top = '0'; el.style.left = '0'; el.style.width = '100%'; el.style.height = '100%';
-          el.style.webkitClipPath = ''; el.style.clipPath = '';
-          return;
+        var VS = 'attribute vec2 aPos;varying vec2 vUv;void main(){vUv=aPos*0.5+0.5;gl_Position=vec4(aPos,0.,1.);}';
+        var FS = [
+          'precision mediump float;',
+          'uniform sampler2D uFrom;uniform sampler2D uTo;',
+          'uniform float uDisp;uniform float uIntensity;uniform float uNoise;',
+          'uniform vec4 uCoverFrom;uniform vec4 uCoverTo;varying vec2 vUv;',
+          'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}',
+          'float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);float a=hash(i),b=hash(i+vec2(1.,0.)),c=hash(i+vec2(0.,1.)),d=hash(i+vec2(1.,1.));vec2 u=f*f*(3.-2.*f);return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);}',
+          'float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*vnoise(p);p*=2.;a*=.5;}return v;}',
+          'void main(){',
+          ' float n=fbm(vUv*uNoise);float amt=n*uIntensity;',
+          ' vec2 uF=clamp(vUv+amt*uDisp,0.,1.)*uCoverFrom.xy+uCoverFrom.zw;',
+          ' vec2 uT=clamp(vUv-amt*(1.0-uDisp),0.,1.)*uCoverTo.xy+uCoverTo.zw;',
+          ' gl_FragColor=mix(texture2D(uFrom,uF),texture2D(uTo,uT),uDisp);',
+          '}'
+        ].join('\n');
+
+        function sh(t, src) { var s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
+          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn('[melt] shader', gl.getShaderInfoLog(s)); } return s; }
+        var prog = gl.createProgram();
+        gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+        gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn('[melt] link', gl.getProgramInfoLog(prog)); if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); } return; }
+        gl.useProgram(prog);
+
+        var buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+        var aPos = gl.getAttribLocation(prog, 'aPos');
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+        var uFrom = gl.getUniformLocation(prog, 'uFrom'), uTo = gl.getUniformLocation(prog, 'uTo'),
+            uDisp = gl.getUniformLocation(prog, 'uDisp'), uInt = gl.getUniformLocation(prog, 'uIntensity'),
+            uNoi = gl.getUniformLocation(prog, 'uNoise'),
+            uCF = gl.getUniformLocation(prog, 'uCoverFrom'), uCT = gl.getUniformLocation(prog, 'uCoverTo');
+        gl.uniform1i(uFrom, 0); gl.uniform1i(uTo, 1);
+        gl.uniform1f(uInt, MELT_INTENSITY); gl.uniform1f(uNoi, MELT_NOISE);
+
+        function mkTex() { var t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([20, 20, 20, 255]));
+          return t; }
+        var meta = bgImgs.map(function (im) {
+          var m = { tex: mkTex(), w: 1, h: 1, ready: false };
+          var ld = new Image(); ld.crossOrigin = 'anonymous';
+          ld.onload = function () {
+            try {
+              gl.bindTexture(gl.TEXTURE_2D, m.tex);
+              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ld);
+              m.w = ld.naturalWidth || 1; m.h = ld.naturalHeight || 1; m.ready = true;
+            } catch (e) { console.warn('[melt] texture upload failed (CORS?) — plain crossfade fallback', e); }
+          };
+          ld.onerror = function () {};
+          ld.src = im.currentSrc || im.src;
+          return m;
+        });
+
+        function cover(m) {
+          var cw = canvas.width || 1, ch = canvas.height || 1;
+          var ca = cw / ch, ia = m.w / m.h, sx, sy;
+          if (ia > ca) { sx = ca / ia; sy = 1; } else { sx = 1; sy = ia / ca; }
+          return [sx, sy, (1 - sx) / 2, (1 - sy) / 2];
         }
-        el.style.top = (-os) + 'px'; el.style.left = (-os) + 'px';
-        el.style.width = 'calc(100% + ' + (2 * os) + 'px)';
-        el.style.height = 'calc(100% + ' + (2 * os) + 'px)';
-        var clip = 'inset(' + os + 'px round ' + RADIUS_END + 'px)';
-        el.style.webkitClipPath = clip; el.style.clipPath = clip;
-      }
+        function resize() {
+          var r = canvas.getBoundingClientRect();
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          var w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+          if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        meltGL = {
+          ready: function (a, b) { return meta[a] && meta[b] && meta[a].ready && meta[b].ready; },
+          show: function (on) { canvas.style.opacity = on ? '1' : '0'; },
+          render: function (a, b, disp) {
+            resize();
+            gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, meta[a].tex);
+            gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, meta[b].tex);
+            var cf = cover(meta[a]), ct = cover(meta[b]);
+            gl.uniform4f(uCF, cf[0], cf[1], cf[2], cf[3]);
+            gl.uniform4f(uCT, ct[0], ct[1], ct[2], ct[3]);
+            gl.uniform1f(uDisp, disp);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          }
+        };
+        teardown.push(function () { if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); } });
+      }());
+
       var bgShown = 0, bgMeltTween = null;
       function setBgChapter(idx) {                          // recording+ch1 -> 0, ch2 -> 1, ch3 -> 2
         if (bgImgs.length < 2) { return; }
         var want = idx < 1 ? 0 : Math.min(idx, bgImgs.length - 1);
         if (want === bgShown) { return; }
-        var from = bgImgs[bgShown], to = bgImgs[want];
+        var prev = bgShown;
         bgShown = want;
-        if (bgMeltTween) { bgMeltTween.kill(); }
-        var doMelt = !!meltDisp;
-        if (doMelt) { from.style.filter = 'url(#flowMelt)'; to.style.filter = 'url(#flowMelt)'; }
-        // NO opacity fade — both images stay opaque; we hard-swap under the peak warp (the strongest
-        // distortion hides the cut), so it reads as a melt-through, not a crossfade.
-        to.style.opacity = '0'; from.style.opacity = '1';
-        var proxy = { p: 0 };
-        bgMeltTween = gsap.to(proxy, {
-          p: 1, duration: BG_FADE_MS / 1000, ease: 'power1.inOut',
-          onUpdate: function () {
-            var pr = proxy.p, swapped = pr >= 0.5, wave = Math.sin(Math.PI * pr);   // 0→1→0
-            to.style.opacity = swapped ? '1' : '0';
-            from.style.opacity = swapped ? '0' : '1';
-            if (doMelt) {
-              meltDisp.setAttribute('scale', String(MELT_SCALE * wave));            // displacement 0→peak→0
-              var os = MELT_SCALE * wave;                                           // overscan tracks it
-              meltOverscan(from, os); meltOverscan(to, os);
+        if (bgMeltTween) { bgMeltTween.kill(); bgMeltTween = null; }
+        if (meltGL && meltGL.ready(prev, want)) {
+          meltGL.render(prev, want, 0);                    // paint the "from" frame before showing (no flash)
+          meltGL.show(true);
+          bgImgs[prev].style.opacity = '0'; bgImgs[want].style.opacity = '0';
+          var proxy = { p: 0 };
+          bgMeltTween = gsap.to(proxy, {
+            p: 1, duration: BG_FADE_MS / 1000, ease: 'power1.inOut',
+            onUpdate: function () { meltGL.render(prev, want, proxy.p); },
+            onComplete: function () {
+              bgImgs[want].style.opacity = '1';             // settle onto the real img
+              meltGL.show(false);
+              for (var b = 0; b < bgImgs.length; b++) { if (b !== want) { bgImgs[b].style.opacity = '0'; } }
+              bgMeltTween = null;
             }
-          },
-          onComplete: function () {
-            if (doMelt) {
-              meltDisp.setAttribute('scale', '0');
-              from.style.filter = ''; to.style.filter = '';
-              meltOverscan(from, 0); meltOverscan(to, 0);
-            }
-            for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
-            bgMeltTween = null;
-          }
-        });
+          });
+        } else {                                            // no GL / textures not ready / CORS → crossfade
+          for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
+        }
       }
       teardown.push(function () { if (bgMeltTween) { bgMeltTween.kill(); } });
       if (kb) {
