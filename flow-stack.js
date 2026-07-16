@@ -601,17 +601,20 @@
       // as the filter) — an ancestor's overflow/clip can't crop a filtered child, but clip-path on the
       // filtered element clips AFTER the filter. inset(MELT_SCALE) crops the overscan back to the card
       // box; round RADIUS_END rounds those corners so the card shape stays crisp.
-      function setOverscan(el, on) {
-        if (on) {
-          el.style.top = (-MELT_SCALE) + 'px'; el.style.left = (-MELT_SCALE) + 'px';
-          el.style.width = 'calc(100% + ' + (2 * MELT_SCALE) + 'px)';
-          el.style.height = 'calc(100% + ' + (2 * MELT_SCALE) + 'px)';
-          var clip = 'inset(' + MELT_SCALE + 'px round ' + RADIUS_END + 'px)';
-          el.style.webkitClipPath = clip; el.style.clipPath = clip;
-        } else {
+      // overscan RAMPS with the melt: 0 at the start/end (image is exactly card-size → no shrink),
+      // max only at the peak where the distortion hides the object-fit re-crop. clip-path (on the img,
+      // same element as the filter) always crops the overscan back to the card's rounded box.
+      function meltOverscan(el, os) {
+        if (os <= 0.5) {
           el.style.top = '0'; el.style.left = '0'; el.style.width = '100%'; el.style.height = '100%';
           el.style.webkitClipPath = ''; el.style.clipPath = '';
+          return;
         }
+        el.style.top = (-os) + 'px'; el.style.left = (-os) + 'px';
+        el.style.width = 'calc(100% + ' + (2 * os) + 'px)';
+        el.style.height = 'calc(100% + ' + (2 * os) + 'px)';
+        var clip = 'inset(' + os + 'px round ' + RADIUS_END + 'px)';
+        el.style.webkitClipPath = clip; el.style.clipPath = clip;
       }
       var bgShown = 0, bgMeltTween = null;
       function setBgChapter(idx) {                          // recording+ch1 -> 0, ch2 -> 1, ch3 -> 2
@@ -622,10 +625,7 @@
         bgShown = want;
         if (bgMeltTween) { bgMeltTween.kill(); }
         var doMelt = !!meltDisp;
-        if (doMelt) {
-          from.style.filter = 'url(#flowMelt)'; to.style.filter = 'url(#flowMelt)';
-          setOverscan(from, true); setOverscan(to, true);
-        }
+        if (doMelt) { from.style.filter = 'url(#flowMelt)'; to.style.filter = 'url(#flowMelt)'; }
         // NO opacity fade — both images stay opaque; we hard-swap under the peak warp (the strongest
         // distortion hides the cut), so it reads as a melt-through, not a crossfade.
         to.style.opacity = '0'; from.style.opacity = '1';
@@ -633,16 +633,20 @@
         bgMeltTween = gsap.to(proxy, {
           p: 1, duration: BG_FADE_MS / 1000, ease: 'power1.inOut',
           onUpdate: function () {
-            var pr = proxy.p, swapped = pr >= 0.5;
+            var pr = proxy.p, swapped = pr >= 0.5, wave = Math.sin(Math.PI * pr);   // 0→1→0
             to.style.opacity = swapped ? '1' : '0';
             from.style.opacity = swapped ? '0' : '1';
-            if (doMelt) { meltDisp.setAttribute('scale', String(MELT_SCALE * Math.sin(Math.PI * pr))); }  // 0→peak→0
+            if (doMelt) {
+              meltDisp.setAttribute('scale', String(MELT_SCALE * wave));            // displacement 0→peak→0
+              var os = MELT_SCALE * wave;                                           // overscan tracks it
+              meltOverscan(from, os); meltOverscan(to, os);
+            }
           },
           onComplete: function () {
             if (doMelt) {
               meltDisp.setAttribute('scale', '0');
               from.style.filter = ''; to.style.filter = '';
-              setOverscan(from, false); setOverscan(to, false);
+              meltOverscan(from, 0); meltOverscan(to, 0);
             }
             for (var b = 0; b < bgImgs.length; b++) { bgImgs[b].style.opacity = b === want ? '1' : '0'; }
             bgMeltTween = null;
