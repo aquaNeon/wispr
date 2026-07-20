@@ -162,6 +162,10 @@
   var CARD_H_FALLBACK = 560; // used when 'auto' but no screen wrapper is found to measure
   var CARD_H_MAX   = 0.92;   // never let the card exceed this fraction of the stage height
   var CARD_PAD_BOTTOM = 42;  // px added below the measured content (breathing room under the pills)
+  var HEAD_TOP     = 0.16;   // fraction of card height both wpm headings are pinned to (keeps them level)
+  var MQ_TOP       = 0.48;   // fraction of card height both marquees are pinned to
+  var MQ_NUDGE_KB   = 0;     // px fine-tune, kb marquee only (+ down / − up)
+  var MQ_NUDGE_CARD = -35;   // px fine-tune, flow marquee only
   var CARD_DIP     = 70;     // px the card sags below centre mid-ride (0 at start and landing)
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
@@ -581,11 +585,51 @@
       var cardMq = card ? card.querySelector('[' + FLOW + '="marquee"]') : null;
       if (kbMq)   { guardStyle(kbMq);   kbMq.style.marginRight = 'auto'; }
       if (cardMq) { guardStyle(cardMq); cardMq.style.position  = 'absolute'; }   // stage-fixed backdrop; left set per frame
+      // pin both marquees absolute against their own card, not Webflow's authored parent
+      [[kb, kbMq], [card, cardMq]].forEach(function (pair) {
+        var c = pair[0], mq = pair[1];
+        if (!c || !mq) { return; }
+        guardStyle(mq);
+        if (mq.parentElement && mq.parentElement !== c) {
+          guardStyle(mq.parentElement);
+          mq.parentElement.style.position = 'static';
+        }
+        mq.style.position = 'absolute';
+      });
+      if (kbMq) { kbMq.style.left = '0'; }   // forced absolute above, so restore its left edge
       [kbMq, cardMq].forEach(function (mq) {
         if (!mq) { return; }
         var svg = mq.querySelector('svg');
         if (svg) { guardStyle(svg); svg.style.width = '100%'; }
       });
+
+      // pin both wpm headings to the same % of card height (in PX, from shared stageH) so they
+      // stay level at every screen size — see alignHeads() below
+      var headEls = [];
+      [kb, card].forEach(function (c) {
+        if (!c) { return; }
+        var head = c.querySelector('.flow_heading-wrap');
+        if (!head) { return; }
+        guardStyle(head);
+        if (window.getComputedStyle(c).position === 'static') { c.style.position = 'relative'; }
+        if (head.parentElement && head.parentElement !== c) {
+          guardStyle(head.parentElement);
+          head.parentElement.style.position = 'static';
+        }
+        head.style.position  = 'absolute';
+        head.style.left      = '0';
+        head.style.right     = '0';
+        head.style.margin    = '0';
+        head.style.textAlign = 'center';
+        headEls.push(head);
+      });
+      function alignHeads() {
+        var headPx = (HEAD_TOP * stageH) + 'px';
+        for (var hi = 0; hi < headEls.length; hi++) { headEls[hi].style.top = headPx; }
+        var mqBase = MQ_TOP * stageH;
+        if (kbMq)   { kbMq.style.top   = (mqBase + MQ_NUDGE_KB)   + 'px'; }
+        if (cardMq) { cardMq.style.top = (mqBase + MQ_NUDGE_CARD) + 'px'; }
+      }
 
       var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
       var pillRecY = -180;   // px the pill lifts during recording — recomputed from stage height in measureStage
@@ -1476,6 +1520,7 @@
         if (isDesktop) { section.style.height = 'calc(100vh + 2px)'; }
         contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });
         measureStage();
+        alignHeads();
         measurePositions();
         computeTiming();
         fanPositioned = false;                 // re-place cards on next fan show (layout may have changed)
@@ -1523,6 +1568,7 @@
       } else {
         // mobile: no pin/morph — show the card in its final centred state, text mid-line
         measureStage();
+        alignHeads();
         applyMorph(1);
         updateMarquees(0.5);   // no scrub on mobile; park the strings mid-travel so words show
         updateAudio(0.25);     // park bars in a mid-pose so the recorder reads as bars, not flat
