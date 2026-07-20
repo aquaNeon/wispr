@@ -1,14 +1,14 @@
 (function () {
 
   // ==========================================================================
-  // languages.js — the "languages" scroll-roll animation cards.
+  // languages.js — the "languages" scroll-list animation cards.
   //
-  // The OUTER scroll-roll (moving/curved text) will come from a GSAP resource and
-  // is NOT built here. This drives the ANIMATION CARDS that sit in ONE fixed place
-  // and are swapped/scrubbed by which item is active (same model as the flow tabs).
+  // A pinned card stays centred while four text blocks scroll past it (the "scroll list index"
+  // effect). The block nearest the viewport centre is active → its matching card crossfades in and
+  // that card's inner animation scrubs as the block crosses. See MODEL below.
   //
   // DOM contract (author in Webflow):
-  //   [data-lang="section"]                 the section (temp scroll driver spans it)
+  //   [data-lang="section"]                 the section (scroll driver spans it)
   //   [data-lang-anim="0"]                  card 0 — the language switcher (fixed card)
   //       [data-lang-name]                  the curved SVG string — put on the <textPath> el, NOT
   //                                          the <text> (we set .textContent; tagging <text> would
@@ -20,20 +20,24 @@
   //                                             → active shown, rest hidden (custom assets — recommended)
   //                                           • a single <img data-lang-flag> → src swapped by code
   //                                           • a single text el → emoji (shows "DE" on Windows — avoid)
-  //   [data-lang-anim="1|2|3"]              cards 1–3 — each its own animation (renderers below, TODO)
+  //   [data-lang-anim="1|2|3"]              cards 1–3 — each its own animation (renderers below)
+  //   .lang_text-anim-wrap                  the scrolling text column (holds the 4 blocks below)
+  //     .lang_anim-text-wrap  ×4            the TEXT BLOCKS — one per card, IN THE SAME ORDER as the
+  //                                          [data-lang-anim] cards (block 0 → card 0, block 1 → card 1…)
   //
-  // CARD MODEL: the section = ONE 100vh slice per [data-lang-anim] card (4 cards → 400vh). All cards are
-  // stacked in one spot (JS, CARD_STACK) and CROSSFADE: card k plays its animation across its slice on a
-  // local tp 0..1, finishes, then fades out as card k+1 fades in. Add renderers[1]/[2]/[3] to animate the
-  // rest; each gets its slice-local tp. Card 0 = the language switcher (below).
+  // MODEL: "scroll list index" (mwg effect105). The .lang_card--wrap STAYS PUT (sticky in Webflow) while
+  // the 4 text blocks scroll past it. The block closest to the viewport CENTRE is ACTIVE → its matching
+  // card crossfades in and that card's inner animation SCRUBS 0..1 as the block crosses the centre. Blocks
+  // drift sideways (peak at centre) then settle, and dim while inactive. All cards are stacked in one spot
+  // (JS, CARD_STACK) so they can crossfade. Blocks stay TIGHTLY stacked (several visible at once, like the
+  // resource); JS only pads lead-in/out scroll (see LEAD_VH / GAP_VH in the driver).
   //
   // CARD 0 MODEL: one continuous line = all SEGS joined (JS OWNS it — authored SVG string is overwritten).
-  // No scramble; it STREAMS along the curve (like the hero) across slice 0, parking each segment's centre
-  // at the ANCHOR on the path; the flag/label swap as each arrives.
+  // No scramble; it STREAMS along the curve (like the hero) as block 0 crosses the centre, parking each
+  // segment's centre at the ANCHOR on the path; the flag/label swap as each arrives.
   //
-  // For now a temp ScrollTrigger maps the section's scroll → global progress 0..1. When the real roll
-  // exists, delete the temp trigger and call
-  //   window.Languages.setProgress(g)   // g 0..1 across ALL cards
+  // The driver runs off getBoundingClientRect each frame (no pin/spacer). window.Languages.render() /
+  // .relayout() / .remeasure() are exposed for manual repaints. For extra fluidity, drive with Lenis.
   // ==========================================================================
 
   // ---- card 0 content — ONE continuous line made of per-language segments, joined by SEP. The text
@@ -59,8 +63,8 @@
                             // 0.5 = middle of the curve. the drift parks each segment's centre here.
   var FLAG_MID   = 0.5;     // within a seam (0..1 between two segments) where the flag flips to the next
 
-  // ---- cards: the section splits into ONE slice per [data-lang-anim] card (4 cards = 4×100vh). each
-  // card plays its own animation across its slice, then crossfades to the next. ----
+  // ---- cards: all [data-lang-anim] cards are stacked in one spot and crossfade; the active one is
+  // chosen by which text block is centred (see the driver at the bottom). ----
   var CARD_FADE_MS = 220;   // TRIGGERED crossfade duration between cards (ms) — quick + snappy, not scrubbed
   var CARD_STACK   = true;  // JS stacks the cards absolute+centered in one spot so they can crossfade;
                             // set false if you position/stack them yourself in Webflow
@@ -563,69 +567,132 @@
       };
     }());
 
-    // ---- driver: TEMP ScrollTrigger (replace with the GSAP roll's progress later) ----
-    var target = 0, current = 0, painted = -1;
+    // ==========================================================================
+    // driver: SCROLL LIST INDEX (mwg effect105 model)
+    //   The card wrap ([data-lang="section"] → .lang_card--wrap) STAYS PUT (sticky in Webflow —
+    //   its position is untouched here). The four .lang_anim-text-wrap TEXT BLOCKS become a
+    //   scrolling list beside it. Whichever block is closest to the viewport CENTRE is ACTIVE →
+    //   its matching [data-lang-anim] card (1:1 by order) crossfades in, and that card's inner
+    //   animation SCRUBS 0..1 as the block crosses the centre. Blocks drift sideways (peak at
+    //   centre) then settle, and dim while not active. Replaces the old 400vh sticky/crossfade.
+    // ==========================================================================
 
-    // paint the whole section at global progress g: crossfade the active card, run its own animation
-    // on its local slice progress, then hand off to the next card.
-    function paint(g) {
-      var n = cardEls.length;
-      if (n === 0) { renderCard0(g); return; }              // no cards tagged → drive card 0 directly
-      var gc  = Math.max(0, Math.min(1, g));
-      var pos = gc * n;                                     // 0..n — which slice we're in
-      var active = Math.max(0, Math.min(n - 1, Math.floor(pos)));   // the one card that's shown
-      for (var k = 0; k < n; k++) {
-        var el = cardEls[k];
-        // each card's own animation still scrubs across its slice (local tp 0..1)
-        var tp = Math.max(0, Math.min(1, pos - k));
-        if (renderers[k]) { renderers[k](tp); }
-        if (!el) { continue; }
-        // crossfade is TRIGGERED: only the active card is opaque; the CSS opacity transition (set in
-        // CARD_STACK) makes the swap a quick, snappy fade on change — independent of scroll speed
-        el.style.opacity = (k === active) ? '1' : '0';
-        el.style.pointerEvents = (k === active) ? '' : 'none';
+    // ---- config ----
+    var FORCE_TIGHT = true;  // collapse any per-block 100vh (min-height/height) so the blocks stack
+                             // TIGHT like the reference. set false if you strip the 100vh in Webflow
+                             // yourself and want the authored heights respected.
+    var LEAD_VH    = 0.5;    // blank scroll before the first / after the last block so each can reach
+                             // the centre (like the resource's `padding: 100vh 0`, in viewports).
+    var GAP_VH     = 0;      // EXTRA vertical gap between blocks, in viewports. 0 = keep the tight
+                             // Webflow stacking (blocks sit next to each other, several visible at once,
+                             // like the reference). Raise it to give each card a longer reign at centre.
+    var DRIFT_FRAC = 0.2;    // sideways drift at centre, as a fraction of the text-column width (peaks at
+                             // centre). reference ≈ 0.26. 0 = no drift; negative flips the side.
+    var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks (active = 1)
+    var POP_SCALE  = 1;      // quick scale-pop of the card wrap on active change (1 = off; try 1.04)
+
+    var textWrap = section.querySelector('.lang_text-anim-wrap');
+    var blocks   = textWrap
+      ? Array.prototype.slice.call(textWrap.querySelectorAll('.lang_anim-text-wrap'))
+      : [];
+
+    // triangle 0→1→0 (peak at p=0.5), smoothstepped so the drift eases in/out like the resource
+    function easeTri(p) {
+      var t = 1 - Math.abs(2 * p - 1);
+      return t * t * (3 - 2 * t);
+    }
+    function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+    // JS pads the track so the first block can reach the centre and the last can leave it (LEAD_VH),
+    // but keeps the blocks tightly stacked (GAP_VH, default 0) so several are visible at once — the
+    // drift + centre-detection do the rest, exactly like the resource's packed list.
+    function layout() {
+      if (!textWrap || !blocks.length) { return; }
+      var vh = window.innerHeight;
+      textWrap.style.paddingTop = (vh * LEAD_VH) + 'px';
+      textWrap.style.paddingBottom = (vh * LEAD_VH) + 'px';
+      for (var i = 0; i < blocks.length; i++) {
+        var b = blocks[i];
+        b.style.position = 'relative';
+        b.style.willChange = 'transform, opacity';
+        if (FORCE_TIGHT) {                                        // kill the Webflow 100vh → natural height
+          b.style.minHeight = '0';
+          b.style.height = 'auto';
+        }
+        if (i < blocks.length - 1) { b.style.marginBottom = (GAP_VH > 0 ? (vh * GAP_VH) + 'px' : ''); }
       }
     }
+    layout();
 
-    // progress tracks the PINNED window: 0 when the section's top hits the viewport top (left card
-    // pins), 1 when its bottom hits the viewport bottom (card releases) — i.e. the 400vh of scroll
-    // while the sticky left column is fixed. matches the sticky-left / scroll-right layout.
-    var st = ScrollTrigger.create({
-      trigger: section,
-      start: 'top top',
-      end: 'bottom bottom',
-      onUpdate: function (self) { target = self.progress; }
-    });
+    // smoothed per-block scalars so the drift + inner scrub GLIDE and settle on stop (like the flow).
+    // active detection stays on the RAW rect (immediate) so the card swap never lags.
+    var driftCur = [], tpCur = [], lastActive = -1;
+    for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; tpCur[bi] = 0; }
 
-    // ease the progress so the drift glides + settles when scroll stops (like the flow scrubs)
-    var tick = function () {
-      if (SCRUB_LERP >= 1) { current = target; }
-      else {
-        var k = 1 - Math.pow(1 - SCRUB_LERP, gsap.ticker.deltaRatio());
-        current += (target - current) * k;
-        if (Math.abs(target - current) < 0.0002) { current = target; }
+    function update() {
+      if (!blocks.length) { if (renderers[0]) { renderers[0](0); } return; }
+      var vh = window.innerHeight, cY = vh / 2;
+      var offset = DRIFT_FRAC * (textWrap.clientWidth || 0);
+      var lerp = (SCRUB_LERP >= 1) ? 1 : (1 - Math.pow(1 - SCRUB_LERP, gsap.ticker.deltaRatio()));
+
+      var closest = -1, closestDist = Infinity;
+      for (var i = 0; i < blocks.length; i++) {
+        var r = blocks[i].getBoundingClientRect();
+        // block's progress through the viewport: 0 as its top enters the bottom, 1 as its bottom exits the top
+        var prog = clamp01((vh - r.top) / (vh + r.height));
+        // inner card scrub: 0 when the centre sits at the block's top, 1 at its bottom
+        var tpT  = r.height ? clamp01((cY - r.top) / r.height) : 0;
+
+        driftCur[i] += (offset * easeTri(prog) - driftCur[i]) * lerp;
+        tpCur[i]    += (tpT - tpCur[i]) * lerp;
+        if (Math.abs(tpT - tpCur[i]) < 0.0002) { tpCur[i] = tpT; }
+
+        blocks[i].style.transform = 'translateX(' + driftCur[i] + 'px)';
+        if (renderers[i]) { renderers[i](tpCur[i]); }
+
+        // nearest block midpoint to the centre = active
+        var d = Math.abs(r.top + r.height / 2 - cY);
+        if (d < closestDist) { closestDist = d; closest = i; }
       }
-      if (current !== painted) { paint(current); painted = current; }
-    };
-    gsap.ticker.add(tick);
 
-    // span + path length change with viewport/webfont → re-measure, then repaint at the current pos
-    ScrollTrigger.addEventListener('refresh', function () {
+      if (closest !== lastActive) {
+        for (var k = 0; k < cardEls.length; k++) {          // crossfade to the matching card
+          var el = cardEls[k];
+          if (!el) { continue; }
+          el.style.opacity = (k === closest) ? '1' : '0';
+          el.style.pointerEvents = (k === closest) ? '' : 'none';
+        }
+        for (var b2 = 0; b2 < blocks.length; b2++) {         // dim everything but the active block
+          gsap.set(blocks[b2], { autoAlpha: b2 === closest ? 1 : DIM_ALPHA });
+        }
+        if (POP_SCALE !== 1 && cardWrap) {                   // optional pop on swap (like the preview)
+          gsap.fromTo(cardWrap, { scale: POP_SCALE }, { scale: 1, duration: 0.3, ease: 'back.out(2)' });
+        }
+        lastActive = closest;
+      }
+    }
+    gsap.ticker.add(update);
+
+    // re-space + re-measure on viewport/webfont changes, then repaint
+    function refreshAll() {
+      layout();
       measure();
       if (card1Measure) { card1Measure(); }
       if (card2Measure) { card2Measure(); }
       if (card3Measure) { card3Measure(); }
-      painted = -1;
-    });
+      lastActive = -1;
+    }
+    ScrollTrigger.addEventListener('refresh', refreshAll);
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(refreshAll); }
 
-    // public hook — the real roll calls this instead of the temp trigger
+    // public hook — kept for parity with the other sections
     window.Languages = {
-      setProgress: function (p) { target = p; },   // global 0..1 across all cards
-      render: paint,
+      render: update,
+      relayout: layout,
       remeasure: measure
     };
 
-    paint(0);
+    update();
   }
 
   if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); }
