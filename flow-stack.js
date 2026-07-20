@@ -103,7 +103,7 @@
   var GRAD_WORD_MS  = 350;   // ms each word's colour→gradient fade plays through as the wavefront passes
                              // it (a CSS transition — TRIGGERED per word, so it never scrubs word-by-word)
 
-  var INTRO_FADE_MS   = 280; // quick timed fade for the 220 + marquee (triggered at shrink start, not scrubbed)
+  var INTRO_FADE_MS   = 250; // 220 wpm + marquee: timed fade in (at scroll-in) and out (at shrink start)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
   var BG_FADE_MS      = 500; // crossfade between the card's chapter background images (data-bg="0/1/2")
   var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
@@ -120,9 +120,12 @@
   var BULLET_MS  = 300;      // ms the bullets wave in + row grows BEFORE they grow out to the audio heights
   var BAR_SHAPE  = [0.12, 0.28, 0.5, 0.42, 0.72, 0.88, 1, 0.8, 0.62, 0.48, 0.34, 0.22, 0.12];
 
-  // audio pill: authored at its LANDED spot; recording pose is a transform offset (negative REC_Y lifts it)
+  // audio pill: authored at its LANDED spot; recording pose is a transform offset (lifts it up)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
-  var PILL_REC_Y     = -180; // px the pill lifts toward the card centre during recording (tune)
+  // recording lift is a FRACTION of the stage (full-bleed card) height so it scales with the
+  // screen instead of a fixed px — on short screens −180px overshot and the pill sat too high.
+  var PILL_REC_VH    = 0.22; // lift toward the card centre = this × stage height (tune)
+  var PILL_REC_Y_MAX = 200;  // px cap so it never lifts too far on very tall screens
   var PILL_ICONS_AT  = 0.55; // handoff fraction (0..1) at which the 2 extra icons start scaling in
   var PILL_ICON_SIZE = 18;   // px the extra icons scale out to
   var PILL_LERP      = 0.16; // audio-pill handoff: eased follow (trails scroll, settles soft). higher = quicker settle
@@ -163,6 +166,16 @@
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
   var CARD_GAP     = 0;      // px gap between the two cards while both are visible
+  // 20% width threshold shared by both comparison cards: below it the keyboard card collapses
+  // smoothly to 0 width (no thin sliver of spilling text), and the flow card's "220 wpm" only
+  // shows once the card is at least this wide (so the label never spills a too-narrow card).
+  var CARD_MIN_W   = 0.20;
+  // final close-up: near the end of the grow, a TIMED (not scrubbed) tween pulls the last of the
+  // split to 0 — kb slides out + the flow card fills — so it always completes and you can never
+  // stop-scroll on a half-open sliver. hysteresis (AT vs OFF) stops chatter at the seam.
+  var FILL_AT      = 0.80;   // gt (grow progress) at which the close-up latches on
+  var FILL_OFF     = 0.68;   // gt below which it releases again
+  var FILL_MS      = 340;    // ms the triggered close takes
   var SNAP_W       = 0.15;   // fraction of the grow travel that snaps at each end (sliver zones)
   var SNAP_S       = 0.05;   // fraction of the grow scroll spent on each snap; smaller = snappier
 
@@ -338,7 +351,15 @@
         '[data-pill="polishing"].is-in.is-wave .flow_pill-dot{height:var(--h);}' +
         '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-in .flow_pill-dots{animation:none;}}' +
         '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-done .flow_pill-dot{transition-duration:.01ms;}}' +
+        // intro (220 wpm): a quick TIMED fade — in as the scroll-in starts, out at the shrink (see
+        // sceneUpdate). nowrap keeps the label on one line so it never reflows (2 lines↔1) as the
+        // card changes width — that reflow was the jank. the marquee svg positions text via its x
+        // attr, so let it wrap freely. the keyboard card (45 wpm) gets the same one-line treatment.
         '[data-flow="intro"]{transition:opacity ' + INTRO_FADE_MS + 'ms ease;}' +
+        '[data-flow="intro"]{white-space:nowrap;}' +
+        '[data-flow="intro"] [data-flow="marquee"]{white-space:normal;}' +
+        '[data-flow="kb"]{white-space:nowrap;overflow:hidden;}' +
+        '[data-flow="kb"] [data-flow="marquee"]{white-space:normal;}' +
         // message/composer content fades IN on a trigger (see sceneUpdate) — a timed fade, no scrub
         '[data-flow="screen"],[data-flow="composer"]{transition:opacity ' + MSG_FADE_MS + 'ms ease;}' +
         '[data-flow="pill-audio"]{transition:opacity .3s ease;}' +
@@ -567,6 +588,7 @@
       });
 
       var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
+      var pillRecY = -180;   // px the pill lifts during recording — recomputed from stage height in measureStage
       function measureStage() {
         // natural sizes while measuring, so a mid-morph refresh can't feed back
         if (kb) { kb.style.width = ''; kb.style.height = ''; kb.style.visibility = ''; }
@@ -638,21 +660,54 @@
         }
         // cap against the VIEWPORT (the card rides down over the tabs), not the little stage row
         cardHpx = Math.min(cardHpx, (window.innerHeight || 900) * CARD_H_MAX);
+        // recording-pill lift scales with the stage height (capped), so it sits at a consistent
+        // spot in the full-bleed card across screen sizes instead of overshooting when short.
+        pillRecY = -Math.min(PILL_REC_Y_MAX, Math.round(stageH * PILL_REC_VH));
+      }
+
+      // triggered final close-up: fillA.v 0 → 1 pulls the split to 0 (kb out, flow card full). the
+      // tween runs on time, so onUpdate re-renders the morph at the last scroll position each frame.
+      var fillA = { v: 0 }, fillLatched = false, lastMorphP = 0;
+      function triggerFill(on) {
+        gsap.to(fillA, { v: on ? 1 : 0, duration: FILL_MS / 1000, ease: 'power3.out',
+          overwrite: true, onUpdate: function () { applyMorph(lastMorphP); } });
       }
 
       // width split per phase. Lp = where the photo card's left edge sits (px from stage left)
       function applyMorph(p) {
-        // photo stays right-pinned through the reveal, re-centres DURING the full-bleed hold (pB→pBh)
-        // so it's already centred before the shrink — then both sides crop at the same pace and the
-        // image stays put (recentring during the shrink made the sides cut unevenly).
-        var objX = 100 - 50 * phaseT(p, pB, pBh);   // 100% (right, reveal) → 50% (centre, before shrink)
-        for (var im = 0; im < cardImgs.length; im++) { cardImgs[im].style.objectPosition = objX + '% center'; }
+        lastMorphP = p;
+        // photo layout: through the reveal + hold, PIN each photo at the full-bleed size (stageW×
+        // stageH) with its right edge fixed at the stage's right — the widening card window then
+        // reveals it as a pure crop, with NO object-fit cover rescale (that zoom was the "scale
+        // shift"). at the shrink it hands back to 100%×100% cover so it scales down with the centred
+        // card. boundary is continuous: at pBh the card is still full, so 100% == the pinned size.
+        var pinnedPhoto = (p < pBh);
+        for (var im = 0; im < bgImgs.length; im++) {
+          var bi = bgImgs[im];
+          if (pinnedPhoto) {
+            bi.style.width  = stageW + 'px'; bi.style.height = stageH + 'px';
+            bi.style.left   = 'auto';        bi.style.right  = '0';
+          } else {
+            bi.style.width  = '100%';        bi.style.height = '100%';
+            bi.style.left   = '0';           bi.style.right  = 'auto';
+          }
+          bi.style.objectPosition = '50% center';
+        }
         var cardW, cardH = stageH, kbW = 0;
         if (p < pB) {                        // P0 + P1: photo edge sweeps right -> left
           var gt = (p < pA || pB <= pA) ? 0 : (p - pA) / (pB - pA);
-          var Lp = stageW * (1 - snapEnds(gt));
+          // near the end of the grow, LATCH the timed close-up (hysteresis so it doesn't chatter)
+          if (!fillLatched && gt >= FILL_AT)      { fillLatched = true;  triggerFill(true); }
+          else if (fillLatched && gt < FILL_OFF)  { fillLatched = false; triggerFill(false); }
+          var Lp = stageW * (1 - snapEnds(gt));   // width of the left (kb) column
+          // once the kb column drops under CARD_MIN_W, ease it the rest of the way to 0 so it
+          // disappears sooner. deriving BOTH widths from this one split keeps the cards flush —
+          // the flow card grows to fill exactly what the kb gives up, so there's never a gap.
+          var lpFrac = Lp / stageW;
+          if (lpFrac < CARD_MIN_W) { Lp *= smooth(lpFrac / CARD_MIN_W); }
+          Lp *= (1 - fillA.v);                    // triggered close-up pulls the split shut on a timer
           cardW = stageW - Lp;
-          kbW   = Math.max(0, Lp - CARD_GAP);   // gap emerges implicitly between kb's end and the card
+          kbW   = Math.max(0, Lp - CARD_GAP);   // kb fills the (collapsed) left column; card butts against it
         } else if (p < pBh) {                // hold at full bleed
           cardW = stageW;
         } else {                             // P2 + after: shrink to the centred final card
@@ -663,16 +718,21 @@
         }
         if (p < pBh) { card.style.borderRadius = ''; }   // class radius before the shrink
         if (kb) {
-          kb.style.width      = kbW + 'px';
-          kb.style.height     = stageH + 'px';    // both cards always full stage height
+          kb.style.width      = kbW + 'px';        // kbW already collapsed in the split above
+          kb.style.height     = stageH + 'px';     // both cards always full stage height
           kb.style.visibility = kbW < 2 ? 'hidden' : '';
         }
         // grow: right edge fixed at the stage's content-right, growth is leftward only.
         // shrink: centred. (continuous at the boundary — both give left = padL at full width)
         var left = (p < pBh) ? padL + (stageW - cardW) : padL + (stageW - cardW) / 2;
-        // card marquee: always centred on the card — the wave's bump sits over the pill at
-        // every card size, in every phase (the full-stage-wide wrapper centre = card centre)
-        if (cardMq) { cardMq.style.left = ((cardW - stageW) / 2) + 'px'; }
+        // card marquee (the bent wave svg, stageW wide): LEFT-ALIGNED to the card through the reveal
+        // (its left edge tracks the card's left edge), then eased to CENTRED as the card centres +
+        // lands (pBh→pC) — so the wave's bump ends up over the pill. ca: 0 = left-aligned, 1 = centred.
+        // (at full bleed cardW == stageW, so both give left = 0 — the handoff is seamless.)
+        if (cardMq) {
+          var ca = phaseT(p, pBh, pC);
+          cardMq.style.left = (ca * (cardW - stageW) / 2) + 'px';
+        }
         card.style.left       = left + 'px';
         card.style.top        = (padT + (stageH - cardH) / 2) + 'px';
         card.style.width      = cardW + 'px';
@@ -736,6 +796,7 @@
       // then within tab 0's scroll slice the transcript types word-by-word and the pill tracks the
       // category of the latest revealed highlight word.
       var introEl      = oneF(section, 'intro');                 // 220wpm + marquee — quick triggered fade
+      if (introEl) { introEl.style.opacity = '0'; }              // start hidden → first update fades it in (0.25s)
       var screenEl     = oneF(section, 'screen');                // optional: one cover holding all chapter content
       var composerEl   = oneF(section, 'composer');
       var pillAudioEl  = oneF(section, 'pill-audio');            // recorder — glides down + shrinks at handoff
@@ -1248,7 +1309,7 @@
       function renderPill(hp) {
         if (!pillAudioEl) { return; }
         var sc = PILL_REC_SCALE + (1 - PILL_REC_SCALE) * hp;    // REC_SCALE → 1 (shrinks to landed)
-        var ty = PILL_REC_Y * (1 - hp);                         // REC_Y (lifted) → 0 (settles at landed)
+        var ty = pillRecY * (1 - hp);                           // lifted → 0 (settles at landed)
         pillAudioEl.style.transform = 'translateY(' + ty + 'px) scale(' + sc + ')';
         var ei = PILL_ICONS_AT < 1 ? smooth((hp - PILL_ICONS_AT) / (1 - PILL_ICONS_AT)) : (hp >= 1 ? 1 : 0);
         var isz = (PILL_ICON_SIZE * ei) + 'px';
@@ -1270,8 +1331,15 @@
       }
 
       function sceneUpdate(p) {
-        // intro (220 + marquee): quick TRIGGERED fade at the shrink start — CSS-timed, not scrubbed
-        if (introEl) { introEl.style.opacity = (p >= pBh) ? '0' : '1'; }
+        // intro (220 wpm): shows once the flow card is at least CARD_MIN_W wide (so the label never
+        // spills a too-narrow card), stays in view through the reveal, then fades out at the shrink
+        // start. the show/hide is a quick TIMED fade (opacity + CSS transition, 0.25s), not scrubbed.
+        if (introEl) {
+          var gt2 = (pB > pA) ? (p - pA) / (pB - pA) : (p >= pB ? 1 : 0);
+          gt2 = gt2 < 0 ? 0 : (gt2 > 1 ? 1 : gt2);
+          var cardFrac = (p < pB) ? snapEnds(gt2) : 1;      // flow card width as a fraction of the stage
+          introEl.style.opacity = (cardFrac >= CARD_MIN_W && p < pBh) ? '1' : '0';
+        }
 
         // audio pill: hand the scrubbed handoff progress (shrink→land window) to the eased ticker
         if (pillAudioEl) {
