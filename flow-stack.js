@@ -266,6 +266,9 @@
       return;
     }
     gsap.registerPlugin(ScrollTrigger);
+    // ignore the mobile address-bar show/hide (it changes viewport height during scroll). without
+    // this, ScrollTrigger re-measures mid-scroll and every pinned section on the page glitches.
+    if (ScrollTrigger.config) { ScrollTrigger.config({ ignoreMobileResize: true }); }
 
     // runtime-only CSS (same id/rules as stack.js so the Designer embeds keep working)
     if (!document.getElementById('stack-mode-style')) {
@@ -1693,10 +1696,14 @@
     if (document.fonts && document.fonts.ready) { document.fonts.ready.then(relayout); }
 
     if (typeof window.ResizeObserver !== 'undefined') {
-      var lastVW = window.innerWidth, lastVH = window.innerHeight, roTimer = null;
+      var lastVW = window.innerWidth, roTimer = null;
       var ro = new ResizeObserver(function () {
-        if (window.innerWidth === lastVW && window.innerHeight === lastVH) { return; }
-        lastVW = window.innerWidth; lastVH = window.innerHeight;
+        // WIDTH-only. mobile browsers change innerHeight as the address bar shows/hides DURING
+        // scroll; refreshing on that fired ScrollTrigger.refresh() mid-scroll and glitched every
+        // pinned section on the page (incl. the wave slider). width changes only on a real resize /
+        // orientation flip — the one time a re-measure is actually needed.
+        if (window.innerWidth === lastVW) { return; }
+        lastVW = window.innerWidth;
         if (roTimer) { clearTimeout(roTimer); }
         roTimer = setTimeout(function () { ScrollTrigger.refresh(); }, 150);
       });
