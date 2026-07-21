@@ -29,14 +29,22 @@
   var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
                               // offstage-right). same for every card → even spacing regardless of width
   var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
+  // card vertical anchor as vh (50 = viewport centre). lower = higher on screen. on mobile 50vh
+  // reads a bit low (vh = tall viewport incl. the address bar; a fixed navbar adds to it). override
+  // per-page from Webflow with data-center / data-center-mobile on the data-slider="wrap" element.
+  var CENTER_VH        = 50;
+  var CENTER_VH_MOBILE = 50;
+  var MIN_W     = 768;        // below this width = "mobile": uniform narrower cards + wider spacing
+  var CARD_W_MOBILE   = '76vw';  // forced card width on mobile (readable + fits, no overlap/overflow)
+  var TRAVEL_VW_MOBILE = 300;    // wider sweep on mobile so cards don't pile up (one prominent at a time)
   // background SVG path (tag it data-slider="draw") is drawn SCRUBBED on its own trigger: paints in
   // over the first half, un-paints from the start over the second half. START/END are ScrollTrigger
   // positions — DRAW_START earlier than the pin (section entering) makes it begin sooner.
   var DRAW_START = 'top bottom';   // section top reaches viewport bottom → draw starts (as early as it can)
   var DRAW_END   = 'bottom bottom';// finishes by the deck's pin end
-  var SCRUB     = 0.4;        // seconds of scrub catch-up. renders every frame (smooths the steps) but
-                              // settles fast so there's little trailing inertia. higher = floatier tail
-                              // (reads odd without a smooth-scroll lib); lower/true = steppier per frame
+  var SCRUB        = 0.4;     // desktop scrub catch-up (s). eases discrete wheel steps; small tail
+  var SCRUB_MOBILE = true;    // mobile: 1:1 with scroll. touch scroll is already continuous, so the
+                              // numeric catch-up just adds a settling "shake" at the end of a flick
 
   function init() {
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
@@ -44,6 +52,16 @@
       return;
     }
     gsap.registerPlugin(ScrollTrigger);
+
+    // Mobile smoothness: real phones deliver touch-momentum scroll that isn't synced to the render
+    // loop, and the address bar resizes the viewport mid-scroll — both make a pinned scrub SHAKE
+    // (even at scrub:true). normalizeScroll frame-syncs touch scrolling (like Lenis, but native) and
+    // absorbs the address bar. touch-only, so desktop is untouched. global → set once.
+    if (ScrollTrigger.config) { ScrollTrigger.config({ ignoreMobileResize: true }); }
+    if (ScrollTrigger.isTouch && !ScrollTrigger.__wsNormalized) {
+      ScrollTrigger.__wsNormalized = true;
+      ScrollTrigger.normalizeScroll(true);
+    }
 
     // Global guard: keep ScrollTrigger.refresh() from running mid-scroll. Other scripts on the page
     // (e.g. a page ScrollTrigger whose onUpdate calls refresh() every scroll tick) re-lay-out every
@@ -77,6 +95,17 @@
 
     var cards = Array.prototype.slice.call(track.querySelectorAll('[' + ATTR + '="' + A_CARD + '"]'));
     if (!cards.length) { console.warn('[wave-slider] no data-slider="card" children inside the track'); return; }
+
+    // mobile: same effect, but the wide testimonial cards overflowed + overlapped (and rendering
+    // huge 3D elements jittered). below MIN_W we force a uniform narrower card width and wider
+    // spacing so the cards fit and sweep cleanly.
+    var mobile   = window.innerWidth < MIN_W;
+    var cardW    = mobile ? CARD_W_MOBILE : CARD_W;
+    var travelVw = mobile ? TRAVEL_VW_MOBILE : TRAVEL_VW;
+    var scrubVal = mobile ? SCRUB_MOBILE : SCRUB;
+    var centerVh = mobile ? CENTER_VH_MOBILE : CENTER_VH;   // vertical anchor; Webflow can override:
+    var centerAttr = wrap.getAttribute(mobile ? 'data-center-mobile' : 'data-center');
+    if (centerAttr != null && centerAttr !== '' && !isNaN(parseFloat(centerAttr))) { centerVh = parseFloat(centerAttr); }
 
     // background path(s) — tag the svg or the path itself data-slider="draw". prep each path for a
     // stroke-dashoffset draw; the actual paint is SCRUBBED with the deck's scroll (added to the
@@ -128,10 +157,10 @@
     track.style.padding        = '0';                     // drop any Webflow padding that would offset the cards
 
     cards.forEach(function (media) {
-      if (CARD_W) { media.style.width = CARD_W; media.style.height = 'auto'; }
+      if (cardW) { media.style.width = cardW; media.style.height = 'auto'; }
       media.style.position         = 'absolute';
       media.style.left             = '50%';               // centre-anchored (with xPercent:-50 below) so
-      media.style.top              = '50vh';              // travel is width-independent → even spacing
+      media.style.top              = centerVh + 'vh';     // vertical anchor (yPercent:-50 centres on it)
       media.style.transformStyle   = 'preserve-3d';
       media.style.backfaceVisibility = 'hidden';          // keep the flip clean
       media.style.willChange       = 'transform';         // hint a GPU layer so the 3D repaint is smoother
@@ -149,12 +178,12 @@
       scrollTrigger: {
         trigger: track, start: 'top top',
         endTrigger: wrap, end: 'bottom bottom',
-        pin: track, pinType: 'transform', scrub: SCRUB
+        pin: track, pinType: 'transform', scrub: scrubVal
       }
     });
     var isPortrait = window.innerHeight > window.innerWidth;
     var step = (isPortrait ? 1.5 : 1) / cards.length;      // portrait spaces the passes out a bit more
-    var travelHalf = window.innerWidth * TRAVEL_VW / 200;  // centre travels ±this; identical for every card → even spacing
+    var travelHalf = window.innerWidth * travelVw / 200;   // centre travels ±this; identical for every card → even spacing
     cards.forEach(function (media, i) {
       var tl = gsap.timeline();
       tl.fromTo(media,
@@ -169,7 +198,7 @@
     // -len (linear) = paints IN over the first half, un-paints from the start over the second half.
     if (drawPaths.length) {
       var drawTl = gsap.timeline({
-        scrollTrigger: { trigger: wrap, start: DRAW_START, end: DRAW_END, scrub: SCRUB }
+        scrollTrigger: { trigger: wrap, start: DRAW_START, end: DRAW_END, scrub: scrubVal }
       });
       drawPaths.forEach(function (p) {
         drawTl.fromTo(p, { strokeDashoffset: p._len },
