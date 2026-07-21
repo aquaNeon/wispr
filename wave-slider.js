@@ -37,9 +37,9 @@
   // positions — DRAW_START earlier than the pin (section entering) makes it begin sooner.
   var DRAW_START = 'top bottom';   // section top reaches viewport bottom → draw starts (as early as it can)
   var DRAW_END   = 'bottom bottom';// finishes by the deck's pin end
-  var SCRUB     = 0.4;        // seconds of scrub catch-up. renders every frame (smooths the steps) but
-                              // settles fast so there's little trailing inertia. higher = floatier tail
-                              // (reads odd without a smooth-scroll lib); lower/true = steppier per frame
+  var SCRUB        = 0.4;     // desktop scrub catch-up (s). eases discrete wheel steps; small tail
+  var SCRUB_MOBILE = true;    // mobile: 1:1 with scroll. touch scroll is already continuous, so the
+                              // numeric catch-up just adds a settling "shake" at the end of a flick
 
   function init() {
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
@@ -87,6 +87,7 @@
     var mobile   = window.innerWidth < MIN_W;
     var cardW    = mobile ? CARD_W_MOBILE : CARD_W;
     var travelVw = mobile ? TRAVEL_VW_MOBILE : TRAVEL_VW;
+    var scrubVal = mobile ? SCRUB_MOBILE : SCRUB;
 
     // background path(s) — tag the svg or the path itself data-slider="draw". prep each path for a
     // stroke-dashoffset draw; the actual paint is SCRUBBED with the deck's scroll (added to the
@@ -159,7 +160,7 @@
       scrollTrigger: {
         trigger: track, start: 'top top',
         endTrigger: wrap, end: 'bottom bottom',
-        pin: track, pinType: 'transform', scrub: SCRUB
+        pin: track, pinType: 'transform', scrub: scrubVal
       }
     });
     var isPortrait = window.innerHeight > window.innerWidth;
@@ -179,7 +180,7 @@
     // -len (linear) = paints IN over the first half, un-paints from the start over the second half.
     if (drawPaths.length) {
       var drawTl = gsap.timeline({
-        scrollTrigger: { trigger: wrap, start: DRAW_START, end: DRAW_END, scrub: SCRUB }
+        scrollTrigger: { trigger: wrap, start: DRAW_START, end: DRAW_END, scrub: scrubVal }
       });
       drawPaths.forEach(function (p) {
         drawTl.fromTo(p, { strokeDashoffset: p._len },
