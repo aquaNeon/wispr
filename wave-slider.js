@@ -29,8 +29,9 @@
   var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
                               // offstage-right). same for every card → even spacing regardless of width
   var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
-  var MIN_W     = 768;        // min viewport width to run the 3D effect; below this the cards keep
-                              // their normal Webflow layout (the cylinder is a desktop showcase)
+  var MIN_W     = 768;        // below this width = "mobile": uniform narrower cards + wider spacing
+  var CARD_W_MOBILE   = '76vw';  // forced card width on mobile (readable + fits, no overlap/overflow)
+  var TRAVEL_VW_MOBILE = 300;    // wider sweep on mobile so cards don't pile up (one prominent at a time)
   // background SVG path (tag it data-slider="draw") is drawn SCRUBBED on its own trigger: paints in
   // over the first half, un-paints from the start over the second half. START/END are ScrollTrigger
   // positions — DRAW_START earlier than the pin (section entering) makes it begin sooner.
@@ -80,19 +81,12 @@
     var cards = Array.prototype.slice.call(track.querySelectorAll('[' + ATTR + '="' + A_CARD + '"]'));
     if (!cards.length) { console.warn('[wave-slider] no data-slider="card" children inside the track'); return; }
 
-    // the 3D cylinder is a desktop effect — on narrow screens the wide cards overlap and the scrub
-    // is jittery. below MIN_W we bail (no inline styles applied), leaving the cards in their normal
-    // Webflow layout. re-check on resize so rotating a device / resizing the window re-evaluates.
-    if (!window.matchMedia('(min-width:' + MIN_W + 'px)').matches) {
-      var reloadOnGrow = function () {
-        if (window.matchMedia('(min-width:' + MIN_W + 'px)').matches) {
-          window.removeEventListener('resize', reloadOnGrow);
-          init();                                            // now wide enough → build the effect
-        }
-      };
-      window.addEventListener('resize', reloadOnGrow);
-      return;
-    }
+    // mobile: same effect, but the wide testimonial cards overflowed + overlapped (and rendering
+    // huge 3D elements jittered). below MIN_W we force a uniform narrower card width and wider
+    // spacing so the cards fit and sweep cleanly.
+    var mobile   = window.innerWidth < MIN_W;
+    var cardW    = mobile ? CARD_W_MOBILE : CARD_W;
+    var travelVw = mobile ? TRAVEL_VW_MOBILE : TRAVEL_VW;
 
     // background path(s) — tag the svg or the path itself data-slider="draw". prep each path for a
     // stroke-dashoffset draw; the actual paint is SCRUBBED with the deck's scroll (added to the
@@ -144,7 +138,7 @@
     track.style.padding        = '0';                     // drop any Webflow padding that would offset the cards
 
     cards.forEach(function (media) {
-      if (CARD_W) { media.style.width = CARD_W; media.style.height = 'auto'; }
+      if (cardW) { media.style.width = cardW; media.style.height = 'auto'; }
       media.style.position         = 'absolute';
       media.style.left             = '50%';               // centre-anchored (with xPercent:-50 below) so
       media.style.top              = '50vh';              // travel is width-independent → even spacing
@@ -170,7 +164,7 @@
     });
     var isPortrait = window.innerHeight > window.innerWidth;
     var step = (isPortrait ? 1.5 : 1) / cards.length;      // portrait spaces the passes out a bit more
-    var travelHalf = window.innerWidth * TRAVEL_VW / 200;  // centre travels ±this; identical for every card → even spacing
+    var travelHalf = window.innerWidth * travelVw / 200;   // centre travels ±this; identical for every card → even spacing
     cards.forEach(function (media, i) {
       var tl = gsap.timeline();
       tl.fromTo(media,
