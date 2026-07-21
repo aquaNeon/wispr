@@ -14,6 +14,7 @@
   var A_WRAP  = 'wrap';
   var A_TRACK = 'track';
   var A_CARD  = 'card';
+  var A_DRAW  = 'draw';       // tag an svg (or a path) data-slider="draw" to draw it behind the deck
 
   var CARD_W    = null;       // force a card width (e.g. '14vw'); null = keep the Webflow-authored size
   var ORBIT_VW  = 26;         // cylinder radius (vw): the card pivots on an axis this far behind it,
@@ -25,11 +26,14 @@
   var DUR       = 1.1;        // per-card timeline duration (in master-time units)
   var EASE      = 'power1.inOut';
   var ZFLIP     = 0.55;       // when (from the end of a sweep) a card drops under the next one
-  var START_IN  = 0.55;       // master-time at scroll 0. DUR/2 (0.55) = first card centred / in view.
-                              // lower → first card still entering at the top; higher → already exiting
   var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
                               // offstage-right). same for every card → even spacing regardless of width
   var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
+  // background SVG path (tag it data-slider="draw") is drawn SCRUBBED on its own trigger: paints in
+  // over the first half, un-paints from the start over the second half. START/END are ScrollTrigger
+  // positions — DRAW_START earlier than the pin (section entering) makes it begin sooner.
+  var DRAW_START = 'top bottom';   // section top reaches viewport bottom → draw starts (as early as it can)
+  var DRAW_END   = 'bottom bottom';// finishes by the deck's pin end
   var SCRUB     = 0.4;        // seconds of scrub catch-up. renders every frame (smooths the steps) but
                               // settles fast so there's little trailing inertia. higher = floatier tail
                               // (reads odd without a smooth-scroll lib); lower/true = steppier per frame
@@ -74,6 +78,46 @@
     var cards = Array.prototype.slice.call(track.querySelectorAll('[' + ATTR + '="' + A_CARD + '"]'));
     if (!cards.length) { console.warn('[wave-slider] no data-slider="card" children inside the track'); return; }
 
+    // background path(s) — tag the svg or the path itself data-slider="draw". prep each path for a
+    // stroke-dashoffset draw; the actual paint is SCRUBBED with the deck's scroll (added to the
+    // master timeline below), so it paints IN then OUT as you scroll.
+    var drawEls = Array.prototype.slice.call(wrap.querySelectorAll('[' + ATTR + '="' + A_DRAW + '"]'));
+    var drawPaths = [];
+    drawEls.forEach(function (el) {
+      var ps = (el.tagName.toLowerCase() === 'path') ? [el] : el.querySelectorAll('path');
+      Array.prototype.forEach.call(ps, function (p) { drawPaths.push(p); });
+    });
+    drawPaths.forEach(function (p) {
+      var len = (p.getTotalLength ? p.getTotalLength() : 0) || 1;
+      p._len = len;
+      gsap.set(p, { strokeDasharray: len, strokeDashoffset: len });   // start hidden
+    });
+
+    // keep the bg SVG FIXED in the viewport (behind the deck) while the section is in view. it was
+    // position:absolute inside the section, so it scrolled away with it. we fix its section-level
+    // container to the viewport and fade it in/out with the section. (fill the viewport; behind the
+    // cards via z-index + DOM order; ignore clicks.)
+    var bgWraps = [];
+    drawEls.forEach(function (el) {
+      var c = el;
+      while (c.parentElement && c.parentElement !== wrap) { c = c.parentElement; }
+      if (c && c.parentElement === wrap && bgWraps.indexOf(c) === -1) { bgWraps.push(c); }
+    });
+    bgWraps.forEach(function (c) {
+      c.style.position       = 'fixed';
+      c.style.inset          = '0';         // fill the viewport
+      c.style.display        = 'flex';      // centre the svg strip behind the (centred) cards
+      c.style.alignItems     = 'center';
+      c.style.justifyContent = 'center';
+      c.style.zIndex         = '0';         // behind the cards (they carry z-index 1..n)
+      c.style.pointerEvents  = 'none';
+      c.style.opacity        = '0';
+      ScrollTrigger.create({
+        trigger: wrap, start: 'top bottom', end: 'bottom top',
+        onToggle: function (self) { gsap.to(c, { opacity: self.isActive ? 1 : 0, duration: 0.3, overwrite: true }); }
+      });
+    });
+
     // stage layout (the effect's CSS, applied inline so the Webflow HTML stays as-is)
     wrap.style.height          = SCROLL_VH + 'vh';        // pin-height
     track.style.height         = '100vh';                 // pinned viewport column
@@ -100,11 +144,17 @@
     var orbitPx = window.innerWidth * ORBIT_VW / 100;
     gsap.set(cards, { xPercent: -50, yPercent: -50, transformOrigin: '50% 50% -' + orbitPx + 'px', force3D: true });
 
-    // Build the full deck PAUSED; a proxy tween scrubs its playhead over just the framed window.
-    var master = gsap.timeline({ paused: true });
+    // Pin the track, scrub the deck across the full wrap (cards enter/exit offstage — no framing).
+    var master = gsap.timeline({
+      scrollTrigger: {
+        trigger: track, start: 'top top',
+        endTrigger: wrap, end: 'bottom bottom',
+        pin: track, pinType: 'transform', scrub: SCRUB
+      }
+    });
     var isPortrait = window.innerHeight > window.innerWidth;
     var step = (isPortrait ? 1.5 : 1) / cards.length;      // portrait spaces the passes out a bit more
-    var travelHalf = window.innerWidth * TRAVEL_VW / 200;  // centre travels ±this; identical for every card
+    var travelHalf = window.innerWidth * TRAVEL_VW / 200;  // centre travels ±this; identical for every card → even spacing
     cards.forEach(function (media, i) {
       var tl = gsap.timeline();
       tl.fromTo(media,
@@ -114,20 +164,18 @@
       master.add(tl, i * step);
     });
 
-    // FRAMING: a card faces front at the MIDPOINT of its own sweep (DUR/2 into its child timeline).
-    // Scroll START → first card centred / in view; scroll END → last card centred. We scrub the
-    // master's playhead across [tStart, tEnd] instead of the whole 0→end (which starts/ends offstage).
-    var tStart = START_IN;                                             // first card centred at scroll 0
-    var tEnd   = Math.min(master.duration(), (cards.length - 1) * step + DUR / 2);  // last card centred at scroll 1
-
-    var master2 = gsap.timeline({
-      scrollTrigger: {
-        trigger: track, start: 'top top',
-        endTrigger: wrap, end: 'bottom bottom',
-        pin: track, pinType: 'transform', scrub: SCRUB
-      }
-    });
-    master2.fromTo(master, { time: tStart }, { time: tEnd, ease: 'none', duration: 1 });
+    // scrubbed bg draw on its OWN trigger (not the master), so it can start BEFORE the deck pins —
+    // it begins as the section scrolls into view (DRAW_START) and runs to DRAW_END. offset len → 0 →
+    // -len (linear) = paints IN over the first half, un-paints from the start over the second half.
+    if (drawPaths.length) {
+      var drawTl = gsap.timeline({
+        scrollTrigger: { trigger: wrap, start: DRAW_START, end: DRAW_END, scrub: SCRUB }
+      });
+      drawPaths.forEach(function (p) {
+        drawTl.fromTo(p, { strokeDashoffset: p._len },
+          { strokeDashoffset: -p._len, ease: 'none', duration: 1 }, 0);
+      });
+    }
 
     // refresh once fonts/images settle so measurements are final
     function relayout() { ScrollTrigger.refresh(); }
