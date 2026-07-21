@@ -25,8 +25,14 @@
   var DUR       = 1.1;        // per-card timeline duration (in master-time units)
   var EASE      = 'power1.inOut';
   var ZFLIP     = 0.55;       // when (from the end of a sweep) a card drops under the next one
+  var START_IN  = 0.55;       // master-time at scroll 0. DUR/2 (0.55) = first card centred / in view.
+                              // lower → first card still entering at the top; higher → already exiting
+  var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
+                              // offstage-right). same for every card → even spacing regardless of width
   var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
-  var SCRUB     = true;       // locked 1:1 to scroll; a number adds glide but a fast fling then flashes a card
+  var SCRUB     = 0.4;        // seconds of scrub catch-up. renders every frame (smooths the steps) but
+                              // settles fast so there's little trailing inertia. higher = floatier tail
+                              // (reads odd without a smooth-scroll lib); lower/true = steppier per frame
 
   function init() {
     if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
@@ -80,10 +86,11 @@
     cards.forEach(function (media) {
       if (CARD_W) { media.style.width = CARD_W; media.style.height = 'auto'; }
       media.style.position         = 'absolute';
-      media.style.right            = '100%';              // starts offstage to the left
-      media.style.top              = '50vh';              // vertical centre comes from yPercent:-50 (below)
+      media.style.left             = '50%';               // centre-anchored (with xPercent:-50 below) so
+      media.style.top              = '50vh';              // travel is width-independent → even spacing
       media.style.transformStyle   = 'preserve-3d';
       media.style.backfaceVisibility = 'hidden';          // keep the flip clean
+      media.style.willChange       = 'transform';         // hint a GPU layer so the 3D repaint is smoother
       media.style.margin           = '0';
     });
 
@@ -91,28 +98,36 @@
     // up/down along the cylinder. Done on the card itself (not an inner <img> like the demo) so it
     // works with rich, wrapped cards. yPercent:-50 owns the vertical centre so the scrub can't drop it.
     var orbitPx = window.innerWidth * ORBIT_VW / 100;
-    gsap.set(cards, { yPercent: -50, transformOrigin: '50% 50% -' + orbitPx + 'px' });
+    gsap.set(cards, { xPercent: -50, yPercent: -50, transformOrigin: '50% 50% -' + orbitPx + 'px', force3D: true });
 
-    // Master timeline: pin the track, scrub 1:1 across the wrap. Triggering on the track (not the
-    // wrap) keeps the deck centred when a header sits above it inside the section.
-    var master = gsap.timeline({
+    // Build the full deck PAUSED; a proxy tween scrubs its playhead over just the framed window.
+    var master = gsap.timeline({ paused: true });
+    var isPortrait = window.innerHeight > window.innerWidth;
+    var step = (isPortrait ? 1.5 : 1) / cards.length;      // portrait spaces the passes out a bit more
+    var travelHalf = window.innerWidth * TRAVEL_VW / 200;  // centre travels ±this; identical for every card
+    cards.forEach(function (media, i) {
+      var tl = gsap.timeline();
+      tl.fromTo(media,
+        { x: -travelHalf, rotateX: ROT_IN, zIndex: cards.length - i },
+        { x: travelHalf, rotateX: ROT_OUT, ease: EASE, duration: DUR });   // xPercent stays -50 (centre)
+      tl.set(media, { zIndex: 0 }, '-=' + ZFLIP);          // drop the stacking order so the next pass sits on top
+      master.add(tl, i * step);
+    });
+
+    // FRAMING: a card faces front at the MIDPOINT of its own sweep (DUR/2 into its child timeline).
+    // Scroll START → first card centred / in view; scroll END → last card centred. We scrub the
+    // master's playhead across [tStart, tEnd] instead of the whole 0→end (which starts/ends offstage).
+    var tStart = START_IN;                                             // first card centred at scroll 0
+    var tEnd   = Math.min(master.duration(), (cards.length - 1) * step + DUR / 2);  // last card centred at scroll 1
+
+    var master2 = gsap.timeline({
       scrollTrigger: {
         trigger: track, start: 'top top',
         endTrigger: wrap, end: 'bottom bottom',
         pin: track, pinType: 'transform', scrub: SCRUB
       }
     });
-
-    var isPortrait = window.innerHeight > window.innerWidth;
-    var step = (isPortrait ? 1.5 : 1) / cards.length;      // portrait spaces the passes out a bit more
-    cards.forEach(function (media, i) {
-      var tl = gsap.timeline();
-      tl.fromTo(media,
-        { rotateX: ROT_IN, zIndex: cards.length - i },
-        { xPercent: 100, x: window.innerWidth, rotateX: ROT_OUT, ease: EASE, duration: DUR });
-      tl.set(media, { zIndex: 0 }, '-=' + ZFLIP);          // drop the stacking order so the next pass sits on top
-      master.add(tl, i * step);
-    });
+    master2.fromTo(master, { time: tStart }, { time: tEnd, ease: 'none', duration: 1 });
 
     // refresh once fonts/images settle so measurements are final
     function relayout() { ScrollTrigger.refresh(); }
