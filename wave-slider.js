@@ -29,6 +29,11 @@
   var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
                               // offstage-right). same for every card → even spacing regardless of width
   var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
+  // card vertical anchor as vh (50 = viewport centre). lower = higher on screen. on mobile 50vh
+  // reads a bit low (vh = tall viewport incl. the address bar; a fixed navbar adds to it). override
+  // per-page from Webflow with data-center / data-center-mobile on the data-slider="wrap" element.
+  var CENTER_VH        = 50;
+  var CENTER_VH_MOBILE = 50;
   var MIN_W     = 768;        // below this width = "mobile": uniform narrower cards + wider spacing
   var CARD_W_MOBILE   = '76vw';  // forced card width on mobile (readable + fits, no overlap/overflow)
   var TRAVEL_VW_MOBILE = 300;    // wider sweep on mobile so cards don't pile up (one prominent at a time)
@@ -98,6 +103,9 @@
     var cardW    = mobile ? CARD_W_MOBILE : CARD_W;
     var travelVw = mobile ? TRAVEL_VW_MOBILE : TRAVEL_VW;
     var scrubVal = mobile ? SCRUB_MOBILE : SCRUB;
+    var centerVh = mobile ? CENTER_VH_MOBILE : CENTER_VH;   // vertical anchor; Webflow can override:
+    var centerAttr = wrap.getAttribute(mobile ? 'data-center-mobile' : 'data-center');
+    if (centerAttr != null && centerAttr !== '' && !isNaN(parseFloat(centerAttr))) { centerVh = parseFloat(centerAttr); }
 
     // background path(s) — tag the svg or the path itself data-slider="draw". prep each path for a
     // stroke-dashoffset draw; the actual paint is SCRUBBED with the deck's scroll (added to the
@@ -152,7 +160,7 @@
       if (cardW) { media.style.width = cardW; media.style.height = 'auto'; }
       media.style.position         = 'absolute';
       media.style.left             = '50%';               // centre-anchored (with xPercent:-50 below) so
-      media.style.top              = '50vh';              // travel is width-independent → even spacing
+      media.style.top              = centerVh + 'vh';     // vertical anchor (yPercent:-50 centres on it)
       media.style.transformStyle   = 'preserve-3d';
       media.style.backfaceVisibility = 'hidden';          // keep the flip clean
       media.style.willChange       = 'transform';         // hint a GPU layer so the 3D repaint is smoother
