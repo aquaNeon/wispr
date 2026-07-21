@@ -29,6 +29,8 @@
   var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
                               // offstage-right). same for every card → even spacing regardless of width
   var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
+  var MIN_W     = 768;        // min viewport width to run the 3D effect; below this the cards keep
+                              // their normal Webflow layout (the cylinder is a desktop showcase)
   // background SVG path (tag it data-slider="draw") is drawn SCRUBBED on its own trigger: paints in
   // over the first half, un-paints from the start over the second half. START/END are ScrollTrigger
   // positions — DRAW_START earlier than the pin (section entering) makes it begin sooner.
@@ -77,6 +79,20 @@
 
     var cards = Array.prototype.slice.call(track.querySelectorAll('[' + ATTR + '="' + A_CARD + '"]'));
     if (!cards.length) { console.warn('[wave-slider] no data-slider="card" children inside the track'); return; }
+
+    // the 3D cylinder is a desktop effect — on narrow screens the wide cards overlap and the scrub
+    // is jittery. below MIN_W we bail (no inline styles applied), leaving the cards in their normal
+    // Webflow layout. re-check on resize so rotating a device / resizing the window re-evaluates.
+    if (!window.matchMedia('(min-width:' + MIN_W + 'px)').matches) {
+      var reloadOnGrow = function () {
+        if (window.matchMedia('(min-width:' + MIN_W + 'px)').matches) {
+          window.removeEventListener('resize', reloadOnGrow);
+          init();                                            // now wide enough → build the effect
+        }
+      };
+      window.addEventListener('resize', reloadOnGrow);
+      return;
+    }
 
     // background path(s) — tag the svg or the path itself data-slider="draw". prep each path for a
     // stroke-dashoffset draw; the actual paint is SCRUBBED with the deck's scroll (added to the
