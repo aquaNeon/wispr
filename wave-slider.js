@@ -48,6 +48,16 @@
     }
     gsap.registerPlugin(ScrollTrigger);
 
+    // Mobile smoothness: real phones deliver touch-momentum scroll that isn't synced to the render
+    // loop, and the address bar resizes the viewport mid-scroll — both make a pinned scrub SHAKE
+    // (even at scrub:true). normalizeScroll frame-syncs touch scrolling (like Lenis, but native) and
+    // absorbs the address bar. touch-only, so desktop is untouched. global → set once.
+    if (ScrollTrigger.config) { ScrollTrigger.config({ ignoreMobileResize: true }); }
+    if (ScrollTrigger.isTouch && !ScrollTrigger.__wsNormalized) {
+      ScrollTrigger.__wsNormalized = true;
+      ScrollTrigger.normalizeScroll(true);
+    }
+
     // Global guard: keep ScrollTrigger.refresh() from running mid-scroll. Other scripts on the page
     // (e.g. a page ScrollTrigger whose onUpdate calls refresh() every scroll tick) re-lay-out every
     // pin on each refresh, which makes pinned sections jump. Layout can't change during a scroll, so
