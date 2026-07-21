@@ -443,13 +443,17 @@
         var period = Math.abs(parseFloat(textEl.getAttribute('x'))) || 4000;
         var vbw    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width)  || 928;
         var vbh    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || 76;
+        // kb marquee starts FILLED from the div's left edge (text spans the whole card at p=0); the
+        // flow wave still streams in from off-screen right.
+        var isKb   = !!(kb && kb.contains(wrapEl));
+        var startX = isKb ? 0 : (vbw + MQ_PAD);
         marquees.push({
-          text: textEl, svg: svgEl, period: period, start: vbw + MQ_PAD,
+          text: textEl, svg: svgEl, period: period, start: startX,
           vbw: vbw, vbh: vbh, len: 0,
           rand: Math.random(),                  // per-pageload loop offset: different words each visit
           mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1
         });
-        textEl.setAttribute('x', String(vbw + MQ_PAD));        // initial paint: off-screen right
+        textEl.setAttribute('x', String(startX));              // initial paint
       });
 
       // marquee position = pure function of pin progress p (driven from applyScroll). Every
