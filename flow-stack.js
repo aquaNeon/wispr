@@ -212,6 +212,8 @@
                              // matter how wide the parent is / how the card width animates.
                              // (speed = MQ_TRAVEL × data-speed; period only wraps the loop, not speed)
   var MQ_PAD       = 60;     // extra viewBox units the text starts beyond the right edge
+  var MQ_FLOW_FILL = true;   // flow (220) marquee starts already filled (like kb) instead of streaming in
+                             // from off-screen right. false = old (empty at start, streams in on scroll)
 
   // audio recorder: <rect> bars inside [data-anim="audio"] pulse in height on scroll (pure
   // scrub, like the marquee). each bar grows from its own centre; a per-bar phase offset
@@ -473,7 +475,7 @@
         // kb marquee starts FILLED from the div's left edge (text spans the whole card at p=0); the
         // flow wave still streams in from off-screen right.
         var isKb   = !!(kb && kb.contains(wrapEl));
-        var startX = isKb ? 0 : (vbw + MQ_PAD);
+        var startX = (isKb || MQ_FLOW_FILL) ? 0 : (vbw + MQ_PAD);
         marquees.push({
           text: textEl, svg: svgEl, period: period, start: startX,
           vbw: vbw, vbh: vbh, len: 0,

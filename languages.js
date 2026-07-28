@@ -590,6 +590,13 @@
                              // centre). reference ≈ 0.26. 0 = no drift; negative flips the side.
     var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks (active = 1)
     var POP_SCALE  = 1;      // quick scale-pop of the card wrap on active change (1 = off; try 1.04)
+    // each card's animation sequence plays AUTOMATICALLY (time-based) when its block becomes active,
+    // instead of scrubbing to scroll. only this changes — drift, dim, crossfade, spacing stay as-is.
+    var LANG_AUTOPLAY    = true;
+    var LANG_AUTOPLAY_MS = [3500, 2600, 2400, 2600];   // per-card sequence duration (ms), one per block
+    var LANG_REPLAY      = true;   // replay from 0 whenever a block becomes active again
+    var LANG_SCRUB       = [0];     // card indices that STAY scrubbed to scroll (0 = the SVG switcher)
+    function langIsAuto(i) { return LANG_AUTOPLAY && LANG_SCRUB.indexOf(i) === -1; }
 
     var textWrap = section.querySelector('.lang_text-anim-wrap');
     var blocks   = textWrap
@@ -628,6 +635,7 @@
     // active detection stays on the RAW rect (immediate) so the card swap never lags.
     var driftCur = [], tpCur = [], lastActive = -1;
     for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; tpCur[bi] = 0; }
+    var autoTp = 0, autoDone = {};   // active card's auto-play progress (see LANG_AUTOPLAY)
 
     function update() {
       if (!blocks.length) { if (renderers[0]) { renderers[0](0); } return; }
@@ -648,7 +656,9 @@
         if (Math.abs(tpT - tpCur[i]) < 0.0002) { tpCur[i] = tpT; }
 
         blocks[i].style.transform = 'translateX(' + driftCur[i] + 'px)';
-        if (renderers[i]) { renderers[i](tpCur[i]); }
+        // scrubbed cards (e.g. the SVG switcher) are driven by their block's scroll progress every
+        // frame; autoplay cards are driven on a timer below
+        if (renderers[i] && !langIsAuto(i)) { renderers[i](tpCur[i]); }
 
         // nearest block midpoint to the centre = active
         var d = Math.abs(r.top + r.height / 2 - cY);
@@ -668,7 +678,21 @@
         if (POP_SCALE !== 1 && cardWrap) {                   // optional pop on swap (like the preview)
           gsap.fromTo(cardWrap, { scale: POP_SCALE }, { scale: 1, duration: 0.3, ease: 'back.out(2)' });
         }
+        for (var rr = 0; rr < renderers.length; rr++) {       // reset only the autoplay cards to their start
+          if (renderers[rr] && langIsAuto(rr)) { renderers[rr](0); }
+        }
+        autoTp = (!LANG_REPLAY && autoDone[closest]) ? 1 : 0;
         lastActive = closest;
+      }
+
+      // autoplay: play the active card's sequence once on a timer (scrubbed cards are handled above)
+      if (closest >= 0 && langIsAuto(closest) && renderers[closest]) {
+        if (autoTp < 1) {
+          var dur = LANG_AUTOPLAY_MS[closest] || 2500;
+          autoTp += (gsap.ticker.deltaRatio() * (1000 / 60)) / dur;
+          if (autoTp >= 1) { autoTp = 1; autoDone[closest] = true; }
+        }
+        renderers[closest](autoTp);
       }
     }
     gsap.ticker.add(update);
