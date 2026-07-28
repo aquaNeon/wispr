@@ -589,9 +589,10 @@
     var FORCE_TIGHT = true;  // collapse any per-block 100vh (min-height/height) so the blocks stack
                              // TIGHT like the reference. set false if you strip the 100vh in Webflow
                              // yourself and want the authored heights respected.
-    var LEAD_VH    = 0.15;   // blank scroll before the first / after the last block. small so the section
-                             // OPENS already composed (block 0 "100+ Languages" near centre + switcher shown)
-                             // instead of a long empty lead-in.
+    var LEAD_TOP_VH    = 0.0;   // blank scroll BEFORE the first block. small → section opens already
+                                // composed (block 0 "100+ Languages" at the card's level), not a lead-in.
+    var LEAD_BOTTOM_VH = 0.5;   // blank scroll AFTER the last block, so the END state also composes
+                                // (last block reaches the card before the section leaves).
     var GAP_VH     = 0;      // EXTRA vertical gap between blocks, in viewports. 0 = keep the tight
                              // Webflow stacking (blocks sit next to each other, several visible at once,
                              // like the reference). Raise it to give each card a longer reign at centre.
@@ -602,8 +603,8 @@
     // each card's animation sequence plays AUTOMATICALLY (time-based) when its block becomes active,
     // instead of scrubbing to scroll. only this changes — drift, dim, crossfade, spacing stay as-is.
     var LANG_AUTOPLAY    = true;
-    var LANG_AUTOPLAY_MS = [3500, 6000, 2400, 2600];   // per-card sequence duration (ms), one per block
-                                                       // card 1 (vocab) is long so its full form plays
+    var LANG_AUTOPLAY_MS = [6000, 9000, 4500, 5000];   // per-card sequence duration (ms), one per block
+                                                       // slower overall; card 1 (vocab) longest so its full form plays
     var LANG_REPLAY      = true;   // replay from 0 whenever a block becomes active again
     var LANG_LOOP        = true;   // active card's sequence loops (replays continuously) while active
     var LANG_SCRUB       = [];      // card indices that STAY scrubbed to scroll ([] = all autoplay, incl. the switcher)
@@ -627,8 +628,8 @@
     function layout() {
       if (!textWrap || !blocks.length) { return; }
       var vh = window.innerHeight;
-      textWrap.style.paddingTop = (vh * LEAD_VH) + 'px';
-      textWrap.style.paddingBottom = (vh * LEAD_VH) + 'px';
+      textWrap.style.paddingTop = (vh * LEAD_TOP_VH) + 'px';
+      textWrap.style.paddingBottom = (vh * LEAD_BOTTOM_VH) + 'px';
       for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
         b.style.position = 'relative';

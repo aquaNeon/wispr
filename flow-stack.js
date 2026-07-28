@@ -185,7 +185,7 @@
   var HEAD_TOP     = 0.16;   // fraction of card height both wpm headings are pinned to (keeps them level)
   var MQ_TOP       = 0.48;   // fraction of card height both marquees are pinned to
   var MQ_NUDGE_KB   = 0;     // px fine-tune, kb marquee only (+ down / − up)
-  var MQ_NUDGE_CARD = -35;   // px fine-tune, flow marquee only
+  var MQ_NUDGE_CARD = -100;  // px fine-tune, flow marquee only (− up): lifts the curve ABOVE the flow bar
   var CARD_DIP     = 70;     // px the card sags below centre mid-ride (0 at start and landing)
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
@@ -217,7 +217,7 @@
                              // from off-screen right. false = old (empty at start, streams in on scroll)
   var MQ_AUTOPLAY  = true;   // text waves move on their OWN clock (already moving on view), not tied to
                              // scroll. false = old scroll-scrubbed motion.
-  var MQ_RATE      = 90;     // autoplay speed in SCREEN px/sec for a data-speed="1" string
+  var MQ_RATE      = 42;     // autoplay speed in SCREEN px/sec for a data-speed="1" string (slower, ~homepage)
 
   // audio recorder: <rect> bars inside [data-anim="audio"] pulse in height on scroll (pure
   // scrub, like the marquee). each bar grows from its own centre; a per-bar phase offset
