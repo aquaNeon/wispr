@@ -178,6 +178,13 @@
   // smoothly to 0 width (no thin sliver of spilling text), and the flow card's "220 wpm" only
   // shows once the card is at least this wide (so the label never spills a too-narrow card).
   var CARD_MIN_W   = 0.20;
+  // client feedback: land the section ALREADY at the side-by-side comparison instead of opening
+  // on a full-width keyboard card that you have to scroll past. SPLIT_START = the fraction of the
+  // stage the KEYBOARD (left) column occupies at the very start of the reveal — so on entry you
+  // see kb ≈ SPLIT_START / flow ≈ (1-SPLIT_START), matching the 45-vs-220 comparison shot. the
+  // flow card still grows leftward to full bleed from here (220 goes full-width at the end).
+  // 1.0 = old behaviour (kb full width first).
+  var SPLIT_START  = 0.36;
   // final close-up: near the end of the grow, a TIMED (not scrubbed) tween pulls the last of the
   // split to 0 — kb slides out + the flow card fills — so it always completes and you can never
   // stop-scroll on a half-open sliver. hysteresis (AT vs OFF) stops chatter at the seam.
@@ -201,10 +208,16 @@
   // scrub, like the marquee). each bar grows from its own centre; a per-bar phase offset
   // makes the set ripple like a live waveform.
   var AUDIO_SEL    = '[data-anim="audio"]';
-  var AUDIO_MIN    = 0.10;   // shortest a bar ever gets, as a fraction of the svg viewBox height
-  var AUDIO_MAX    = 0.94;   // tallest a bar can reach, as a fraction of the viewBox height
+  var AUDIO_MIN    = 0.06;   // shortest a bar ever gets, as a fraction of the svg viewBox height
+  var AUDIO_MAX    = 0.98;   // tallest a bar can reach, as a fraction of the viewBox height
   var AUDIO_CYCLES = 8;      // base activity rate across the WHOLE pin (higher = busier)
-  var AUDIO_ENV    = 0.72;   // 0 = per-bar jitter only, 1 = strong syllable bursts (loud/quiet swells)
+  var AUDIO_ENV    = 0.55;   // 0 = per-bar jitter only, 1 = strong syllable bursts (loud/quiet swells)
+  // client feedback: the bars "barely move" because the waveform was PURE scroll-scrub — freeze
+  // the scroll and the bars freeze too, so on the now-static locked-in comparison they read dead.
+  // AUDIO_SPEED drives a LIVE clock (cycles/sec) on top of the scroll term, so the recorder is
+  // always visibly alive. 0 = old behaviour (scroll-only). the bars only run live while the
+  // recorder pose is on screen (p < pC), so it costs nothing once the card lands.
+  var AUDIO_SPEED  = 2.4;
 
   // slight lerp on the scrub: marquee + audio ease toward the scroll position instead of
   // snapping to it, so motion feels smooth and settles gently when scroll stops. 1 = no lerp
@@ -510,10 +523,12 @@
       }());
 
       var envPh1 = Math.random() * 6.2832, envPh2 = Math.random() * 6.2832;   // per-load syllable phase
+      var audioClock = 0;   // live time accumulator (seconds), advanced each ticker frame — keeps the
+                            // waveform alive when scroll is idle (the locked-in comparison beat)
 
       function updateAudio(p) {
         var TWO_PI = Math.PI * 2;
-        var t = p * AUDIO_CYCLES;
+        var t = p * AUDIO_CYCLES + audioClock * AUDIO_SPEED;
         // global loudness envelope: two beat frequencies multiply → uneven bursts and near-silent
         // gaps, the way speech has loud syllables and pauses (not a steady hum)
         var e = (0.5 + 0.5 * Math.sin(t * TWO_PI * 0.9 + envPh1)) *
@@ -897,7 +912,7 @@
           // near the end of the grow, LATCH the timed close-up (hysteresis so it doesn't chatter)
           if (!fillLatched && gt >= FILL_AT)      { fillLatched = true;  triggerFill(true); }
           else if (fillLatched && gt < FILL_OFF)  { fillLatched = false; triggerFill(false); }
-          var Lp = stageW * (1 - snapEnds(gt));   // width of the left (kb) column
+          var Lp = stageW * SPLIT_START * (1 - snapEnds(gt));   // width of the left (kb) column (starts at the comparison split, not full width)
           // once the kb column drops under CARD_MIN_W, ease it the rest of the way to 0 so it
           // disappears sooner. deriving BOTH widths from this one split keeps the cards flush —
           // the flow card grows to fill exactly what the kb gives up, so there's never a gap.
@@ -1535,7 +1550,10 @@
         if (introEl) {
           var gt2 = (pB > pA) ? (p - pA) / (pB - pA) : (p >= pB ? 1 : 0);
           gt2 = gt2 < 0 ? 0 : (gt2 > 1 ? 1 : gt2);
-          var cardFrac = (p < pB) ? snapEnds(gt2) : 1;      // flow card width as a fraction of the stage
+          // flow card width as a fraction of the stage — mirror applyMorph's split (starts at
+          // 1-SPLIT_START, grows to 1) so the "220 wpm" label is visible the moment you land on
+          // the comparison, not held back until a full-width-kb grow that no longer happens.
+          var cardFrac = (p < pB) ? (1 - SPLIT_START * (1 - snapEnds(gt2))) : 1;
           introEl.style.opacity = (cardFrac >= CARD_MIN_W && p < pBh) ? '1' : '0';
         }
 
@@ -1703,13 +1721,20 @@
         });
         // ease the marquee + audio toward the scroll position; settles gently when scroll stops
         var scrubTick = function () {
+          var dr = gsap.ticker.deltaRatio();
+          audioClock += dr / 60;                 // advance the live waveform clock (~seconds)
           if (SCRUB_LERP >= 1) { pSmooth = pTarget; }
           else {
-            var k = 1 - Math.pow(1 - SCRUB_LERP, gsap.ticker.deltaRatio());
+            var k = 1 - Math.pow(1 - SCRUB_LERP, dr);
             pSmooth += (pTarget - pSmooth) * k;
             if (Math.abs(pTarget - pSmooth) < 0.0002) { pSmooth = pTarget; }
           }
-          if (pSmooth !== painted) { updateMarquees(pSmooth); updateAudio(pSmooth); painted = pSmooth; }
+          var moved = (pSmooth !== painted);
+          if (moved) { updateMarquees(pSmooth); painted = pSmooth; }
+          // recorder waveform: repaint EVERY frame while the recorder pose is on screen (p < pC) so
+          // the live clock keeps the bars alive even when scroll is idle; after the card lands it
+          // falls back to scroll-scrub (only repaint when scroll actually moved).
+          if ((AUDIO_SPEED > 0 && pSmooth < pC) || moved) { updateAudio(pSmooth); }
         };
         gsap.ticker.add(scrubTick);
         teardown.push(function () { gsap.ticker.remove(scrubTick); });
