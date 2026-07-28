@@ -286,6 +286,11 @@
     // per-card animators: local tp 0..1 across that card's slice. add renderCard2/3 as you build them.
     var renderers = { 0: renderCard0 };
 
+    // seed the switcher: paint it at p=0 (first language parked at the anchor) and show it right away,
+    // so its text is visible the moment you scroll in — never an empty/unseeded frame before it's active.
+    if (renderers[0]) { renderers[0](0); }
+    if (cardEls[0]) { cardEls[0].style.opacity = '1'; }
+
     // ---- card 1: "Add to vocabulary" — chips → form slides in → word types → content scrolls up to
     // reveal the toggles + Add word → send pressed → form flies up and out → chips return (+1). ----
     var card1Measure = null;

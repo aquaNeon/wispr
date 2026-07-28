@@ -93,7 +93,7 @@
   var AUTOPLAY        = true;
   var AUTOPLAY_MS     = [9500, 3400, 3000];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
   var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
-  var AUTOPLAY_LOOP   = true;   // active tab's animation loops (replays continuously) while you're on it
+  var AUTOPLAY_LOOP   = false;  // false = play once and hold the end frame (looping looked weird)
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
   // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
