@@ -78,7 +78,7 @@
 
   // ---- config ----
   // pin phases, in viewport-heights of scroll
-  var IN_VH        = 1.1;    // P0: hold the side-by-side comparison (marquee scrubs) before the grow
+  var IN_VH        = 0.25;   // P0: brief comparison beat, then scroll straight into the grow (was a long hold)
   var GROW_VH      = 0.8;    // P1: photo card grows right -> left to full stage width
   var FULL_HOLD_VH = 0.25;   // beat at full bleed
   var SHRINK_VH    = 0.7;    // P2: sides shrink in to the final card

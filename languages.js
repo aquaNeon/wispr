@@ -589,8 +589,9 @@
     var FORCE_TIGHT = true;  // collapse any per-block 100vh (min-height/height) so the blocks stack
                              // TIGHT like the reference. set false if you strip the 100vh in Webflow
                              // yourself and want the authored heights respected.
-    var LEAD_VH    = 0.5;    // blank scroll before the first / after the last block so each can reach
-                             // the centre (like the resource's `padding: 100vh 0`, in viewports).
+    var LEAD_VH    = 0.15;   // blank scroll before the first / after the last block. small so the section
+                             // OPENS already composed (block 0 "100+ Languages" near centre + switcher shown)
+                             // instead of a long empty lead-in.
     var GAP_VH     = 0;      // EXTRA vertical gap between blocks, in viewports. 0 = keep the tight
                              // Webflow stacking (blocks sit next to each other, several visible at once,
                              // like the reference). Raise it to give each card a longer reign at centre.
