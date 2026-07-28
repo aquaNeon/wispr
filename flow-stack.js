@@ -84,9 +84,15 @@
   var SHRINK_VH    = 0.7;    // P2: sides shrink in to the final card
   var TAB_STEP_VH  = 1.0;    // fallback scroll length per tab (used if CH_VH doesn't fit numTabs)
   var END_HOLD_VH  = 1.0;    // fallback hold on the last tab
-  // weighted chapter scroll lengths (vh) — chapter 1 (typing) longest. one entry per tab.
-  var CH_VH        = [2.6, 1.8, 1.6];
+  // per-tab scroll length (vh). short now that autoplay (not scroll) drives the animation — these
+  // just set how far you scroll between tab snap-stops. one entry per tab.
+  var CH_VH        = [1.0, 1.0, 1.2];
   var TYPE_END     = 0.9;    // fraction of chapter 1's slice by which the transcript finishes typing
+  // in-card animations play once on tab entry (time-based) instead of scrubbing to scroll; each
+  // tab is a snap stop, so landing on it plays its chapter. per-tab durations in ms.
+  var AUTOPLAY        = true;
+  var AUTOPLAY_MS     = [6500, 3400, 3000];
+  var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
   // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
@@ -102,6 +108,14 @@
   var POLISH_RISE   = 16;    // px the polished text lifts up to sit where the "Message…" placeholder was
   var GRAD_WORD_MS  = 350;   // ms each word's colour→gradient fade plays through as the wavefront passes
                              // it (a CSS transition — TRIGGERED per word, so it never scrubs word-by-word)
+  // experiment: a light band riding the gradient wavefront (glow, not just a colour reveal)
+  var GLOW_EDGE     = true;  // false = plain gradient reveal, no glow
+  var GLOW_BAND     = 0.14;  // how far behind the wavefront the glow trails (fraction of the transcript)
+  var GLOW_MAX      = 12;    // px blur of the glow right at the wavefront
+  var GLOW_COLOR    = '255,255,240';   // rgb of the glow
+  // wavefront travels line-by-line (by vertical position) with a horizontal tilt so it reads as a
+  // diagonal sweep. 0 = flat horizontal lines, higher = more diagonal.
+  var GLOW_DIAG     = 0.35;
 
   var INTRO_FADE_MS   = 250; // 220 wpm + marquee: timed fade in (at scroll-in) and out (at shrink start)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
@@ -118,11 +132,12 @@
   var BAR_W      = 3;        // px width of each bar
   var BAR_GAP    = 3;        // px gap between bars
   var BAR_MIN    = 3;        // px shortest bar (the tiny end dots)
-  var BAR_MAX    = 18;       // px tallest bar — the row locks to this height so the pill never resizes
-  var PILL_WAVE_H = 24;      // px the waveform row occupies; vert padding = (PILL_WAVE_H-BAR_MAX)/2 = 3px
+  var BAR_MAX    = 14;       // px tallest bar — the row locks to this height so the pill never resizes
+  var PILL_PAD_Y = 5;        // px bar→edge, top/bottom (on the capsule — the black bg/stroke element)
+  var PILL_WAVE_PADX = 16;   // px bar→edge, left/right
   var PILL_OUT_MS = 240;     // ms the spinner+label take to fade/shrink out before the waveform comes in
   var BULLET_MS  = 300;      // ms the bullets wave in + row grows BEFORE they grow out to the audio heights
-  var BAR_SHAPE  = [0.12, 0.28, 0.5, 0.42, 0.72, 0.88, 1, 0.8, 0.62, 0.48, 0.34, 0.22, 0.12];
+  var BAR_SHAPE  = [0.16, 0.42, 0.7, 0.92, 1, 0.88, 0.66, 0.46, 0.28, 0.14];   // 10 bars
 
   // audio pill: authored at its LANDED spot; recording pose is a transform offset (lifts it up)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
@@ -217,7 +232,7 @@
 
   var GREEN_RADIUS = '80px'; // auto-tags the green panel for the corners module. '' = off
   var BG_SMOOTH    = 0.12;
-  var SNAP         = false;
+  var SNAP         = true;   // snap to each tab so it lands as a stop, then autoplays
   var SNAP_DUR     = 0.3;
 
   var ATTR  = 'data-stack';
@@ -346,11 +361,15 @@
         // STAGE 2 (is-in): they leave the flow so the pill hugs the waveform; the row bounces taller.
         '[data-pill="polishing"].is-in .flow_pill-polish_wrap>*:not(.flow_pill-dots),' +
         '[data-pill="polishing"].is-in:not(:has(.flow_pill-polish_wrap))>*:not(.flow_pill-dots){display:none;}' +
-        // centred "voice mode" waveform row. resting height is FIXED (BAR_MAX + auto vertical padding =
-        // PILL_WAVE_H) so bars growing inside it never resize the pill. content-box for exact math.
+        // centred "voice mode" waveform row, height locked to BAR_MAX so growing bars never resize it
+        // (padding lives on the capsule below). content-box for exact math.
         '.flow_pill-dots{display:none;align-items:center;justify-content:center;box-sizing:content-box;' +
-          'height:' + BAR_MAX + 'px;padding:' + ((PILL_WAVE_H - BAR_MAX) / 2) + 'px 16px;' +
+          'height:' + BAR_MAX + 'px;padding:0;' +
           'gap:' + BAR_GAP + 'px;pointer-events:none;position:relative;z-index:1;}' +
+        // voice mode: the pill padding goes on the WRAPPER (the black fill element), so it's the space
+        // between the bars and the fill edge. zero the outer capsule so its authored 12px doesn't add.
+        '[data-pill="polishing"].is-in{padding:0 !important;}' +
+        '[data-pill="polishing"].is-in .flow_pill-polish_wrap{padding:' + PILL_PAD_Y + 'px ' + PILL_WAVE_PADX + 'px !important;}' +
         // STAGE 2 (is-in): row appears. its bouncy height GROW is driven by a JS transition (not a
         // keyframe) so a ScrollTrigger re-pin / re-insert can't restart it — keyframes replay on
         // re-insertion, transitions don't. see setPillDone.
@@ -998,6 +1017,7 @@
       var bgSvgs   = section.querySelectorAll('[data-tab-bg]');
       var tabIndicator = tabsWrap ? tabsWrap.querySelector('[data-tab-indicator]') : null;
       var activeTab = -1;
+      var autoTp = 0, autoPlaying = false, autoDur = 2000, autoDone = {}, sceneLastP = 0;
       var bgTargetP = 0, bgCurrentP = 0;
 
       // ---- card scene: chapter 1 transcript typing + status pills ----
@@ -1011,7 +1031,8 @@
       var pillAudioEl  = oneF(section, 'pill-audio');            // recorder — glides down + shrinks at handoff
       var pillExtras   = pillAudioEl ? Array.prototype.slice.call(pillAudioEl.querySelectorAll('[data-pill-extra]')) : [];
       if (pillAudioEl) { guardStyle(pillAudioEl); pillAudioEl.style.transformOrigin = '50% 50%'; }
-      // extras start at 0×0 (no space in the pill) and scale out to PILL_ICON_SIZE on the handoff
+      // extras are hidden (display:none, so no flex gap widens the pill) until they scale out to
+      // PILL_ICON_SIZE on the handoff
       pillExtras.forEach(function (el) {
         guardStyle(el);
         el.style.flex = '0 0 auto';
@@ -1019,6 +1040,7 @@
         el.style.opacity = '0';
         el.style.width = '0px';
         el.style.height = '0px';
+        el.style.display = 'none';
       });
       var transcriptEl = card ? card.querySelector('[data-type="raw"]') : null;
       // raw-out wipe masks the transcript's WRAPPER, not the transcript (masking the same element
@@ -1139,6 +1161,17 @@
         // manual nudge onto the audio-pill spot (top, not transform, so it never fights scaleX).
         if (POLISH_PILL_Y) { polishPill.style.position = 'relative'; polishPill.style.top = POLISH_PILL_Y + 'px'; }
       }
+      // voice-mode bars run a live wavy loop (same clock as the recorder) once they've grown out —
+      // set heights inline per frame with transitions off so it isn't laggy. see voiceTick.
+      var voiceDots = polishPill ? Array.prototype.slice.call(polishPill.querySelectorAll('.flow_pill-dot')) : [];
+      var voiceLive = false;
+      function setVoiceLive(on) {
+        voiceLive = on;
+        for (var vd = 0; vd < voiceDots.length; vd++) {
+          if (on) { voiceDots[vd].style.transition = 'none'; }
+          else { voiceDots[vd].style.transition = ''; voiceDots[vd].style.height = ''; }
+        }
+      }
       // chapter-3 pill choreography: STAGE1 is-done (spinner+label out, ring draws) → STAGE2 is-in
       // (row grows bouncy + bullets wave in) → STAGE3 is-wave (bars grow to audio heights).
       // leaving ch3 drops all three so it replays from scratch next time.
@@ -1165,7 +1198,10 @@
             }
           }));
           pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS) / 1000, function () {
-            polishPill.classList.add('is-wave');                                 // stage 3
+            polishPill.classList.add('is-wave');                                 // stage 3: grow out
+          }));
+          pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS + 500) / 1000, function () {
+            setVoiceLive(true);                                                  // stage 4: live wavy loop
           }));
         } else {
           if (!pillDoneOn || pillOffCall) { return; }
@@ -1173,6 +1209,7 @@
           // the ch2/ch3 boundary must not tear down + re-draw the white ring (that was the "twice").
           pillOffCall = gsap.delayedCall(0.2, function () {
             pillOffCall = null; pillDoneOn = false; killPillCalls();
+            setVoiceLive(false);
             polishPill.classList.remove('is-wave');
             polishPill.classList.remove('is-in');
             polishPill.classList.remove('is-done');
@@ -1225,6 +1262,25 @@
           }
         });
       }());
+
+      // per-word diagonal phase (0..1) for the polish wavefront: dominated by vertical position
+      // (line-by-line) with a horizontal tilt (GLOW_DIAG) so the sweep runs diagonally across the
+      // block. measured lazily once the card has landed (real wrap), re-measured on refresh.
+      var diagMeasured = false;
+      function measureWordDiag() {
+        if (!transcriptEl || !words.length) { return; }
+        var base = transcriptEl.getBoundingClientRect();
+        var W = base.width || 1, H = base.height || 1, i, r, v, mn = Infinity, mx = -Infinity;
+        for (i = 0; i < words.length; i++) {
+          r = words[i].el.getBoundingClientRect();
+          v = ((r.top + r.height / 2 - base.top) / H) + ((r.left + r.width / 2 - base.left) / W) * GLOW_DIAG;
+          words[i]._v = v;
+          if (v < mn) { mn = v; }
+          if (v > mx) { mx = v; }
+        }
+        var span = (mx - mn) || 1;
+        for (i = 0; i < words.length; i++) { words[i].diag = (words[i]._v - mn) / span; }
+      }
 
       // polished message: wrap words for the wave-in; the composer's placeholder hides as it fills
       var pwords = [];
@@ -1317,6 +1373,17 @@
         toggleByIndex(tabTexts, 'data-tab-text', n);
         toggleByIndex(tabAnims, 'data-tab-anim', n);
         moveIndicator(n);
+        startAutoplay(n);
+      }
+      // in-card autoplay: on tab entry, tween tp 0->1 once (advanced by autoTick); sceneUpdate reads
+      // autoTp for the active tab instead of the scroll-derived tp.
+      function startAutoplay(n) {
+        if (!AUTOPLAY || !isDesktop || n < 0) { autoPlaying = false; return; }
+        autoDur = AUTOPLAY_MS[n] || 2000;
+        if (!AUTOPLAY_REPLAY && autoDone[n]) { autoTp = 1; autoPlaying = false; }
+        else { autoTp = 0; autoPlaying = true; }
+        sceneUpdate(sceneLastP);   // set targets to the fresh frame…
+        snapEased();               // …and settle the eased curs onto them (no backward wipe on replay)
       }
 
       // card rise: the card's final visual box is the centred clip inside the stage, so the
@@ -1342,7 +1409,7 @@
 
       // ---- pin timing ----
       var totalVH = 1, pA = 0, pB = 0, pBh = 0, pC = 0, pHold = 1, tabSpan = 1;
-      var snapPoints = [], tabStops = [];        // tabStops: p-boundaries [pHold, end0, end1, …, 1]
+      var snapPoints = [], tabStops = [], tabCentres = [];   // tabStops: p-boundaries [pHold, end0, end1, …, 1]
       function tabVHs() {                        // per-tab scroll length in vh
         if (CH_VH && CH_VH.length === numTabs) { return CH_VH.slice(); }
         var a = []; for (var i = 0; i < numTabs; i++) { a.push(i < numTabs - 1 ? TAB_STEP_VH : END_HOLD_VH); }
@@ -1362,7 +1429,9 @@
         tabStops = [pHold];
         var acc = 0, sum = tabsVH || 1;
         for (var j = 0; j < vhs.length; j++) { acc += vhs[j]; tabStops.push(pHold + (acc / sum) * (1 - pHold)); }
-        snapPoints = [0, pA, pB, pC, pHold, 1];
+        tabCentres = [];
+        for (var tc = 0; tc < numTabs; tc++) { tabCentres.push((tabStops[tc] + tabStops[tc + 1]) / 2); }
+        snapPoints = tabCentres.concat([1]);   // each tab, then release. intro (< pHold) is free-scrub
       }
       computeTiming();
 
@@ -1382,7 +1451,7 @@
       var wordsShown = -1, pillShown = 0, polishColored = false;
       function resetPolishColor() {                              // clear the gradient per-word colours (once)
         if (!polishColored) { return; }
-        for (var i = 0; i < words.length; i++) { words[i].el.style.color = ''; }
+        for (var i = 0; i < words.length; i++) { words[i].el.style.color = ''; words[i].el.style.textShadow = ''; }
         polishColored = false;
       }
 
@@ -1473,13 +1542,23 @@
       // message box grows. all a pure function of tp so it can be lerped exactly like the fan.
       function renderPolish(tp) {
         var n = words.length, np = pwords.length;
+        if (GLOW_EDGE && !diagMeasured) { measureWordDiag(); diagMeasured = true; }
         // gradient-in front: each word switches into the gradient (colour → transparent) as it passes
         var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
+        // glow front overshoots past 1 + band so the light band fully sweeps OFF the last words
+        var Fglow = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * (1 + GLOW_BAND + 0.05);
         // polished-in front: polished staggers in behind the box grow (later window)
         var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
         for (var i = 0; i < n; i++) {
-          var ph = n > 1 ? i / (n - 1) : 0;
-          words[i].el.style.color = (Fg > ph) ? 'transparent' : '';     // gradient waves on (top→bottom)
+          var ph = (words[i].diag != null) ? words[i].diag : (n > 1 ? i / (n - 1) : 0);
+          words[i].el.style.color = (Fg > ph) ? 'transparent' : '';     // gradient waves on (diagonal)
+          if (GLOW_EDGE) {                                              // light band trailing the wavefront
+            var df = Fglow - ph;                                       // >0 once the front has passed this word
+            var g = (df >= 0 && df < GLOW_BAND) ? (1 - df / GLOW_BAND) : 0;
+            words[i].el.style.textShadow = g > 0.02
+              ? ('0 0 ' + (GLOW_MAX * g).toFixed(1) + 'px rgba(' + GLOW_COLOR + ',' + (0.9 * g).toFixed(2) + ')')
+              : '';
+          }
         }
         // raw-out: a soft mask wipes the whole transcript BOTTOM→TOP (needs a wrapper mask — per-word
         // opacity can't fade the gradient painted at the container via background-clip:text).
@@ -1523,9 +1602,14 @@
         var ei = PILL_ICONS_AT < 1 ? smooth((hp - PILL_ICONS_AT) / (1 - PILL_ICONS_AT)) : (hp >= 1 ? 1 : 0);
         var isz = (PILL_ICON_SIZE * ei) + 'px';
         for (var pe = 0; pe < pillExtras.length; pe++) {
-          pillExtras[pe].style.opacity = String(ei);
-          pillExtras[pe].style.width  = isz;
-          pillExtras[pe].style.height = isz;
+          var ex = pillExtras[pe];
+          if (ei <= 0.001) { ex.style.display = 'none'; }   // out of flow → no gap width when hidden
+          else {
+            ex.style.display = '';
+            ex.style.opacity = String(ei);
+            ex.style.width  = isz;
+            ex.style.height = isz;
+          }
         }
       }
 
@@ -1540,6 +1624,7 @@
       }
 
       function sceneUpdate(p) {
+        sceneLastP = p;
         // intro (220 wpm): shows once the flow card is at least CARD_MIN_W wide (so the label never
         // spills a too-narrow card), stays in view through the reveal, then fades out at the shrink
         // start. the show/hide is a quick TIMED fade (opacity + CSS transition, 0.25s), not scrubbed.
@@ -1570,7 +1655,11 @@
         // destWrap (logo row) shown only in chapter 3 — set alongside the fan below
 
         var idx = -1, tp = 0;
-        if (p >= pHold) { var loc = tabLocal(p); idx = loc.idx; tp = loc.tp; }
+        if (p >= pHold) {
+          var loc = tabLocal(p); idx = loc.idx;
+          // autoplay owns tp for the active tab; scroll only picks which tab (idx)
+          tp = (AUTOPLAY && isDesktop) ? ((idx === activeTab) ? autoTp : (autoDone[idx] ? 1 : 0)) : loc.tp;
+        }
 
         setBgChapter(idx);   // crossfade the card background image to this chapter (data-bg="0/1/2")
 
@@ -1688,6 +1777,7 @@
         alignHeads();
         measurePositions();
         computeTiming();
+        diagMeasured = false;                  // re-measure word positions (wrap may have changed)
         fanPositioned = false;                 // re-place cards on next fan show (layout may have changed)
         applyScroll(st ? st.progress : 0);
         pSmooth = pTarget; painted = -1;      // no scrub sweep from 0 on load/rebuild
@@ -1698,7 +1788,7 @@
         if (activeTab >= 0) { moveIndicator(activeTab); }
       }
 
-      var st = null;
+      var st = null, lastSnapP = null;   // lastSnapP = the stop we last committed to (see snapTo)
       if (isDesktop) {
         st = ScrollTrigger.create({
           trigger: section, start: 'top top',
@@ -1710,7 +1800,25 @@
           onUpdate: function (self) { applyScroll(self.progress); },
           onLeave:     function () { if (topCover) { topCover.style.display = 'none'; } },
           onLeaveBack: function () { if (topCover) { topCover.style.display = 'none'; } },
-          snap: SNAP ? { snapTo: snapPoints, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false } : false
+          // free scrub through the intro + card ride (value < pHold); only the tab region snaps. there:
+          // move ONE stop away from the last committed stop in whichever way you scrolled (compared to
+          // the committed stop, not instantaneous direction — no jitter bounce).
+          snap: SNAP ? { snapTo: function (value) {
+            if (value < pHold - 0.001) { lastSnapP = null; return value; }   // intro + card ride: free scrub
+            var pts = snapPoints, si, d;
+            if (lastSnapP == null) {                    // entering the tab region → init to nearest stop
+              lastSnapP = pts[0]; var b0 = Math.abs(value - pts[0]);
+              for (si = 1; si < pts.length; si++) { d = Math.abs(value - pts[si]); if (d < b0) { b0 = d; lastSnapP = pts[si]; } }
+            }
+            var eps = 0.004, target = lastSnapP;
+            if (value > lastSnapP + eps) {              // scrolled down off the stop → next stop up
+              for (si = 0; si < pts.length; si++) { if (pts[si] > lastSnapP + 0.0005) { target = pts[si]; break; } }
+            } else if (value < lastSnapP - eps) {       // scrolled up off the stop → next stop down
+              for (si = pts.length - 1; si >= 0; si--) { if (pts[si] < lastSnapP - 0.0005) { target = pts[si]; break; } }
+            }
+            lastSnapP = target;
+            return target;
+          }, duration: SNAP_DUR, ease: 'power1.inOut', inertia: false, directional: false } : false
         });
         // ease the marquee + audio toward the scroll position; settles gently when scroll stops
         var scrubTick = function () {
@@ -1724,11 +1832,32 @@
           }
           var moved = (pSmooth !== painted);
           if (moved) { updateMarquees(pSmooth); painted = pSmooth; }
-          // bars repaint every frame while recorder is on screen (p<pC) so the live clock runs; else on scroll only
-          if ((AUDIO_SPEED > 0 && pSmooth < pC) || moved) { updateAudio(pSmooth); }
+          // waveform runs the live clock continuously (not just on scroll) so the pill stays alive
+          if (AUDIO_SPEED > 0 || moved) { updateAudio(pSmooth); }
         };
         gsap.ticker.add(scrubTick);
         teardown.push(function () { gsap.ticker.remove(scrubTick); });
+        var autoTick = function () {
+          if (!autoPlaying) { return; }
+          autoTp += (gsap.ticker.deltaRatio() * (1000 / 60)) / autoDur;
+          if (autoTp >= 1) { autoTp = 1; autoPlaying = false; if (activeTab >= 0) { autoDone[activeTab] = true; } }
+          sceneUpdate(sceneLastP);
+        };
+        gsap.ticker.add(autoTick);
+        teardown.push(function () { gsap.ticker.remove(autoTick); });
+        var voiceTick = function () {
+          if (!voiceLive || !voiceDots.length) { return; }
+          var TWO_PI = Math.PI * 2, t = audioClock * AUDIO_SPEED, N = voiceDots.length, i, xi, wave, s;
+          for (i = 0; i < N; i++) {
+            xi = N > 1 ? i / (N - 1) : 0.5;
+            wave = 0.6 * Math.sin((xi * AUDIO_WAVE_SPAN - t) * TWO_PI) +
+                   0.4 * Math.sin((xi * AUDIO_WAVE_SPAN * 0.5 - t * 0.6) * TWO_PI + 1.7);
+            s = (0.5 + 0.5 * wave) * (0.7 + 0.3 * Math.sin(xi * Math.PI));
+            voiceDots[i].style.height = (BAR_MIN + s * (BAR_MAX - BAR_MIN)).toFixed(1) + 'px';
+          }
+        };
+        gsap.ticker.add(voiceTick);
+        teardown.push(function () { gsap.ticker.remove(voiceTick); });
         gsap.ticker.add(fanTick);
         teardown.push(function () { gsap.ticker.remove(fanTick); });
         gsap.ticker.add(polishTick);
@@ -1839,7 +1968,9 @@
           setSceneOpacity(0, TAB_FADE_MS);                      // fade the current chapter out
           tabFadeCall = gsap.delayedCall(TAB_FADE_MS / 1000, function () {
             window.scrollTo(0, to);                             // jump while hidden — no scrub is seen
+            lastSnapP = centreP;                               // commit the snap to the clicked tab (no bounce back through the tabs between)
             applyScroll(centreP);                              // set scene targets to the destination NOW
+            if (AUTOPLAY) { startAutoplay(i); }                // replay the revealed tab from 0
             snapEased();                                        // settle them (no eased speed-run on reveal)
             setSceneOpacity(1, TAB_FADE_MS);                    // fade the target chapter in
             tabFadeCall = gsap.delayedCall(TAB_FADE_MS / 1000, function () {
