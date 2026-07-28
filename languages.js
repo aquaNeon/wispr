@@ -91,7 +91,10 @@
   var CHIP_MS  = 220;                          // new-word chip pop — quicker than the rest
   // card1 = 3 SCROLL positions: chips · form-self-plays · chips+new. the form's internal order
   // (Add-new click → top → write → toggle → move to buttons → click) plays on TIMERS, not on scroll.
-  var C1_BEATS = [0.22, 0.72];
+  // beat 1 (form self-plays) must stay held long enough for its full ~2600ms timed sequence
+  // (type → toggle → move → Add click) to finish before beat 2 flips to the done state — else the
+  // Add/apply gets cut. widened window; paired with a longer LANG_AUTOPLAY_MS for this card.
+  var C1_BEATS = [0.1, 0.55];
   var C2_LIFT  = 0.30;                          // card2 beat1: trigger lifts out, slot makes room, URL shows below
   var C2_RISE  = 0.58;                          // card2 beat2: URL rises straight up into the (pre-sized) slot
   var ACTIVE_CLASS = 'is-active';              // combo class that marks the active tone button (card 3)
@@ -593,7 +596,8 @@
     // each card's animation sequence plays AUTOMATICALLY (time-based) when its block becomes active,
     // instead of scrubbing to scroll. only this changes — drift, dim, crossfade, spacing stay as-is.
     var LANG_AUTOPLAY    = true;
-    var LANG_AUTOPLAY_MS = [3500, 2600, 2400, 2600];   // per-card sequence duration (ms), one per block
+    var LANG_AUTOPLAY_MS = [3500, 6000, 2400, 2600];   // per-card sequence duration (ms), one per block
+                                                       // card 1 (vocab) is long so its full form plays
     var LANG_REPLAY      = true;   // replay from 0 whenever a block becomes active again
     var LANG_SCRUB       = [0];     // card indices that STAY scrubbed to scroll (0 = the SVG switcher)
     function langIsAuto(i) { return LANG_AUTOPLAY && LANG_SCRUB.indexOf(i) === -1; }
