@@ -91,8 +91,9 @@
   // in-card animations play once on tab entry (time-based) instead of scrubbing to scroll; each
   // tab is a snap stop, so landing on it plays its chapter. per-tab durations in ms.
   var AUTOPLAY        = true;
-  var AUTOPLAY_MS     = [6500, 3400, 3000];
+  var AUTOPLAY_MS     = [9500, 3400, 3000];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
   var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
+  var AUTOPLAY_LOOP   = true;   // active tab's animation loops (replays continuously) while you're on it
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
   // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
@@ -214,6 +215,9 @@
   var MQ_PAD       = 60;     // extra viewBox units the text starts beyond the right edge
   var MQ_FLOW_FILL = true;   // flow (220) marquee starts already filled (like kb) instead of streaming in
                              // from off-screen right. false = old (empty at start, streams in on scroll)
+  var MQ_AUTOPLAY  = true;   // text waves move on their OWN clock (already moving on view), not tied to
+                             // scroll. false = old scroll-scrubbed motion.
+  var MQ_RATE      = 90;     // autoplay speed in SCREEN px/sec for a data-speed="1" string
 
   // audio recorder: <rect> bars inside [data-anim="audio"] pulse in height on scroll (pure
   // scrub, like the marquee). each bar grows from its own centre; a per-bar phase offset
@@ -489,15 +493,18 @@
       // string runs off the SAME clock (p) so the two text lines stay locked together; their
       // data-speed is a PURE speed knob (higher = faster), independent of each string's period
       // — period only sets where the loop wraps below. Speed = MQ_TRAVEL × data-speed.
+      var mqClock = 0;   // live time accumulator (s) for autoplay marquee motion — see MQ_AUTOPLAY
       function updateMarquees(p) {
         for (var i = 0; i < marquees.length; i++) {
           var m = marquees[i];
-          // scale = rendered px per viewBox unit; MQ_TRAVEL is in SCREEN px, so divide to get
-          // viewBox travel. pace on screen stays constant however wide the svg is drawn.
+          // scale = rendered px per viewBox unit; travel is in SCREEN px, so divide to get viewBox
+          // travel. pace on screen stays constant however wide the svg is drawn.
           var svgW  = m.svg ? m.svg.getBoundingClientRect().width : 0;
           if (svgW <= 0) { continue; }                                  // display:none / unmeasured
           var scale = svgW / m.vbw;
-          var travel = -MQ_DIR * p * (MQ_TRAVEL * m.mult) / scale;      // 0 at p=0, reversible
+          var travel = MQ_AUTOPLAY
+            ? (-MQ_DIR * mqClock * MQ_RATE * m.mult / scale)            // continuous, time-based (autoplay)
+            : (-MQ_DIR * p * (MQ_TRAVEL * m.mult) / scale);            // scroll-tied (old), 0 at p=0
           var x = m.start - travel;                                     // every string streams in at its own steady pace
           if (x < 0) {
             var per = m.len > 0 ? Math.min(m.period, Math.max(100, m.len - m.vbw - MQ_PAD)) : m.period;
@@ -1826,6 +1833,7 @@
         var scrubTick = function () {
           var dr = gsap.ticker.deltaRatio();
           audioClock += dr / 60;                 // advance the live waveform clock (~seconds)
+          mqClock    += dr / 60;                 // advance the autoplay marquee clock
           if (SCRUB_LERP >= 1) { pSmooth = pTarget; }
           else {
             var k = 1 - Math.pow(1 - SCRUB_LERP, dr);
@@ -1833,7 +1841,9 @@
             if (Math.abs(pTarget - pSmooth) < 0.0002) { pSmooth = pTarget; }
           }
           var moved = (pSmooth !== painted);
-          if (moved) { updateMarquees(pSmooth); painted = pSmooth; }
+          if (moved) { painted = pSmooth; }
+          // marquee: continuous when autoplay (every frame), else only on scroll move
+          if (MQ_AUTOPLAY || moved) { updateMarquees(pSmooth); }
           // waveform runs the live clock continuously (not just on scroll) so the pill stays alive
           if (AUDIO_SPEED > 0 || moved) { updateAudio(pSmooth); }
         };
@@ -1842,7 +1852,10 @@
         var autoTick = function () {
           if (!autoPlaying) { return; }
           autoTp += (gsap.ticker.deltaRatio() * (1000 / 60)) / autoDur;
-          if (autoTp >= 1) { autoTp = 1; autoPlaying = false; if (activeTab >= 0) { autoDone[activeTab] = true; } }
+          if (autoTp >= 1) {
+            if (AUTOPLAY_LOOP) { autoTp = 0; }        // loop: replay while the tab stays active
+            else { autoTp = 1; autoPlaying = false; if (activeTab >= 0) { autoDone[activeTab] = true; } }
+          }
           sceneUpdate(sceneLastP);
         };
         gsap.ticker.add(autoTick);

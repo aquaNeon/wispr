@@ -48,7 +48,8 @@
                                    // draw-IN at the start / draw-OUT at the end (that made the blank space)
   var DRAW_START = 'top bottom';   // section top reaches viewport bottom → draw starts (as early as it can)
   var DRAW_END   = 'bottom bottom';// finishes by the deck's pin end
-  var SCRUB        = 0.4;     // desktop scrub catch-up (s). eases discrete wheel steps; small tail
+  var SCRUB        = 1.1;     // desktop scrub catch-up (s). higher = smoother glide that absorbs the
+                              // discrete-wheel jitter/bounce (lower = tighter/more 1:1)
   var SCRUB_MOBILE = true;    // mobile: 1:1 with scroll. touch scroll is already continuous, so the
                               // numeric catch-up just adds a settling "shake" at the end of a flick
 

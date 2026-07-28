@@ -599,7 +599,8 @@
     var LANG_AUTOPLAY_MS = [3500, 6000, 2400, 2600];   // per-card sequence duration (ms), one per block
                                                        // card 1 (vocab) is long so its full form plays
     var LANG_REPLAY      = true;   // replay from 0 whenever a block becomes active again
-    var LANG_SCRUB       = [0];     // card indices that STAY scrubbed to scroll (0 = the SVG switcher)
+    var LANG_LOOP        = true;   // active card's sequence loops (replays continuously) while active
+    var LANG_SCRUB       = [];      // card indices that STAY scrubbed to scroll ([] = all autoplay, incl. the switcher)
     function langIsAuto(i) { return LANG_AUTOPLAY && LANG_SCRUB.indexOf(i) === -1; }
 
     var textWrap = section.querySelector('.lang_text-anim-wrap');
@@ -689,12 +690,13 @@
         lastActive = closest;
       }
 
-      // autoplay: play the active card's sequence once on a timer (scrubbed cards are handled above)
+      // autoplay: play the active card's sequence on a timer (scrubbed cards are handled above); loops
+      // while active when LANG_LOOP
       if (closest >= 0 && langIsAuto(closest) && renderers[closest]) {
-        if (autoTp < 1) {
+        if (autoTp < 1 || LANG_LOOP) {
           var dur = LANG_AUTOPLAY_MS[closest] || 2500;
           autoTp += (gsap.ticker.deltaRatio() * (1000 / 60)) / dur;
-          if (autoTp >= 1) { autoTp = 1; autoDone[closest] = true; }
+          if (autoTp >= 1) { if (LANG_LOOP) { autoTp = 0; } else { autoTp = 1; autoDone[closest] = true; } }
         }
         renderers[closest](autoTp);
       }
