@@ -21,14 +21,18 @@
                               // so rotateX sweeps it up/down along the curve. bigger = taller arc
   var PERSP     = '100vw';    // stage perspective — smaller = stronger 3D warp
 
-  var ROT_IN    = -90;        // deg the card is pitched as it folds in (offstage left)
-  var ROT_OUT   = 90;         // deg it pitches to as it folds out (offstage right)
+  var ROT_IN    = -50;        // deg the card is pitched as it folds in (offstage left). gentler = less dramatic wave
+  var ROT_OUT   = 50;         // deg it pitches to as it folds out (offstage right)
   var DUR       = 1.1;        // per-card timeline duration (in master-time units)
   var EASE      = 'power1.inOut';
   var ZFLIP     = 0.55;       // when (from the end of a sweep) a card drops under the next one
   var TRAVEL_VW = 170;        // total horizontal travel as % of viewport width (centre offstage-left →
                               // offstage-right). same for every card → even spacing regardless of width
-  var SCROLL_VH = 600;        // pin-height in vh — how long the deck plays
+  var SCROLL_VH = 350;        // pin-height in vh — how long the deck plays (shorter = quicker to the footer)
+  // trim the empty lead-in/out: map scroll so a card is already CENTRED when the section arrives and
+  // one is still centred at the end — no long blank space entering or leaving. false = old (cards fly
+  // in from fully offstage).
+  var LEAD_TRIM = true;
   // card vertical anchor as vh (50 = viewport centre). lower = higher on screen. on mobile 50vh
   // reads a bit low (vh = tall viewport incl. the address bar; a fixed navbar adds to it). override
   // per-page from Webflow with data-center / data-center-mobile on the data-slider="wrap" element.
@@ -40,6 +44,8 @@
   // background SVG path (tag it data-slider="draw") is drawn SCRUBBED on its own trigger: paints in
   // over the first half, un-paints from the start over the second half. START/END are ScrollTrigger
   // positions — DRAW_START earlier than the pin (section entering) makes it begin sooner.
+  var DRAW_ANIMATE = false;        // false = line is just present (static, fades with the section) — no
+                                   // draw-IN at the start / draw-OUT at the end (that made the blank space)
   var DRAW_START = 'top bottom';   // section top reaches viewport bottom → draw starts (as early as it can)
   var DRAW_END   = 'bottom bottom';// finishes by the deck's pin end
   var SCRUB        = 0.4;     // desktop scrub catch-up (s). eases discrete wheel steps; small tail
@@ -119,7 +125,8 @@
     drawPaths.forEach(function (p) {
       var len = (p.getTotalLength ? p.getTotalLength() : 0) || 1;
       p._len = len;
-      gsap.set(p, { strokeDasharray: len, strokeDashoffset: len });   // start hidden
+      // animated → start hidden (drawn in by the scrub). static → fully drawn, always present.
+      gsap.set(p, { strokeDasharray: len, strokeDashoffset: DRAW_ANIMATE ? len : 0 });
     });
 
     // keep the bg SVG FIXED in the viewport (behind the deck) while the section is in view. it was
@@ -173,14 +180,10 @@
     var orbitPx = window.innerWidth * ORBIT_VW / 100;
     gsap.set(cards, { xPercent: -50, yPercent: -50, transformOrigin: '50% 50% -' + orbitPx + 'px', force3D: true });
 
-    // Pin the track, scrub the deck across the full wrap (cards enter/exit offstage — no framing).
-    var master = gsap.timeline({
-      scrollTrigger: {
-        trigger: track, start: 'top top',
-        endTrigger: wrap, end: 'bottom bottom',
-        pin: track, pinType: 'transform', scrub: scrubVal
-      }
-    });
+    // Build the deck timeline (cards sweep centre→across), then drive it via a scrubbed proxy so we
+    // can TRIM the empty head/tail: at scroll 0 the first card is already centred, at scroll 1 the last
+    // card is still centred — no long blank space entering or leaving.
+    var master = gsap.timeline({ paused: true });
     var isPortrait = window.innerHeight > window.innerWidth;
     var step = (isPortrait ? 1.5 : 1) / cards.length;      // portrait spaces the passes out a bit more
     var travelHalf = window.innerWidth * travelVw / 200;   // centre travels ±this; identical for every card → even spacing
@@ -193,10 +196,26 @@
       master.add(tl, i * step);
     });
 
+    // scroll → master-time window. LEAD_TRIM skips the DUR/2 where card 0 flies in and the DUR/2 where
+    // the last card flies out, so both ends open/close on a centred card.
+    var startT = LEAD_TRIM ? (DUR / 2) : 0;
+    var endT   = LEAD_TRIM ? Math.max(startT + 0.001, master.duration() - DUR / 2) : master.duration();
+    var proxy  = { t: startT };
+    master.time(startT);                                   // first paint: a card already centred
+    gsap.to(proxy, {
+      t: endT, ease: 'none',
+      onUpdate: function () { master.time(proxy.t); },
+      scrollTrigger: {
+        trigger: track, start: 'top top',
+        endTrigger: wrap, end: 'bottom bottom',
+        pin: track, pinType: 'transform', scrub: scrubVal
+      }
+    });
+
     // scrubbed bg draw on its OWN trigger (not the master), so it can start BEFORE the deck pins —
     // it begins as the section scrolls into view (DRAW_START) and runs to DRAW_END. offset len → 0 →
     // -len (linear) = paints IN over the first half, un-paints from the start over the second half.
-    if (drawPaths.length) {
+    if (DRAW_ANIMATE && drawPaths.length) {
       var drawTl = gsap.timeline({
         scrollTrigger: { trigger: wrap, start: DRAW_START, end: DRAW_END, scrub: scrubVal }
       });
