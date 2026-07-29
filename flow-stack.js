@@ -94,6 +94,10 @@
   var AUTOPLAY_MS     = [9500, 3400, 3000];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
   var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
   var AUTOPLAY_LOOP   = false;  // false = play once and hold the end frame (looping looked weird)
+  // MOBILE: each [data-flow-play="chN"] block in the data-stack="mobile" container clones its desktop
+  // chapter and plays on scroll-into-view (replays on re-enter). per-chapter play duration in ms.
+  var MOBILE_CH_MS        = [4000, 3000, 3000];
+  var MOBILE_IO_THRESHOLD = 0.35;   // fraction of a block visible before it plays
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
   // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
@@ -1801,6 +1805,56 @@
         if (activeTab >= 0) { moveIndicator(activeTab); }
       }
 
+      // ---- MOBILE chapter driver: clone each desktop chapter into its data-flow-play block, play on view ----
+      function mobileCloneSource(ch) {
+        if (ch === 'ch1') { return section.querySelector('[data-type="raw"]'); }
+        if (ch === 'ch2') { return composerEl || section.querySelector('[' + FLOW + '="composer"]'); }
+        if (ch === 'ch3') { return section.querySelector('.flow_icons-destination'); }
+        return null;
+      }
+      function mobilePlay(host, ch) {
+        if (ch === 'ch1') {
+          var ws = host.querySelectorAll('.flow_w'), n = ws.length;
+          if (!n) { return; }
+          var obj = host._mobTween || (host._mobTween = { c: 0 });
+          gsap.killTweensOf(obj); obj.c = 0;
+          gsap.to(obj, { c: n, duration: (MOBILE_CH_MS[0] || 4000) / 1000, ease: 'none', overwrite: true,
+            onUpdate: function () { var k = Math.round(obj.c); for (var i = 0; i < n; i++) { ws[i].style.opacity = i < k ? '1' : '0'; } } });
+        }
+        // ch2 / ch3 play logic added once ch1 is proven
+      }
+      function mobileReset(host, ch) {
+        if (ch === 'ch1') {
+          if (host._mobTween) { gsap.killTweensOf(host._mobTween); }
+          var ws = host.querySelectorAll('.flow_w');
+          for (var i = 0; i < ws.length; i++) { ws[i].style.opacity = '0'; }
+        }
+      }
+      function buildMobileChapters() {
+        var mob = section.querySelector('[' + ATTR + '="mobile"]');
+        if (!mob) { return; }
+        if (stage) { stage.style.display = 'none'; }   // desktop stage is the clone SOURCE only on mobile
+        var blocks = Array.prototype.slice.call(mob.querySelectorAll('[data-flow-play]'));
+        blocks.forEach(function (block) {
+          var ch = block.getAttribute('data-flow-play');
+          var host = block.querySelector('.mobile_visual_contain') || block;
+          if (!host.children.length) {                 // clone the desktop chapter in (once)
+            var src = mobileCloneSource(ch);
+            if (src) { host.appendChild(src.cloneNode(true)); }
+          }
+          mobileReset(host, ch);                        // start hidden
+          if (typeof window.IntersectionObserver === 'function') {
+            var io = new IntersectionObserver(function (entries) {
+              for (var e = 0; e < entries.length; e++) {
+                if (entries[e].isIntersecting) { mobilePlay(host, ch); } else { mobileReset(host, ch); }
+              }
+            }, { threshold: MOBILE_IO_THRESHOLD });
+            io.observe(block);
+            teardown.push(function () { io.disconnect(); });
+          } else { mobilePlay(host, ch); }
+        });
+      }
+
       var st = null, lastSnapP = null;   // lastSnapP = the stop we last committed to (see snapTo)
       if (isDesktop) {
         st = ScrollTrigger.create({
@@ -1884,17 +1938,8 @@
         gsap.ticker.add(pillTick);
         teardown.push(function () { gsap.ticker.remove(pillTick); });
       } else {
-        // mobile: no pin/morph — show the card in its final centred state, text mid-line
-        measureStage();
-        alignHeads();
-        applyMorph(1);
-        updateMarquees(0.5);   // no scrub on mobile; park the strings mid-travel so words show
-        updateAudio(0.25);     // park bars in a mid-pose so the recorder reads as bars, not flat
-        sceneUpdate(1);        // mobile: transcript fully typed, intro hidden (mobile choreo deferred)
-        // rendering moved to a ticker (desktop only) — draw the eased scenes' end-state once for mobile
-        fanFCur = fanFTgt; fanLiftCur = fanLiftTgt; fanRender(fanFCur, fanLiftCur, fanShow);
-        if (polishActive) { polishCur = polishTgt; renderPolish(polishCur); }
-        pillCur = pillTgt; renderPill(pillCur);
+        // mobile: stacked chapters, each clones its desktop animation + plays on scroll-into-view
+        buildMobileChapters();
       }
 
       if (DEBUG) {
