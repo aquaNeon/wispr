@@ -185,7 +185,7 @@
   var HEAD_TOP     = 0.16;   // fraction of card height both wpm headings are pinned to (keeps them level)
   var MQ_TOP       = 0.48;   // fraction of card height both marquees are pinned to
   var MQ_NUDGE_KB   = 0;     // px fine-tune, kb marquee only (+ down / − up)
-  var MQ_NUDGE_CARD = -100;  // px fine-tune, flow marquee only (− up): lifts the curve ABOVE the flow bar
+  var MQ_NUDGE_CARD = -35;   // px fine-tune, flow marquee only (+ down / − up)
   var CARD_DIP     = 70;     // px the card sags below centre mid-ride (0 at start and landing)
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
@@ -217,7 +217,8 @@
                              // from off-screen right. false = old (empty at start, streams in on scroll)
   var MQ_AUTOPLAY  = true;   // text waves move on their OWN clock (already moving on view), not tied to
                              // scroll. false = old scroll-scrubbed motion.
-  var MQ_RATE      = 42;     // autoplay speed in SCREEN px/sec for a data-speed="1" string (slower, ~homepage)
+  var MQ_DUR       = 30;     // seconds per loop for the FLOW curve (matches homepage <animate dur="30s">)
+  var MQ_DUR_KB    = 100;    // seconds per loop for the KEYBOARD straight marquee (homepage dur="100s")
 
   // audio recorder: <rect> bars inside [data-anim="audio"] pulse in height on scroll (pure
   // scrub, like the marquee). each bar grows from its own centre; a per-bar phase offset
@@ -481,7 +482,7 @@
         var isKb   = !!(kb && kb.contains(wrapEl));
         var startX = (isKb || MQ_FLOW_FILL) ? 0 : (vbw + MQ_PAD);
         marquees.push({
-          text: textEl, svg: svgEl, period: period, start: startX,
+          text: textEl, svg: svgEl, period: period, start: startX, isKb: isKb,
           vbw: vbw, vbh: vbh, len: 0,
           rand: Math.random(),                  // per-pageload loop offset: different words each visit
           mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1
@@ -497,19 +498,22 @@
       function updateMarquees(p) {
         for (var i = 0; i < marquees.length; i++) {
           var m = marquees[i];
-          // scale = rendered px per viewBox unit; travel is in SCREEN px, so divide to get viewBox
-          // travel. pace on screen stays constant however wide the svg is drawn.
+          if (MQ_AUTOPLAY) {
+            // homepage model: sweep -loopLen -> 0 over a fixed duration; loopLen capped to text so never empty
+            var dur = m.isKb ? MQ_DUR_KB : MQ_DUR;
+            var frac = ((mqClock / dur) % 1 + 1) % 1;                  // 0..1 through the loop
+            var loopLen = (m.len > m.vbw) ? Math.min(m.period, m.len - m.vbw) : m.period;
+            m.text.setAttribute('x', String(-loopLen * (1 - frac)));
+            continue;
+          }
+          // scroll-tied (old): pace normalised by the svg's rendered scale so it's width-independent
           var svgW  = m.svg ? m.svg.getBoundingClientRect().width : 0;
           if (svgW <= 0) { continue; }                                  // display:none / unmeasured
           var scale = svgW / m.vbw;
-          var travel = MQ_AUTOPLAY
-            ? (-MQ_DIR * mqClock * MQ_RATE * m.mult / scale)            // continuous, time-based (autoplay)
-            : (-MQ_DIR * p * (MQ_TRAVEL * m.mult) / scale);            // scroll-tied (old), 0 at p=0
-          var x = m.start - travel;                                     // every string streams in at its own steady pace
+          var travel = -MQ_DIR * p * (MQ_TRAVEL * m.mult) / scale;      // 0 at p=0
+          var x = m.start - travel;
           if (x < 0) {
             var per = m.len > 0 ? Math.min(m.period, Math.max(100, m.len - m.vbw - MQ_PAD)) : m.period;
-            // random per-load offset eased in over the first lap: no jump at the intro
-            // handoff, but every page visit shows different words at the same landmarks
             var xx = -x;
             x = -((xx + Math.min(xx, per) * m.rand) % per);
           }

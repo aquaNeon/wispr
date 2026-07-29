@@ -62,6 +62,7 @@
   var ANCHOR     = 0.5;     // point along the PATH (0=start,1=end) where a segment counts as "in view";
                             // 0.5 = middle of the curve. the drift parks each segment's centre here.
   var FLAG_MID   = 0.5;     // within a seam (0..1 between two segments) where the flag flips to the next
+  var LANG_PATH_FONT = '14px';   // font size of the switcher's curved path text ('' = leave Webflow/CSS)
 
   // ---- cards: all [data-lang-anim] cards are stacked in one spot and crossfade; the active one is
   // chosen by which text block is centred (see the driver at the bottom). ----
@@ -94,7 +95,7 @@
   // beat 1 (form self-plays) must stay held long enough for its full ~2600ms timed sequence
   // (type → toggle → move → Add click) to finish before beat 2 flips to the done state — else the
   // Add/apply gets cut. widened window; paired with a longer LANG_AUTOPLAY_MS for this card.
-  var C1_BEATS = [0.1, 0.55];
+  var C1_BEATS = [0.1, 0.55, 0.85];   // chips · form plays · done(+new word) · animate out (before loop restarts)
   var C2_LIFT  = 0.30;                          // card2 beat1: trigger lifts out, slot makes room, URL shows below
   var C2_RISE  = 0.58;                          // card2 beat2: URL rises straight up into the (pre-sized) slot
   var ACTIVE_CLASS = 'is-active';              // combo class that marks the active tone button (card 3)
@@ -204,6 +205,7 @@
     if (nameEl) {
       textEl = (nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath') ? nameEl.parentNode : nameEl;
     }
+    if (textEl && LANG_PATH_FONT) { textEl.style.fontSize = LANG_PATH_FONT; }   // switcher path text size
     // the marquee svg is the one that OWNS the text (card0 also holds the flag svgs — don't grab those)
     var svgEl  = nameEl ? (nameEl.closest && nameEl.closest('svg')) : null;
     if (!svgEl && card0) { svgEl = card0.querySelector('svg'); }
@@ -288,7 +290,7 @@
 
     // seed the switcher: paint it at p=0 (first language parked at the anchor) and show it right away,
     // so its text is visible the moment you scroll in — never an empty/unseeded frame before it's active.
-    if (renderers[0]) { renderers[0](0); }
+    if (renderers[0]) { renderers[0](langStart(0)); }
     if (cardEls[0]) { cardEls[0].style.opacity = '1'; }
 
     // ---- card 1: "Add to vocabulary" — chips → form slides in → word types → content scrolls up to
@@ -351,13 +353,23 @@
         el.style.transform = 'scale(' + s + ')';
         window.requestAnimationFrame(function () { el.style.transform = 'scale(1)'; });
       }
+      // crisp "click": fast press down, then a springy release (overshoot) — reads as a real button click
+      function clickBtn(el) {
+        if (!el) { return; }
+        el.style.transition = 'transform 90ms ' + EASE;
+        el.style.transform = 'scale(0.85)';
+        at(120, function () {
+          el.style.transition = 'transform 340ms ' + BACK;
+          el.style.transform = 'scale(1)';
+        });
+      }
       function setNewChip(inN) {
         if (!newChip) { return; }
         if (inN) {
           if (!newChip.style.display || newChip.style.display === 'none') {
-            newChip.style.display = ''; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.6)';
-            window.requestAnimationFrame(function () { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1)'; });
-          } else { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1)'; }
+            newChip.style.display = ''; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.4) translateY(-6px)';
+            window.requestAnimationFrame(function () { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1) translateY(0px)'; });
+          } else { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1) translateY(0px)'; }
         } else {
           newChip.style.display = 'none'; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.6)';
         }
@@ -382,7 +394,7 @@
         at(650,                     function () { if (typer) { typer.play(VOCAB_WORD, TYPE_MS); } }); // write
         at(650 + TYPE_MS + 250,     function () { setToggle(true); });            // THEN toggle
         at(650 + TYPE_MS + 800,     function () { setTrack(true); });             // THEN move down to buttons
-        at(650 + TYPE_MS + 1300,    function () { pulse(addBtn, 0.9); });         // Add word click
+        at(650 + TYPE_MS + 1300,    function () { clickBtn(addBtn); });           // Add word click (crisp press)
       }
       function toDone() {          // POS3: form flies out, chips return with the new word
         clearSeq();
@@ -391,16 +403,22 @@
         setForm(false, exitY());
         setList(true); setNewChip(true);
       }
+      function toExit() {          // POS4: done content animates OUT before the loop restarts
+        clearSeq();
+        setList(false);                                                          // chips fade out
+        if (newChip) { newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.4) translateY(-6px)'; }
+      }
 
       var lastBeat = -1;
-      // 3 scroll positions: 0 = chips · 1 = form self-plays · 2 = chips + new word. edge-triggered.
+      // beats: 0 = chips · 1 = form self-plays · 2 = chips + new word · 3 = animate out (before restart)
       renderers[1] = function (tp) {
         var beat = beatOf(tp, C1_BEATS);
         if (beat === lastBeat) { return; }
         lastBeat = beat;
         if (beat <= 0) { toRest(); }
         else if (beat === 1) { playForm(); }
-        else { toDone(); }
+        else if (beat === 2) { toDone(); }
+        else { toExit(); }
       };
     }());
 
@@ -589,10 +607,9 @@
     var FORCE_TIGHT = true;  // collapse any per-block 100vh (min-height/height) so the blocks stack
                              // TIGHT like the reference. set false if you strip the 100vh in Webflow
                              // yourself and want the authored heights respected.
-    var LEAD_TOP_VH    = 0.0;   // blank scroll BEFORE the first block. small → section opens already
-                                // composed (block 0 "100+ Languages" at the card's level), not a lead-in.
-    var LEAD_BOTTOM_VH = 0.5;   // blank scroll AFTER the last block, so the END state also composes
-                                // (last block reaches the card before the section leaves).
+    var LEAD_TOP_VH    = 0.15;  // blank scroll BEFORE the first block.
+    var LEAD_BOTTOM_VH = 0.5;   // blank scroll AFTER the last block so the end state still composes.
+    var START_LIFT_VH  = 0.45;  // lift the text column so block 0 enters near centre (vh; higher = higher)
     var GAP_VH     = 0;      // EXTRA vertical gap between blocks, in viewports. 0 = keep the tight
                              // Webflow stacking (blocks sit next to each other, several visible at once,
                              // like the reference). Raise it to give each card a longer reign at centre.
@@ -607,8 +624,10 @@
                                                        // slower overall; card 1 (vocab) longest so its full form plays
     var LANG_REPLAY      = true;   // replay from 0 whenever a block becomes active again
     var LANG_LOOP        = true;   // active card's sequence loops (replays continuously) while active
-    var LANG_SCRUB       = [];      // card indices that STAY scrubbed to scroll ([] = all autoplay, incl. the switcher)
+    var LANG_SCRUB       = [];      // card indices kept scrubbed to scroll ([] = all autoplay incl. switcher)
+    var LANG_START       = { 0: 0.3 };   // per-card starting progress (switcher enters 30% in, text already showing)
     function langIsAuto(i) { return LANG_AUTOPLAY && LANG_SCRUB.indexOf(i) === -1; }
+    function langStart(i) { return (LANG_START && LANG_START[i]) || 0; }
 
     var textWrap = section.querySelector('.lang_text-anim-wrap');
     var blocks   = textWrap
@@ -630,6 +649,7 @@
       var vh = window.innerHeight;
       textWrap.style.paddingTop = (vh * LEAD_TOP_VH) + 'px';
       textWrap.style.paddingBottom = (vh * LEAD_BOTTOM_VH) + 'px';
+      textWrap.style.transform = 'translateY(' + (-vh * START_LIFT_VH) + 'px)';   // lift so block 0 enters near centre
       for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
         b.style.position = 'relative';
@@ -669,8 +689,8 @@
 
         blocks[i].style.transform = 'translateX(' + driftCur[i] + 'px)';
         // scrubbed cards (e.g. the SVG switcher) are driven by their block's scroll progress every
-        // frame; autoplay cards are driven on a timer below
-        if (renderers[i] && !langIsAuto(i)) { renderers[i](tpCur[i]); }
+        // frame, offset by langStart so the switcher enters ~30% in (text already showing on scroll-in)
+        if (renderers[i] && !langIsAuto(i)) { renderers[i](langStart(i) + (1 - langStart(i)) * tpCur[i]); }
 
         // nearest block midpoint to the centre = active
         var d = Math.abs(r.top + r.height / 2 - cY);
@@ -690,10 +710,10 @@
         if (POP_SCALE !== 1 && cardWrap) {                   // optional pop on swap (like the preview)
           gsap.fromTo(cardWrap, { scale: POP_SCALE }, { scale: 1, duration: 0.3, ease: 'back.out(2)' });
         }
-        for (var rr = 0; rr < renderers.length; rr++) {       // reset only the autoplay cards to their start
-          if (renderers[rr] && langIsAuto(rr)) { renderers[rr](0); }
+        for (var rr = 0; rr < cardEls.length; rr++) {         // reset only the autoplay cards to their start
+          if (renderers[rr] && langIsAuto(rr)) { renderers[rr](langStart(rr)); }
         }
-        autoTp = (!LANG_REPLAY && autoDone[closest]) ? 1 : 0;
+        autoTp = (!LANG_REPLAY && autoDone[closest]) ? 1 : langStart(closest);
         lastActive = closest;
       }
 
@@ -703,7 +723,7 @@
         if (autoTp < 1 || LANG_LOOP) {
           var dur = LANG_AUTOPLAY_MS[closest] || 2500;
           autoTp += (gsap.ticker.deltaRatio() * (1000 / 60)) / dur;
-          if (autoTp >= 1) { if (LANG_LOOP) { autoTp = 0; } else { autoTp = 1; autoDone[closest] = true; } }
+          if (autoTp >= 1) { if (LANG_LOOP) { autoTp = langStart(closest); } else { autoTp = 1; autoDone[closest] = true; } }
         }
         renderers[closest](autoTp);
       }
