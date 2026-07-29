@@ -607,7 +607,8 @@
                              // TIGHT like the reference. set false if you strip the 100vh in Webflow
                              // yourself and want the authored heights respected.
     var LEAD_TOP_VH    = 0.15;  // blank scroll BEFORE the first block.
-    var LEAD_BOTTOM_VH = 0.5;   // blank scroll AFTER the last block so the end state still composes.
+    var LEAD_BOTTOM_VH = 0.1;   // blank scroll AFTER the last block. lower = the section ENDS earlier with
+                                // the last text still visible (not scrolled all the way out) → next section peeks in.
     var START_LIFT_VH  = 0.45;  // lift the text column so block 0 enters near centre (vh; higher = higher)
     var GAP_VH     = 0;      // EXTRA vertical gap between blocks, in viewports. 0 = keep the tight
                              // Webflow stacking (blocks sit next to each other, several visible at once,
