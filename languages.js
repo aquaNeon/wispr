@@ -53,7 +53,7 @@
     { text: 'I’m getting started with the project. Here are a few options.', name: 'English',  code: 'us', flag: '🇺🇸' },
     { text: 'Wie möchten Sie die Datei einrichten.',                          name: 'Deutsch',  code: 'de', flag: '🇩🇪' },
     { text: 'Ecco alcune opzioni. Sto iniziando.',                            name: 'Español',  code: 'es', flag: '🇪🇸' }, // NB text is Italian, flag/name=es per your list — fix one
-    { text: 'प्रोजेक्ट पर काम शुरू हो गया, आप किस तरह से चाहेंगे',            name: 'हिन्दी',    code: 'in', flag: '🇮🇳' }
+    { text: 'प्रोजेक्ट पर काम शुरू हो गया, आप किस तरह से चाहेंगे। प्रोजेक्ट पर काम शुरू हो गया, आप किस तरह से चाहेंगे', name: 'हिन्दी',    code: 'in', flag: '🇮🇳' }
   ];
 
   // ---- config ----
@@ -244,21 +244,20 @@
       if (!card0 || SEGS.length === 0) { return; }
       var N = SEGS.length;
       var p = Math.max(0, Math.min(1, progress));
-      var segF = p * (N - 1);
-      var i    = Math.min(N - 1, Math.floor(segF));
-      var frac = segF - i;                              // 0..1 across the current seam
-      var next = Math.min(N - 1, i + 1);
 
-      // focus fraction of the string that should sit at the anchor right now (seg i's centre at p=i/(N-1))
-      var ff = midFrac[i] + (midFrac[next] - midFrac[i]) * frac;
-
-      // drift the line so that focus fraction parks at the anchor along the path
+      // CONSTANT-SPEED sweep from the first language's centre to the last — linear along the string, so
+      // the pace stays even no matter how long each language's text is (no speed-up on the long ones).
+      var ff = midFrac[0] + (midFrac[N - 1] - midFrac[0]) * p;
       if (textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
       }
 
-      // flag flips to the next language once past the seam midpoint — i.e. as it comes into view
-      var flagIdx = (frac >= FLAG_MID) ? next : i;
+      // flag = the language whose centre is nearest the anchor right now
+      var flagIdx = 0, bestD = Infinity;
+      for (var s = 0; s < N; s++) {
+        var d = Math.abs(midFrac[s] - ff);
+        if (d < bestD) { bestD = d; flagIdx = s; }
+      }
       if (flagIdx !== lastFlagI) { setActive(SEGS[flagIdx]); lastFlagI = flagIdx; }
     }
 
