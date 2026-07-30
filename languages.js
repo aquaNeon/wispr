@@ -1,54 +1,32 @@
 (function () {
 
   // ==========================================================================
-  // languages.js — the "languages" scroll-list animation cards.
+  // languages.js — 4 animation cards, two rigs split at MOBILE_BP.
   //
-  // A pinned card stays centred while four text blocks scroll past it (the "scroll list index"
-  // effect). The block nearest the viewport centre is active → its matching card crossfades in and
-  // that card's inner animation scrubs as the block crosses. See MODEL below.
+  // DESKTOP (≥992px): scroll-list index. Cards stacked in one spot in the sticky .lang_card--wrap; the
+  // text block nearest the viewport centre is active → its card crossfades in and autoplays.
+  // MOBILE (≤991px): scroll-list off, card wrap + text column hidden. Each .lang_stack-wrap gets a CLONE
+  // of its card in .lang_anim-wrap and loops it while in view.
   //
-  // DOM contract (author in Webflow):
-  //   [data-lang="section"]                 the section (scroll driver spans it)
-  //   [data-lang-anim="0"]                  card 0 — the language switcher (fixed card)
-  //       [data-lang-name]                  the curved SVG string — put on the <textPath> el, NOT
-  //                                          the <text> (we set .textContent; tagging <text> would
-  //                                          nuke the <textPath> child + the curve). needs a sibling
-  //                                          <path> (the curve) in the same <svg> for anchoring.
-  //       [data-lang-label]                 the VISIBLE language name (English/Deutsch/…) — optional
-  //       [data-lang-flag]                  the flag. THREE modes (auto-detected):
-  //                                           • one el per language, each data-lang-flag="us|de|es|in"
-  //                                             → active shown, rest hidden (custom assets — recommended)
-  //                                           • a single <img data-lang-flag> → src swapped by code
-  //                                           • a single text el → emoji (shows "DE" on Windows — avoid)
-  //   [data-lang-anim="1|2|3"]              cards 1–3 — each its own animation (renderers below)
-  //   .lang_text-anim-wrap                  the scrolling text column (holds the 4 blocks below)
-  //     .lang_anim-text-wrap  ×4            the TEXT BLOCKS — one per card, IN THE SAME ORDER as the
-  //                                          [data-lang-anim] cards (block 0 → card 0, block 1 → card 1…)
-  //
-  // MODEL: "scroll list index" (mwg effect105). The .lang_card--wrap STAYS PUT (sticky in Webflow) while
-  // the 4 text blocks scroll past it. The block closest to the viewport CENTRE is ACTIVE → its matching
-  // card crossfades in and that card's inner animation SCRUBS 0..1 as the block crosses the centre. Blocks
-  // drift sideways (peak at centre) then settle, and dim while inactive. All cards are stacked in one spot
-  // (JS, CARD_STACK) so they can crossfade. Blocks stay TIGHTLY stacked (several visible at once, like the
-  // resource); JS only pads lead-in/out scroll (see LEAD_VH / GAP_VH in the driver).
-  //
-  // CARD 0 MODEL: one continuous line = all SEGS joined (JS OWNS it — authored SVG string is overwritten).
-  // No scramble; it STREAMS along the curve (like the hero) as block 0 crosses the centre, parking each
-  // segment's centre at the ANCHOR on the path; the flag/label swap as each arrives.
-  //
-  // The driver runs off getBoundingClientRect each frame (no pin/spacer). window.Languages.render() /
-  // .relayout() / .remeasure() are exposed for manual repaints. For extra fluidity, drive with Lenis.
+  // DOM contract (Webflow):
+  //   [data-lang="section"]
+  //   [data-lang-anim="0"]          card 0 — language switcher
+  //       [data-lang-name]          the curved string — tag the <textPath>, NOT the <text> (we set
+  //                                  .textContent; tagging <text> would nuke the textPath + the curve)
+  //       [data-lang-label]         visible language name — optional
+  //       [data-lang-flag]          one el per language (data-lang-flag="us|de|es|in"), OR a single
+  //                                  <img> (src swapped), OR a single text el (emoji — breaks on Windows)
+  //   [data-lang-anim="1|2|3"]      cards 1–3
+  //   .lang_text-anim-wrap > .lang_anim-text-wrap ×4    desktop text blocks, SAME ORDER as the cards
+  //   .lang_mobile-wrap > .lang_stack-wrap ×4 > .lang_anim-wrap    mobile stack; block order picks the
+  //                                  card (override with data-lang-play="N"). A card already pasted in a
+  //                                  slot is driven as-is, nothing cloned.
   // ==========================================================================
 
-  // ---- card 0 content — ONE continuous line made of per-language segments, joined by SEP. The text
-  // does NOT scramble: it just STREAMS along the curve on scroll (like the hero), and the flag swaps
-  // as each language segment arrives at the anchor point on the path.
-  //   text  = that language's sentence (edit freely; JS owns the string, the authored SVG text is ignored)
-  //   code  = ISO country code → <img> flag src (renders everywhere, incl. Windows)
-  //   flag  = emoji fallback if [data-lang-flag] is a text element (no flag emoji on Windows) ----
-  var FLAG_URL = 'https://flagcdn.com/w80/{code}.png';   // {code} → country code; swap for your own asset host
-  var SEP      = '   ';                                  // gap inserted between languages in the joined line
-  // name = the visible language label (shown in [data-lang-label]); code = flag country code.
+  //   text = the sentence (JS owns the SVG string; authored text is overwritten)
+  //   name = visible label · code = flag country code · flag = emoji fallback
+  var FLAG_URL = 'https://flagcdn.com/w80/{code}.png';   // {code} → country code
+  var SEP      = '   ';                                  // gap between languages in the joined line
   var SEGS = [
     { text: 'I’m getting started with the project. Here are a few options.', name: 'English',  code: 'us', flag: '🇺🇸' },
     { text: 'Wie möchten Sie die Datei einrichten.',                          name: 'Deutsch',  code: 'de', flag: '🇩🇪' },
@@ -57,63 +35,74 @@
   ];
 
   // ---- config ----
-  var SCRUB_LERP = 0.08;    // eases the driven progress so the drift glides + settles on stop (like flow)
-                            // lower = slower, more trailing glide; higher = snappier (1 = instant)
-  var ANCHOR     = 0.5;     // point along the PATH (0=start,1=end) where a segment counts as "in view";
-                            // 0.5 = middle of the curve. the drift parks each segment's centre here.
-  var FLAG_MID   = 0.5;     // within a seam (0..1 between two segments) where the flag flips to the next
-  var LANG_PATH_FONT = '14px';   // font size of the switcher's curved path text ('' = leave Webflow/CSS)
+  var SCRUB_LERP = 0.08;    // scrub easing — lower = more trailing glide (1 = instant)
+  var ANCHOR     = 0.5;     // point along the curve (0..1) each language parks at
+  var LANG_PATH_FONT = '14px';   // switcher curved-text size ('' = leave to CSS)
 
-  // ---- cards: all [data-lang-anim] cards are stacked in one spot and crossfade; the active one is
-  // chosen by which text block is centred (see the driver at the bottom). ----
-  var CARD_FADE_MS = 220;   // TRIGGERED crossfade duration between cards (ms) — quick + snappy, not scrubbed
-  var CARD_STACK   = true;  // JS stacks the cards absolute+centered in one spot so they can crossfade;
-                            // set false if you position/stack them yourself in Webflow
+  // ---- cards (desktop stacking) ----
+  var CARD_FADE_MS = 220;   // crossfade between cards (ms)
+  var CARD_STACK   = true;  // JS overlays the cards so they can crossfade; false = you stack them yourself
 
-  // ---- card 1 (Add to vocabulary). beats are TRIGGERED (see C1_BEATS below); these tune the look ----
-  var VOCAB_WORD = 'Wispr Flow';   // the word "typed" into the input (JS owns it)
+  // ---- card 1 (Add to vocabulary) ----
+  var VOCAB_WORD = 'Wispr Flow';   // the word typed into the input (JS owns it)
   var TOG_OFF    = '#d8d6cc';      // toggle track colour OFF
   var TOG_ON     = '#1a1a1a';      // toggle track colour ON
 
-  // ---- card 2 (snippets): trigger lifts up & out, URL appears below, then rises straight up into the slot ----
+  // ---- card 2 (snippets) ----
   var SNIP_RISE = 46;              // px the pills sit above/below the line while outside it
 
-  // ---- card 3 (tone): one message per tone; active swaps as the slice crosses each third ----
+  // ---- card 3 (tone) ----
   var TONES = [
     { key: 'formal', text: 'Hey, are you free for lunch tomorrow?\nLet’s do 12 if that works for you.' },
     { key: 'casual', text: 'Hey are you free for lunch tomorrow?\nLet’s do 12 if that works for you' },
     { key: 'very',   text: 'hey are you free for lunch tomorrow?\nlet’s do 12 if that works for you' }
   ];
 
-  // ---- triggered play: cards 1–3 don't scrub continuously — each beat FIRES when scroll crosses its
-  // threshold, then plays over TRIG_MS via CSS transition. reverses when you scroll back. ----
-  var TRIG_MS  = 300;                          // beat play duration (ms) — snappy
+  // ---- triggered beats: each fires when progress crosses its threshold, then plays over TRIG_MS ----
+  var TRIG_MS  = 300;                          // beat play duration (ms)
   var TYPE_MS  = 650;                          // card 1 typewriter duration
-  var CHIP_MS  = 220;                          // new-word chip pop — quicker than the rest
-  // card1 = 3 SCROLL positions: chips · form-self-plays · chips+new. the form's internal order
-  // (Add-new click → top → write → toggle → move to buttons → click) plays on TIMERS, not on scroll.
-  // beat 1 (form self-plays) must stay held long enough for its full ~2600ms timed sequence
-  // (type → toggle → move → Add click) to finish before beat 2 flips to the done state — else the
-  // Add/apply gets cut. widened window; paired with a longer LANG_AUTOPLAY_MS for this card.
-  var C1_BEATS = [0.1, 0.55, 0.85];   // chips · form plays · done(+new word) · animate out (before loop restarts)
-  var C2_LIFT  = 0.30;                          // card2 beat1: trigger lifts out, slot makes room, URL shows below
-  var C2_RISE  = 0.58;                          // card2 beat2: URL rises straight up into the (pre-sized) slot
-  var ACTIVE_CLASS = 'is-active';              // combo class that marks the active tone button (card 3)
-  var WAVE_STAGGER = 45;                       // card 3: ms delay per word → the wave-in of the message
-  var EASE     = 'cubic-bezier(.4,0,.2,1)';    // shared snappy ease
-  var BACK     = 'cubic-bezier(.34,1.56,.64,1)'; // playful overshoot (bounce) for the new-word chip
+  var CHIP_MS  = 220;                          // new-word chip pop
+  // beat 1 must stay held long enough for the form's full ~2600ms TIMED sequence (type → toggle → move →
+  // Add click) to finish before beat 2 flips to done — else the Add gets cut. Hence the wide window here
+  // plus the long LANG_AUTOPLAY_MS[1].
+  var C1_BEATS = [0.1, 0.55, 0.85];            // chips · form plays · done(+new word) · animate out
+  var C2_LIFT  = 0.30;                         // card 2: trigger lifts out, slot makes room, URL below
+  var C2_RISE  = 0.58;                         // card 2: URL rises into the slot
+  var ACTIVE_CLASS = 'is-active';              // marks the active tone button (card 3)
+  var WAVE_STAGGER = 45;                       // card 3: ms delay per word
+  var EASE     = 'cubic-bezier(.4,0,.2,1)';
+  var BACK     = 'cubic-bezier(.34,1.56,.64,1)';
+
+  // ---- playback (both modes) ----
+  var LANG_AUTOPLAY_MS = [6000, 9000, 4500, 5000];   // per-card duration (ms); card 1 longest, see C1_BEATS
+  var LANG_START       = { 0: 0.3 };   // per-card starting progress (switcher enters 30% in)
+
+  // ---- MOBILE (≤ MOBILE_BP) ----
+  var MOBILE_BP        = 991;
+  var MOBILE_SEL       = '.lang_mobile-wrap, [data-lang="mobile"]';
+  var MOBILE_BLOCK_SEL = '.lang_stack-wrap, [data-lang-play]';
+  var MOBILE_SLOT_SEL  = '.lang_anim-wrap, [data-lang-slot]';
+  var MOBILE_MS        = [];     // per-card duration override (ms); empty = LANG_AUTOPLAY_MS
+  var MOBILE_LOOP      = true;   // loop while the block is in view
+  var MOBILE_IO_MARGIN = '-15%'; // bottom rootMargin — how far up the viewport the block must be to start
+  var MOBILE_PATH_FONT = '';     // card 0 curved-text size. '' = inherit the embed CSS. Setting it writes
+                                 // inline on the <textPath>, the only way to beat #marquee-text-lang.
+  var MOBILE_SNIP_FIT  = false;  // card 2: true = cut the URL pill to card width (gradient covers the cut)
+  var MOBILE_FIT_W     = 0;      // px design width; JS scales each card by slotW/this and reserves the
+                                 // scaled height → proportions hold at any width. 0 = off, fill the slot.
 
   var ATTR = 'data-lang';
 
-  // beat index = how many thresholds tp has crossed (ascending array)
+  function langStart(i) { return (LANG_START && LANG_START[i]) || 0; }
+
+  // how many thresholds tp has crossed (ascending array)
   function beatOf(tp, ths) {
     var b = 0;
     for (var i = 0; i < ths.length; i++) { if (tp >= ths[i]) { b++; } }
     return b;
   }
 
-  // timed typewriter: types `text` into el over ms on play(); reset() clears. cancellable so scrubbing
-  // back and forth re-triggers cleanly. uses real time (rAF), so play speed is independent of scroll.
+  // rAF typewriter — real time, so speed is independent of scroll
   function makeTyper(el) {
     var raf = 0, startT = 0, full = '', dur = 600, done = false;
     function step(now) {
@@ -124,7 +113,7 @@
     }
     return {
       play: function (text, ms) {
-        if (done && full === text) { return; }     // already fully typed — don't restart
+        if (done && full === text) { return; }     // already typed — don't restart
         window.cancelAnimationFrame(raf);
         full = text; dur = ms || 600; startT = 0; done = false;
         raf = window.requestAnimationFrame(step);
@@ -133,8 +122,8 @@
     };
   }
 
-  // wrap an element's text into per-word spans with a staggered transition-delay → drive opacity/transform
-  // for a left-to-right WAVE. whitespace (incl. newlines under white-space:pre-line) is kept as text nodes.
+  // per-word spans with staggered transition-delay → left-to-right wave. whitespace (incl. newlines under
+  // white-space:pre-line) stays as text nodes.
   function waveWrap(el, staggerMs) {
     var parts = el.textContent.split(/(\s+)/);
     el.textContent = '';
@@ -155,29 +144,72 @@
     return spans;
   }
 
-  function init() {
-    if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
-      console.warn('[languages] GSAP + ScrollTrigger required before this script.');
-      return;
+  // GOTCHA (mobile clones): a cloned <textPath href="#curve"> still resolves to the FIRST #curve in the
+  // document (the desktop one) → the curve breaks. So suffix every id in the clone and rewrite every ref.
+  function uniqIds(root, sfx) {
+    var map = {}, all = [root];
+    if (root.id) { map[root.id] = root.id + '-' + sfx; root.id = map[root.id]; }
+    Array.prototype.forEach.call(root.querySelectorAll('[id]'), function (el) {
+      map[el.id] = el.id + '-' + sfx; el.id = map[el.id];
+    });
+    Array.prototype.push.apply(all, root.querySelectorAll('*'));
+    var keys = Object.keys(map);
+    if (!keys.length) { return; }
+    var XL = 'http://www.w3.org/1999/xlink';
+    var REFS = ['href', 'fill', 'stroke', 'clip-path', 'mask', 'filter', 'marker-start', 'marker-mid', 'marker-end'];
+    var res = keys.map(function (k) {
+      return { re: new RegExp('#' + k.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&') + '(?![\\w-])', 'g'), to: '#' + map[k] };
+    });
+    function swap(v) {
+      for (var i = 0; i < res.length; i++) { v = v.replace(res[i].re, res[i].to); }
+      return v;
     }
-    gsap.registerPlugin(ScrollTrigger);
+    Array.prototype.forEach.call(all, function (el) {
+      if (!el.getAttribute) { return; }
+      // the embed ships its own <style> keyed off #svg-trail / #marquee-text-lang — rewrite those
+      // selectors too, else the clone loses fill:transparent (black blob) + the text styling
+      if (el.tagName && el.tagName.toLowerCase() === 'style') {
+        if (el.textContent && el.textContent.indexOf('#') !== -1) { el.textContent = swap(el.textContent); }
+        return;
+      }
+      for (var a = 0; a < REFS.length; a++) {
+        var v = el.getAttribute(REFS[a]);
+        if (v && v.indexOf('#') !== -1) { el.setAttribute(REFS[a], swap(v)); }
+      }
+      var xv = el.getAttributeNS ? el.getAttributeNS(XL, 'href') : null;
+      if (xv && xv.indexOf('#') !== -1) { el.setAttributeNS(XL, 'href', swap(xv)); }
+    });
+  }
 
-    var section = document.querySelector('[' + ATTR + '="section"]');
-    if (!section) { console.warn('[languages] no [data-lang="section"] found'); return; }
+  // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
+  var LINE = '', MID_FRAC = [];
+  (function buildLine() {
+    var starts = [];
+    for (var s = 0; s < SEGS.length; s++) {
+      starts[s] = LINE.length;
+      LINE += SEGS[s].text;
+      if (s < SEGS.length - 1) { LINE += SEP; }
+    }
+    var totalLen = LINE.length || 1;
+    for (var s2 = 0; s2 < SEGS.length; s2++) {
+      MID_FRAC[s2] = (starts[s2] + SEGS[s2].text.length / 2) / totalLen;
+    }
+  }());
 
-    // ---- card 0: language switcher (line streams along the curve, flag swaps on arrival) ----
-    var card0   = section.querySelector('[' + ATTR + '-anim="0"]');
-    var nameEl  = card0 && card0.querySelector('[' + ATTR + '-name]');    // the curved SVG string (<textPath>)
-    var labelEl = card0 && card0.querySelector('[' + ATTR + '-label]');   // the VISIBLE language name text el
-    var flagEls = card0 ? card0.querySelectorAll('[' + ATTR + '-flag]') : [];
+  // ==========================================================================
+  // card factories — each takes the card ROOT and returns { render(tp), measure(), destroy() }.
+  // Desktop card and each mobile clone get their OWN instance.
+  // ==========================================================================
 
-    // flag has three authoring modes, auto-detected:
-    //   MULTI  — author one flag el per language, each tagged  data-lang-flag="us|de|es|in"
-    //            → JS shows the active one, hides the rest. best for custom flag assets + styling.
-    //   IMG    — a single <img data-lang-flag> → JS swaps its src by country code (flagcdn).
-    //   TEXT   — a single text el → JS sets the emoji (renders as letters "DE" on Windows — avoid).
-    // only elements with a NON-EMPTY code count as per-language flags — so a wrapper carrying a bare
-    // data-lang-flag (no value) is ignored, not hidden. >1 coded flag = MULTI mode.
+  // ---- card 0: language switcher — the line streams along the curve, flag swaps on arrival ----
+  function buildCard0(root, fontSize, hardFont) {
+    if (!root) { return null; }
+    var nameEl  = root.querySelector('[' + ATTR + '-name]');    // the <textPath>
+    var labelEl = root.querySelector('[' + ATTR + '-label]');
+    var flagEls = root.querySelectorAll('[' + ATTR + '-flag]');
+
+    // only a NON-EMPTY code counts as a per-language flag, so a wrapper with a bare data-lang-flag is
+    // ignored rather than hidden. >1 coded flag = MULTI mode (show active, hide rest).
     var coded = [];
     Array.prototype.forEach.call(flagEls, function (el) {
       if (el.getAttribute(ATTR + '-flag')) { coded.push(el); }
@@ -188,45 +220,36 @@
 
     function setActive(seg) {
       if (labelEl && labelEl.textContent !== seg.name) { labelEl.textContent = seg.name || ''; }
-      if (flagMulti) {                                   // toggle authored per-language flag elements
+      if (flagMulti) {
         for (var g = 0; g < coded.length; g++) {
           coded[g].style.display = (coded[g].getAttribute(ATTR + '-flag') === seg.code) ? '' : 'none';
         }
-      } else if (singleIsImg) {                          // swap the single <img> src
+      } else if (singleIsImg) {
         var src = FLAG_URL.replace('{code}', seg.code || '');
         if (singleFlag.getAttribute('src') !== src) { singleFlag.setAttribute('src', src); }
-      } else if (singleFlag && singleFlag.textContent !== seg.flag) {   // single text el → emoji
+      } else if (singleFlag && singleFlag.textContent !== seg.flag) {
         singleFlag.textContent = seg.flag || '';
       }
     }
 
-    // the <text> el owns the x attr the drift moves; nameEl is its <textPath> child (holds the string).
+    // the <text> owns the x attr we move; nameEl is its <textPath> child (holds the string)
     var textEl = null;
     if (nameEl) {
       textEl = (nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath') ? nameEl.parentNode : nameEl;
     }
-    if (textEl && LANG_PATH_FONT) { textEl.style.fontSize = LANG_PATH_FONT; }   // switcher path text size
-    // the marquee svg is the one that OWNS the text (card0 also holds the flag svgs — don't grab those)
+    var fs = (fontSize === undefined) ? LANG_PATH_FONT : fontSize;
+    if (textEl && fs) { textEl.style.fontSize = fs; }
+    // the embed's #marquee-text-lang rule outranks the <text> inline size, so a hard override must go on
+    // the <textPath> itself
+    if (hardFont && fs && nameEl && nameEl !== textEl) { nameEl.style.fontSize = fs; }
+    // take the svg that OWNS the text — card 0 also holds the flag svgs
     var svgEl  = nameEl ? (nameEl.closest && nameEl.closest('svg')) : null;
-    if (!svgEl && card0) { svgEl = card0.querySelector('svg'); }
-    var pathEl = svgEl && (svgEl.querySelector('#curve') || svgEl.querySelector('path'));   // the curve the text rides
+    if (!svgEl) { svgEl = root.querySelector('svg'); }
+    var pathEl = svgEl && (svgEl.querySelector('[id^="curve"]') || svgEl.querySelector('path'));
 
-    // build the ONE joined line + record each segment's centre as a fraction of the whole string,
-    // so we can park that fraction at the anchor + swap the flag exactly as the segment arrives.
-    var full = '', midFrac = [], starts = [];
-    for (var s = 0; s < SEGS.length; s++) {
-      starts[s] = full.length;
-      full += SEGS[s].text;
-      if (s < SEGS.length - 1) { full += SEP; }
-    }
-    var totalLen = full.length || 1;
-    for (var s2 = 0; s2 < SEGS.length; s2++) {
-      midFrac[s2] = (starts[s2] + SEGS[s2].text.length / 2) / totalLen;
-    }
-    if (nameEl && nameEl.textContent !== full) { nameEl.textContent = full; }   // set once; JS owns it
+    if (nameEl && nameEl.textContent !== LINE) { nameEl.textContent = LINE; }
 
-    // measured lengths (arc units): span = rendered length of the whole line; pathLen = the curve length.
-    // re-measured after webfonts load (glyph widths change) + on resize.
+    // span = rendered length of the line, in arc units. Re-measured after webfonts load + on resize.
     var span = 0, anchorArc = 0;
     function measure() {
       try { span = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
@@ -237,424 +260,428 @@
       anchorArc = ANCHOR * pathLen;
     }
     measure();
-    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(function () { measure(); }); }
 
     var lastFlagI = -1;
-    function renderCard0(progress) {
-      if (!card0 || SEGS.length === 0) { return; }
+    function render(progress) {
+      if (SEGS.length === 0) { return; }
       var N = SEGS.length;
       var p = Math.max(0, Math.min(1, progress));
 
-      // CONSTANT-SPEED sweep from the first language's centre to the last — linear along the string, so
-      // the pace stays even no matter how long each language's text is (no speed-up on the long ones).
-      var ff = midFrac[0] + (midFrac[N - 1] - midFrac[0]) * p;
+      // linear along the STRING (not per-segment), so the sweep keeps a constant speed regardless of how
+      // long each language's text is
+      var ff = MID_FRAC[0] + (MID_FRAC[N - 1] - MID_FRAC[0]) * p;
       if (textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
       }
 
-      // flag = the language whose centre is nearest the anchor right now
+      // flag = whichever language's centre is nearest the anchor
       var flagIdx = 0, bestD = Infinity;
       for (var s = 0; s < N; s++) {
-        var d = Math.abs(midFrac[s] - ff);
+        var d = Math.abs(MID_FRAC[s] - ff);
         if (d < bestD) { bestD = d; flagIdx = s; }
       }
       if (flagIdx !== lastFlagI) { setActive(SEGS[flagIdx]); lastFlagI = flagIdx; }
     }
 
-    // ---- cards: collect every [data-lang-anim] by its index, stack them in one spot, and give each
-    // an animator. card 0 = the language switcher (renderCard0). cards 1–3 = add their renderers below. ----
-    var cardWrap = card0 ? card0.parentNode : section;
-    var cardEls  = [];
-    Array.prototype.forEach.call((cardWrap || section).querySelectorAll('[' + ATTR + '-anim]'), function (el) {
-      var idx = parseInt(el.getAttribute(ATTR + '-anim'), 10);
-      if (!isNaN(idx)) { cardEls[idx] = el; }
+    return { render: render, measure: measure, destroy: function () {} };
+  }
+
+  // ---- card 1: chips → form in → word types → scrolls to the toggles + Add word → form out → chips +1 ----
+  function buildCard1(root) {
+    if (!root) { return null; }
+    var oneV = function (v) { return root.querySelector('[data-vocab="' + v + '"]'); };
+    var formEl    = oneV('form');
+    var trackEl   = (oneV('track') || (formEl && formEl.querySelector('.lang_inner-card-wrap'))) || null;
+    var inputEl   = oneV('input');
+    var inputTxt  = inputEl ? (inputEl.querySelector('.lang_input-text') || inputEl) : null;
+    var togSpell  = oneV('toggle-spell');
+    var knobSpell = togSpell && togSpell.querySelector('[data-vocab-knob]');
+    var addBtn    = oneV('add-word');
+    // authored in Webflow as a bare add-btn="add-btn", so accept that too — else the click pulse is a
+    // silent no-op
+    var addNewBtn = oneV('add-btn') || root.querySelector('[add-btn]');
+    var listEl    = oneV('list');
+    var newChip   = oneV('new-chip');
+
+    // CSS transitions = the "play" of each beat
+    if (formEl)  { formEl.style.transformOrigin = 'center bottom'; formEl.style.willChange = 'opacity, transform';
+                   formEl.style.transition = 'opacity ' + TRIG_MS + 'ms ease, transform ' + TRIG_MS + 'ms ' + EASE; }
+    if (trackEl)   { trackEl.style.transition = 'transform ' + TRIG_MS + 'ms ' + EASE; }
+    if (togSpell)  { togSpell.style.transition = 'color ' + TRIG_MS + 'ms ease'; }
+    if (knobSpell) { knobSpell.style.transition = 'transform ' + TRIG_MS + 'ms ' + EASE; }
+    if (listEl)    { listEl.style.transition = 'opacity ' + TRIG_MS + 'ms ease'; }
+    if (newChip)   { newChip.style.transformOrigin = 'center';
+                     newChip.style.transition = 'opacity ' + CHIP_MS + 'ms ease, transform ' + CHIP_MS + 'ms ' + BACK; }
+    if (addBtn)    { addBtn.style.transition = 'transform 180ms ' + EASE; }
+    if (addNewBtn) { addNewBtn.style.transition = 'transform 180ms ' + EASE; }
+
+    var typer = inputTxt ? makeTyper(inputTxt) : null;
+
+    // how far the inner track scrolls — 0 if the form is auto-height instead of a clip window
+    var maxScroll = 0;
+    function measure() {
+      maxScroll = formEl ? Math.max(0, formEl.scrollHeight - formEl.clientHeight) : 0;
+    }
+    measure();
+
+    // ---- state setters ----
+    function setForm(shown, y) {
+      if (!formEl) { return; }
+      formEl.style.opacity = shown ? '1' : '0';
+      formEl.style.transform = 'translateY(' + y + 'px) scale(' + (shown ? 1 : 0.98) + ')';
+      formEl.style.pointerEvents = shown ? '' : 'none';
+    }
+    function setTrack(scrolled) {
+      if (trackEl && maxScroll > 0) { trackEl.style.transform = 'translateY(' + (scrolled ? -maxScroll : 0) + 'px)'; }
+    }
+    function setToggle(on) {
+      if (!togSpell) { return; }
+      togSpell.style.color = on ? TOG_ON : TOG_OFF;
+      if (knobSpell) { knobSpell.style.transform = on ? 'translateX(16px)' : 'translateX(0px)'; }
+    }
+    function setList(vis) { if (listEl) { listEl.style.opacity = vis ? '1' : '0'; } }
+    function pulse(el, s) {
+      if (!el) { return; }
+      el.style.transform = 'scale(' + s + ')';
+      window.requestAnimationFrame(function () { el.style.transform = 'scale(1)'; });
+    }
+    // fast press down, springy release — reads as a real click
+    function clickBtn(el) {
+      if (!el) { return; }
+      el.style.transition = 'transform 90ms ' + EASE;
+      el.style.transform = 'scale(0.85)';
+      at(120, function () {
+        el.style.transition = 'transform 340ms ' + BACK;
+        el.style.transform = 'scale(1)';
+      });
+    }
+    function setNewChip(inN) {
+      if (!newChip) { return; }
+      if (inN) {
+        if (!newChip.style.display || newChip.style.display === 'none') {
+          newChip.style.display = ''; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.4) translateY(-6px)';
+          window.requestAnimationFrame(function () { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1) translateY(0px)'; });
+        } else { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1) translateY(0px)'; }
+      } else {
+        newChip.style.display = 'none'; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.6)';
+      }
+    }
+
+    // ---- timeline: at beat 1 the form SELF-PLAYS on timers, not on scroll ----
+    var timers = [];
+    function clearSeq() { for (var i = 0; i < timers.length; i++) { window.clearTimeout(timers[i]); } timers = []; }
+    function at(ms, fn) { timers.push(window.setTimeout(fn, ms)); }
+    function exitY() { return -((formEl ? formEl.offsetHeight : 400) * 1.25 + 60); }
+
+    function toRest() {          // beat 0: chips
+      clearSeq();
+      setList(true); setForm(false, 40); setToggle(false); setTrack(false); setNewChip(false);
+      if (typer) { typer.reset(); }
+    }
+    function playForm() {        // beat 1: plays itself
+      clearSeq();
+      setNewChip(false); setList(true); setForm(false, 40); setToggle(false); setTrack(false);
+      pulse(addNewBtn, 0.92);                                                   // "Add a new word" click
+      at(300,                     function () { setList(false); setForm(true, 0); });    // chips out, form in
+      at(650,                     function () { if (typer) { typer.play(VOCAB_WORD, TYPE_MS); } });
+      at(650 + TYPE_MS + 250,     function () { setToggle(true); });
+      at(650 + TYPE_MS + 800,     function () { setTrack(true); });             // scroll down to the buttons
+      at(650 + TYPE_MS + 1300,    function () { clickBtn(addBtn); });
+    }
+    function toDone() {          // beat 2: form out, chips return with the new word
+      clearSeq();
+      if (typer) { typer.play(VOCAB_WORD, 1); }
+      setToggle(true); setTrack(true);
+      setForm(false, exitY());
+      setList(true); setNewChip(true);
+    }
+    function toExit() {          // beat 3: everything out before the loop restarts
+      clearSeq();
+      setList(false);
+      if (newChip) { newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.4) translateY(-6px)'; }
+    }
+
+    var lastBeat = -1;
+    function render(tp) {
+      var beat = beatOf(tp, C1_BEATS);
+      if (beat === lastBeat) { return; }
+      lastBeat = beat;
+      if (beat <= 0) { toRest(); }
+      else if (beat === 1) { playForm(); }
+      else if (beat === 2) { toDone(); }
+      else { toExit(); }
+    }
+
+    return { render: render, measure: measure, destroy: clearSeq };
+  }
+
+  // ---- card 2: the trigger pill lifts out, the URL rises into its slot, the sentence reflows ----
+  function buildCard2(root, clampW) {
+    if (!root) { return null; }
+    var oneS = function (v) { return root.querySelector('[data-snip="' + v + '"]'); };
+    var lineEl = oneS('line');
+    var slot = oneS('slot');
+    var trig = oneS('trigger');
+    var exp  = oneS('expand');
+    if (!slot) { return null; }
+
+    // centre the line so the growing slot pushes both sides out equally. NOT text-align centre — the
+    // URL inside the pill stays left-aligned.
+    if (lineEl) {
+      lineEl.style.justifyContent = 'center';
+      lineEl.style.flexWrap = 'nowrap';
+      // side text gets pushed OUT past the card edge, never shrunk or re-wrapped — else the widening
+      // pill lands on top of it
+      Array.prototype.forEach.call(lineEl.children, function (ch) {
+        if (ch === slot) { return; }
+        ch.style.flex = '0 0 auto';
+        ch.style.whiteSpace = 'nowrap';
+      });
+    }
+
+    // the fade overlay must be absolute — in flow it pushes the URL text off-centre
+    var grad = exp && exp.querySelector('.lang_gradient');
+    if (grad) {
+      grad.style.position = 'absolute'; grad.style.top = '0'; grad.style.right = '0'; grad.style.bottom = '0';
+      grad.style.pointerEvents = 'none';
+    }
+
+    slot.style.position = 'relative';
+    slot.style.display = 'inline-block';
+    slot.style.verticalAlign = 'middle';
+    // GOTCHA: as a flex item the slot shrinks back below the width we set, but the pill inside is
+    // absolute and can't shrink with it → the pill overflows the squashed slot and covers the side text.
+    slot.style.flex = '0 0 auto';
+    slot.style.transition = 'width ' + TRIG_MS + 'ms ' + EASE;   // slot grows → reflow plays
+    // both pills centred, so the swap is a straight vertical rise with no diagonal drift
+    [trig, exp].forEach(function (el) {
+      if (!el) { return; }
+      el.style.position = 'absolute';
+      el.style.top = '50%'; el.style.left = '50%';
+      el.style.whiteSpace = 'nowrap';
+      el.style.willChange = 'opacity, transform';
+      el.style.transition = 'opacity ' + TRIG_MS + 'ms ease, transform ' + TRIG_MS + 'ms ' + EASE;
     });
+
+    // each pill's natural width — the slot sizes to the active one, which drives the reflow
+    var trigW = 0, expW = 0, slotH = 0, lastBeat = -1;
+    function measure() {
+      slotH = 0;
+      if (trig) { trigW = trig.offsetWidth; slotH = Math.max(slotH, trig.offsetHeight); }
+      if (exp) {
+        var d = exp.style.display, o = exp.style.opacity;   // reveal briefly to measure
+        exp.style.display = ''; exp.style.opacity = '0';
+        if (clampW) { exp.style.maxWidth = 'none'; }
+        expW = exp.offsetWidth; slotH = Math.max(slotH, exp.offsetHeight);
+        if (clampW) {
+          var avail = root.clientWidth || 0;
+          if (avail && expW > avail) { expW = avail; }
+          exp.style.maxWidth = expW + 'px';
+          exp.style.overflow = 'hidden';
+        }
+        exp.style.display = d; exp.style.opacity = o;
+      }
+      if (slotH) { slot.style.height = slotH + 'px'; }
+      if (lastBeat >= 0 && (trigW || expW)) { slot.style.width = (lastBeat >= 1 ? expW : trigW) + 'px'; }
+    }
+    measure();
+
+    // beat 0 = rest · 1 = trigger out, room made, URL waiting below · 2 = URL risen into the slot
+    function render(tp) {
+      var beat = beatOf(tp, [C2_LIFT, C2_RISE]);
+      lastBeat = beat;
+      if (trig) {
+        trig.style.transform = 'translate(-50%,-50%) translateY(' + (beat === 0 ? 0 : -SNIP_RISE) + 'px)';
+        trig.style.opacity = (beat >= 2) ? '0' : '1';
+      }
+      if (exp) {
+        exp.style.transform = 'translate(-50%,-50%) translateY(' + (beat >= 2 ? 0 : SNIP_RISE) + 'px)';
+        exp.style.opacity = (beat >= 1) ? '1' : '0';
+      }
+      // the slot grows at beat 1, BEFORE the URL rises, so the URL lands straight instead of from the right
+      if (trigW || expW) { slot.style.width = (beat >= 1 ? expW : trigW) + 'px'; }
+    }
+
+    return {
+      render: render,
+      measure: measure,
+      destroy: function () {
+        slot.style.width = ''; slot.style.height = '';
+        if (exp && clampW) { exp.style.maxWidth = ''; exp.style.overflow = ''; }
+      }
+    };
+  }
+
+  // ---- card 3: cycle Formal → Casual → Very casual; message waves in, active button takes is-active ----
+  function buildCard3(root) {
+    if (!root) { return null; }
+    var btns = root.querySelectorAll('[data-tone]');
+    Array.prototype.forEach.call(btns, function (b) {
+      b.style.transition = 'background-color ' + TRIG_MS + 'ms ease, color ' + TRIG_MS + 'ms ease';
+    });
+    if (!btns.length) { console.warn('[languages] card 3: no [data-tone] buttons found'); }
+
+    // one el per tone, [data-tone-msg="0|1|2"] or the tone key, so the copy stays editable in Webflow.
+    // Fallback: a single untagged [data-tone-msg] → JS swaps its text from TONES.
+    var msgList = root.querySelectorAll('[data-tone-msg]');
+    var msgByTone = [];
+    Array.prototype.forEach.call(msgList, function (el) {
+      var v = el.getAttribute('data-tone-msg');
+      var idx = parseInt(v, 10);
+      if (isNaN(idx)) { for (var k = 0; k < TONES.length; k++) { if (TONES[k].key === v) { idx = k; break; } } }
+      if (idx >= 0 && !isNaN(idx)) { msgByTone[idx] = el; }
+    });
+    var authored = msgByTone.filter(Boolean).length >= 2;
+    var single = (!authored && msgList.length === 1) ? msgList[0] : null;
+    var wrap = null, msgSpans = [], measure = function () {};
+
+    if (authored) {
+      // stack the messages in ONE GRID CELL so they can crossfade. Grid, not absolute: the wrapper keeps
+      // sizing itself (width = its normal box, height = the tallest message, padding native). Absolute
+      // collapsed the wrapper, which forced px locks and shrank the box to a text column when narrow.
+      var kept = msgByTone.filter(Boolean);
+      wrap = kept[0].parentNode;
+      if (wrap) {
+        wrap.style.display = 'grid';
+        wrap.style.boxSizing = 'border-box';
+      }
+      msgByTone.forEach(function (el, t) {
+        if (!el) { return; }
+        el.style.gridArea = '1 / 1';
+        el.style.whiteSpace = 'pre-line';
+        msgSpans[t] = waveWrap(el, WAVE_STAGGER);
+      });
+    } else if (single) {
+      single.style.whiteSpace = 'pre-line'; single.style.willChange = 'opacity, transform';
+      single.style.transition = 'opacity ' + TRIG_MS + 'ms ease';
+    }
+
+    var lastActive = -1;
+    // active tone = which third of the slice we're in
+    function render(tp) {
+      var N = TONES.length;
+      var active = Math.max(0, Math.min(N - 1, Math.floor(Math.max(0, Math.min(1, tp)) * N)));
+
+      if (authored) {
+        for (var t = 0; t < N; t++) {
+          var spans = msgSpans[t];
+          if (!spans) { continue; }
+          var on = (t === active);
+          for (var w = 0; w < spans.length; w++) {
+            spans[w].style.opacity = on ? '1' : '0';
+            spans[w].style.transform = on ? 'translateY(0px)' : 'translateY(8px)';
+          }
+        }
+      } else if (single) {
+        if (active !== lastActive) { single.textContent = TONES[active].text; }
+        single.style.opacity = '1';
+      }
+
+      if (active !== lastActive) {
+        for (var b = 0; b < btns.length; b++) {
+          var v = btns[b].getAttribute('data-tone');
+          // match by ORDER as well as value/key, so a mistagged button still activates
+          btns[b].classList.toggle(ACTIVE_CLASS, b === active || v === String(active) || v === TONES[active].key);
+        }
+        lastActive = active;
+      }
+    }
+
+    return {
+      render: render,
+      measure: measure,
+      destroy: function () { if (wrap) { wrap.style.display = ''; } }
+    };
+  }
+
+  function buildCard(idx, root, opts) {
+    opts = opts || {};
+    if (idx === 0) { return buildCard0(root, opts.pathFont, opts.hardFont); }
+    if (idx === 1) { return buildCard1(root); }
+    if (idx === 2) { return buildCard2(root, opts.clampW); }
+    if (idx === 3) { return buildCard3(root); }
+    return null;
+  }
+
+  // ==========================================================================
+  // DESKTOP driver — scroll list index (mwg effect105). The .lang_card--wrap stays put (sticky in
+  // Webflow; untouched here) while the .lang_anim-text-wrap blocks scroll past. Nearest block to the
+  // viewport centre is active → its card crossfades in and plays. Runs off getBoundingClientRect each
+  // frame, no pin or spacer.
+  // ==========================================================================
+
+  // ---- desktop layout config ----
+  var FORCE_TIGHT = true;  // collapse per-block 100vh → natural height, so blocks stack tight. false =
+                           // respect the authored heights (strip the 100vh in Webflow yourself)
+  var LEAD_TOP_VH    = 0.15;  // blank scroll before the first block
+  var LEAD_BOTTOM_VH = 0.1;   // blank scroll after the last. lower = section ends earlier with the last
+                              // text still visible → next section peeks in
+  var START_LIFT_VH  = 0.45;  // lift the text column so block 0 enters near centre (higher = higher)
+  var GAP_VH     = 0;      // extra gap between blocks, in viewports. 0 = tight Webflow stacking. raise it
+                           // to give each card a longer reign at centre
+  var DRIFT_FRAC = 0.2;    // sideways drift at centre, as a fraction of column width. 0 = off, negative
+                           // flips the side
+  var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks
+  var POP_SCALE  = 1;      // scale-pop of the card wrap on swap (1 = off; try 1.04)
+  var LANG_AUTOPLAY = true;   // cards play on a timer when active instead of scrubbing to scroll
+  var LANG_REPLAY   = true;   // replay from the start whenever a block becomes active again
+  var LANG_LOOP     = true;   // active card loops while active
+  var LANG_SCRUB    = [];     // card indices kept scrubbed to scroll ([] = all autoplay)
+
+  function langIsAuto(i) { return LANG_AUTOPLAY && LANG_SCRUB.indexOf(i) === -1; }
+
+  // triangle 0→1→0 peaking at p=0.5, smoothstepped so the drift eases in/out
+  function easeTri(p) {
+    var t = 1 - Math.abs(2 * p - 1);
+    return t * t * (3 - 2 * t);
+  }
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+  function initDesktop(section, cardEls) {
+    var cards = [], renderers = {};
+    for (var ci = 0; ci < cardEls.length; ci++) {
+      var built = buildCard(ci, cardEls[ci]);
+      if (built) { cards[ci] = built; renderers[ci] = built.render; }
+    }
+
+    var cardWrap = cardEls[0] ? cardEls[0].parentNode : section;
     if (CARD_STACK) {
-      // overlay the cards in one spot so they can crossfade — natural height, vertically centred in the
-      // sticky wrap. NOT stretched to fill (that would blow the card up to the whole 100vh column).
+      // overlay the cards so they can crossfade. Width spans the column, height stays natural — NOT
+      // stretched to fill, which would blow the card up to the whole 100vh column.
       for (var c = 0; c < cardEls.length; c++) {
         var ce = cardEls[c];
         if (!ce) { continue; }
         ce.style.position  = 'absolute';
-        ce.style.left = '0'; ce.style.right = '0';        // span the column width; keep natural height
+        ce.style.left = '0'; ce.style.right = '0';
         ce.style.top = '50%';
-        ce.style.transform = 'translateY(-50%)';          // vertical centre — cards stay put
-        ce.style.transition = 'opacity ' + CARD_FADE_MS + 'ms ease';   // triggered crossfade
+        ce.style.transform = 'translateY(-50%)';
+        ce.style.transition = 'opacity ' + CARD_FADE_MS + 'ms ease';
         ce.style.willChange = 'opacity';
       }
     }
 
-    // per-card animators: local tp 0..1 across that card's slice. add renderCard2/3 as you build them.
-    var renderers = { 0: renderCard0 };
-
-    // seed the switcher: paint it at p=0 (first language parked at the anchor) and show it right away,
-    // so its text is visible the moment you scroll in — never an empty/unseeded frame before it's active.
+    // seed the switcher so its text is there the moment you scroll in, never an unseeded frame
     if (renderers[0]) { renderers[0](langStart(0)); }
     if (cardEls[0]) { cardEls[0].style.opacity = '1'; }
-
-    // ---- card 1: "Add to vocabulary" — chips → form slides in → word types → content scrolls up to
-    // reveal the toggles + Add word → send pressed → form flies up and out → chips return (+1). ----
-    var card1Measure = null;
-    (function buildCard1() {
-      var root = cardEls[1];
-      if (!root) { return; }
-      var oneV = function (v) { return root.querySelector('[data-vocab="' + v + '"]'); };
-      var formEl    = oneV('form');
-      var trackEl   = (oneV('track') || (formEl && formEl.querySelector('.lang_inner-card-wrap'))) || null;
-      var inputEl   = oneV('input');
-      var inputTxt  = inputEl ? (inputEl.querySelector('.lang_input-text') || inputEl) : null;
-      var togSpell  = oneV('toggle-spell');
-      var knobSpell = togSpell && togSpell.querySelector('[data-vocab-knob]');
-      var addBtn    = oneV('add-word');
-      var addNewBtn = oneV('add-btn');          // the "Add a new word" chip button (clicks before the form)
-      var listEl    = oneV('list');
-      var newChip   = oneV('new-chip');
-
-      // CSS transitions = the "play" of each triggered beat
-      if (formEl)  { formEl.style.transformOrigin = 'center bottom'; formEl.style.willChange = 'opacity, transform';
-                     formEl.style.transition = 'opacity ' + TRIG_MS + 'ms ease, transform ' + TRIG_MS + 'ms ' + EASE; }
-      if (trackEl)   { trackEl.style.transition = 'transform ' + TRIG_MS + 'ms ' + EASE; }
-      if (togSpell)  { togSpell.style.transition = 'color ' + TRIG_MS + 'ms ease'; }
-      if (knobSpell) { knobSpell.style.transition = 'transform ' + TRIG_MS + 'ms ' + EASE; }
-      if (listEl)    { listEl.style.transition = 'opacity ' + TRIG_MS + 'ms ease'; }
-      if (newChip)   { newChip.style.transformOrigin = 'center';
-                       newChip.style.transition = 'opacity ' + CHIP_MS + 'ms ease, transform ' + CHIP_MS + 'ms ' + BACK; }
-      if (addBtn)    { addBtn.style.transition = 'transform 180ms ' + EASE; }
-      if (addNewBtn) { addNewBtn.style.transition = 'transform 180ms ' + EASE; }
-
-      var typer = inputTxt ? makeTyper(inputTxt) : null;
-
-      // how far the inner track scrolls (only if the form is a clip window; 0 if auto-height)
-      var maxScroll = 0;
-      card1Measure = function () {
-        maxScroll = formEl ? Math.max(0, formEl.scrollHeight - formEl.clientHeight) : 0;
-      };
-      card1Measure();
-
-      // ---- state setters (each change plays via the CSS transitions set above) ----
-      function setForm(shown, y) {
-        if (!formEl) { return; }
-        formEl.style.opacity = shown ? '1' : '0';
-        formEl.style.transform = 'translateY(' + y + 'px) scale(' + (shown ? 1 : 0.98) + ')';
-        formEl.style.pointerEvents = shown ? '' : 'none';
-      }
-      function setTrack(scrolled) {
-        if (trackEl && maxScroll > 0) { trackEl.style.transform = 'translateY(' + (scrolled ? -maxScroll : 0) + 'px)'; }
-      }
-      function setToggle(on) {
-        if (!togSpell) { return; }
-        togSpell.style.color = on ? TOG_ON : TOG_OFF;
-        if (knobSpell) { knobSpell.style.transform = on ? 'translateX(16px)' : 'translateX(0px)'; }
-      }
-      function setList(vis) { if (listEl) { listEl.style.opacity = vis ? '1' : '0'; } }
-      function pulse(el, s) {
-        if (!el) { return; }
-        el.style.transform = 'scale(' + s + ')';
-        window.requestAnimationFrame(function () { el.style.transform = 'scale(1)'; });
-      }
-      // crisp "click": fast press down, then a springy release (overshoot) — reads as a real button click
-      function clickBtn(el) {
-        if (!el) { return; }
-        el.style.transition = 'transform 90ms ' + EASE;
-        el.style.transform = 'scale(0.85)';
-        at(120, function () {
-          el.style.transition = 'transform 340ms ' + BACK;
-          el.style.transform = 'scale(1)';
-        });
-      }
-      function setNewChip(inN) {
-        if (!newChip) { return; }
-        if (inN) {
-          if (!newChip.style.display || newChip.style.display === 'none') {
-            newChip.style.display = ''; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.4) translateY(-6px)';
-            window.requestAnimationFrame(function () { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1) translateY(0px)'; });
-          } else { newChip.style.opacity = '1'; newChip.style.transform = 'scale(1) translateY(0px)'; }
-        } else {
-          newChip.style.display = 'none'; newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.6)';
-        }
-      }
-
-      // ---- timeline: the form SELF-PLAYS once you scroll into position 2 (no more scrolling needed) ----
-      var timers = [];
-      function clearSeq() { for (var i = 0; i < timers.length; i++) { window.clearTimeout(timers[i]); } timers = []; }
-      function at(ms, fn) { timers.push(window.setTimeout(fn, ms)); }
-      function exitY() { return -((formEl ? formEl.offsetHeight : 400) * 1.25 + 60); }
-
-      function toRest() {          // POS1: chips
-        clearSeq();
-        setList(true); setForm(false, 40); setToggle(false); setTrack(false); setNewChip(false);
-        if (typer) { typer.reset(); }
-      }
-      function playForm() {        // POS2: sequence plays on its own — top → type → toggle → move to buttons → click
-        clearSeq();
-        setNewChip(false); setList(true); setForm(false, 40); setToggle(false); setTrack(false);
-        pulse(addNewBtn, 0.92);                                                   // "Add a new word" click
-        at(300,                     function () { setList(false); setForm(true, 0); });    // chips out, form to TOP
-        at(650,                     function () { if (typer) { typer.play(VOCAB_WORD, TYPE_MS); } }); // write
-        at(650 + TYPE_MS + 250,     function () { setToggle(true); });            // THEN toggle
-        at(650 + TYPE_MS + 800,     function () { setTrack(true); });             // THEN move down to buttons
-        at(650 + TYPE_MS + 1300,    function () { clickBtn(addBtn); });           // Add word click (crisp press)
-      }
-      function toDone() {          // POS3: form flies out, chips return with the new word
-        clearSeq();
-        if (typer) { typer.play(VOCAB_WORD, 1); }
-        setToggle(true); setTrack(true);
-        setForm(false, exitY());
-        setList(true); setNewChip(true);
-      }
-      function toExit() {          // POS4: done content animates OUT before the loop restarts
-        clearSeq();
-        setList(false);                                                          // chips fade out
-        if (newChip) { newChip.style.opacity = '0'; newChip.style.transform = 'scale(0.4) translateY(-6px)'; }
-      }
-
-      var lastBeat = -1;
-      // beats: 0 = chips · 1 = form self-plays · 2 = chips + new word · 3 = animate out (before restart)
-      renderers[1] = function (tp) {
-        var beat = beatOf(tp, C1_BEATS);
-        if (beat === lastBeat) { return; }
-        lastBeat = beat;
-        if (beat <= 0) { toRest(); }
-        else if (beat === 1) { playForm(); }
-        else if (beat === 2) { toDone(); }
-        else { toExit(); }
-      };
-    }());
-
-    // ---- card 2: "snippets" — the short trigger lifts out, the full expansion rises into its slot,
-    // and the sentence reflows around the wider pill. ----
-    var card2Measure = null;
-    (function buildCard2() {
-      var root = cardEls[2];
-      if (!root) { return; }
-      var oneS = function (v) { return root.querySelector('[data-snip="' + v + '"]'); };
-      var lineEl = oneS('line');
-      var slot = oneS('slot');
-      var trig = oneS('trigger');
-      var exp  = oneS('expand');
-      if (!slot) { return; }
-
-      // centre the line so the slot growing pushes BOTH sides out equally (even open). NOT text-align
-      // centre — the pill text (URL) stays LEFT-aligned.
-      if (lineEl) { lineEl.style.justifyContent = 'center'; }
-
-      // the fade overlay must be ABSOLUTE (right edge) — in-flow it pushes the URL text off-centre
-      var grad = exp && exp.querySelector('.lang_gradient');
-      if (grad) {
-        grad.style.position = 'absolute'; grad.style.top = '0'; grad.style.right = '0'; grad.style.bottom = '0';
-        grad.style.pointerEvents = 'none';
-      }
-
-      slot.style.position = 'relative';
-      slot.style.display = 'inline-block';
-      slot.style.verticalAlign = 'middle';
-      slot.style.transition = 'width ' + TRIG_MS + 'ms ' + EASE;   // slot grows → reflow plays
-      // pills centred in the slot so the swap is a STRAIGHT vertical rise (no diagonal drift)
-      [trig, exp].forEach(function (el) {
-        if (!el) { return; }
-        el.style.position = 'absolute';
-        el.style.top = '50%'; el.style.left = '50%';       // centred both axes; swap adds a vertical Y
-        el.style.whiteSpace = 'nowrap';
-        el.style.willChange = 'opacity, transform';
-        el.style.transition = 'opacity ' + TRIG_MS + 'ms ease, transform ' + TRIG_MS + 'ms ' + EASE;
-      });
-
-      // measure each pill's natural width so the slot can size to the active one (drives the reflow)
-      var trigW = 0, expW = 0, slotH = 0;
-      card2Measure = function () {
-        slotH = 0;
-        if (trig) { trigW = trig.offsetWidth; slotH = Math.max(slotH, trig.offsetHeight); }
-        if (exp) {
-          var d = exp.style.display, o = exp.style.opacity;   // reveal briefly to measure
-          exp.style.display = ''; exp.style.opacity = '0';
-          expW = exp.offsetWidth; slotH = Math.max(slotH, exp.offsetHeight);
-          exp.style.display = d; exp.style.opacity = o;
-        }
-        if (slotH) { slot.style.height = slotH + 'px'; }
-      };
-      card2Measure();
-
-      // triggered: crossing C2_SWAP fires the whole swap; CSS transitions play it over TRIG_MS
-      renderers[2] = function (tp) {
-        // beat 0 = rest · 1 = trigger lifted out + room made + URL waiting below · 2 = URL risen into slot
-        var beat = beatOf(tp, [C2_LIFT, C2_RISE]);
-        if (trig) {   // centred; lifts straight UP and out, fades once the URL takes over
-          trig.style.transform = 'translate(-50%,-50%) translateY(' + (beat === 0 ? 0 : -SNIP_RISE) + 'px)';
-          trig.style.opacity = (beat >= 2) ? '0' : '1';
-        }
-        if (exp) {    // centred; waits below, then rises straight UP into the slot (already full width)
-          exp.style.transform = 'translate(-50%,-50%) translateY(' + (beat >= 2 ? 0 : SNIP_RISE) + 'px)';
-          exp.style.opacity = (beat >= 1) ? '1' : '0';
-        }
-        // slot grows to make room at beat 1 — BEFORE the URL rises — so it lands straight, not from the right
-        if (trigW || expW) { slot.style.width = (beat >= 1 ? expW : trigW) + 'px'; }
-      };
-    }());
-
-    // ---- card 3: "tone" — cycle Formal → Casual → Very casual; the message rewrites itself and the
-    // active button takes the dark `is-action` state, with a quick fade on each switch. ----
-    var card3Measure = null;
-    (function buildCard3() {
-      var root = cardEls[3];
-      if (!root) { return; }
-      var btns = root.querySelectorAll('[data-tone]');
-      // smooth the active-button colour swap (is-action toggles the dark state)
-      Array.prototype.forEach.call(btns, function (b) {
-        b.style.transition = 'background-color ' + TRIG_MS + 'ms ease, color ' + TRIG_MS + 'ms ease';
-      });
-      if (!btns.length) { console.warn('[languages] card 3: no [data-tone] buttons found'); }
-
-      // messages: tag one el per tone [data-tone-msg="0|1|2"] (or the tone key) so the CLIENT edits the
-      // copy in Webflow. JS crossfades the active one. Fallback: a single untagged [data-tone-msg] → JS
-      // swaps its text from the TONES array (old behaviour).
-      var msgList = root.querySelectorAll('[data-tone-msg]');
-      var msgByTone = [];
-      Array.prototype.forEach.call(msgList, function (el) {
-        var v = el.getAttribute('data-tone-msg');
-        var idx = parseInt(v, 10);
-        if (isNaN(idx)) { for (var k = 0; k < TONES.length; k++) { if (TONES[k].key === v) { idx = k; break; } } }
-        if (idx >= 0 && !isNaN(idx)) { msgByTone[idx] = el; }
-      });
-      var authored = msgByTone.filter(Boolean).length >= 2;   // client authored per-tone messages
-      var single = (!authored && msgList.length === 1) ? msgList[0] : null;
-
-      if (authored) {
-        // stack the messages in one spot so they can crossfade
-        var kept = msgByTone.filter(Boolean);
-        var wrap = kept[0].parentNode;
-        // capture the wrapper's own box + padding BEFORE pulling the messages out of flow, then place
-        // the messages INSIDE the padding (absolute positioning ignores padding, so we honour it manually)
-        var cs = wrap ? getComputedStyle(wrap) : null;
-        var padL = cs ? (parseFloat(cs.paddingLeft) || 0) : 0;
-        var padT = cs ? (parseFloat(cs.paddingTop) || 0) : 0;
-        var padR = cs ? (parseFloat(cs.paddingRight) || 0) : 0;
-        var padB = cs ? (parseFloat(cs.paddingBottom) || 0) : 0;
-        var wrapW  = wrap ? wrap.offsetWidth : 0;                       // full width incl. padding + border
-        var innerW = wrap ? (wrap.clientWidth - padL - padR) : 0;       // content width (inside padding)
-        if (wrap) {
-          wrap.style.position = 'relative';
-          wrap.style.boxSizing = 'border-box';
-          if (wrapW) { wrap.style.width = wrapW + 'px'; }               // hold the design box (keeps padding)
-        }
-        var msgSpans = [];
-        msgByTone.forEach(function (el, t) {
-          if (!el) { return; }
-          el.style.position = 'absolute';
-          el.style.top = padT + 'px'; el.style.left = padL + 'px';      // sit inside the wrapper padding
-          if (innerW) { el.style.width = innerW + 'px'; }
-          el.style.whiteSpace = 'pre-line';
-          msgSpans[t] = waveWrap(el, WAVE_STAGGER);                     // per-word spans → wave in/out
-        });
-        card3Measure = function () {
-          var h = 0;
-          msgByTone.forEach(function (el) {
-            if (!el) { return; }
-            var o = el.style.opacity; el.style.opacity = '0';
-            h = Math.max(h, el.offsetHeight); el.style.opacity = o;
-          });
-          if (wrap && h) { wrap.style.minHeight = (h + padT + padB) + 'px'; }   // padding respected vertically too
-        };
-        card3Measure();
-      } else if (single) {
-        single.style.whiteSpace = 'pre-line'; single.style.willChange = 'opacity, transform';
-        single.style.transition = 'opacity ' + TRIG_MS + 'ms ease';
-      }
-
-      var lastActive = -1;
-      // triggered: active tone = which third of the slice we're in; CSS transitions play the crossfade
-      renderers[3] = function (tp) {
-        var N = TONES.length;
-        var active = Math.max(0, Math.min(N - 1, Math.floor(Math.max(0, Math.min(1, tp)) * N)));
-
-        if (authored) {
-          for (var t = 0; t < N; t++) {
-            var spans = msgSpans[t];
-            if (!spans) { continue; }
-            var on = (t === active);
-            for (var w = 0; w < spans.length; w++) {                    // per-word wave: staggered opacity + rise
-              spans[w].style.opacity = on ? '1' : '0';
-              spans[w].style.transform = on ? 'translateY(0px)' : 'translateY(8px)';
-            }
-          }
-        } else if (single) {
-          if (active !== lastActive) { single.textContent = TONES[active].text; }
-          single.style.opacity = '1';
-        }
-
-        if (active !== lastActive) {
-          for (var b = 0; b < btns.length; b++) {
-            var v = btns[b].getAttribute('data-tone');
-            // match by ORDER (b) as well as value/key, so a mistagged 3rd button still activates
-            btns[b].classList.toggle(ACTIVE_CLASS, b === active || v === String(active) || v === TONES[active].key);
-          }
-          lastActive = active;
-        }
-      };
-    }());
-
-    // ==========================================================================
-    // driver: SCROLL LIST INDEX (mwg effect105 model)
-    //   The card wrap ([data-lang="section"] → .lang_card--wrap) STAYS PUT (sticky in Webflow —
-    //   its position is untouched here). The four .lang_anim-text-wrap TEXT BLOCKS become a
-    //   scrolling list beside it. Whichever block is closest to the viewport CENTRE is ACTIVE →
-    //   its matching [data-lang-anim] card (1:1 by order) crossfades in, and that card's inner
-    //   animation SCRUBS 0..1 as the block crosses the centre. Blocks drift sideways (peak at
-    //   centre) then settle, and dim while not active. Replaces the old 400vh sticky/crossfade.
-    // ==========================================================================
-
-    // ---- config ----
-    var FORCE_TIGHT = true;  // collapse any per-block 100vh (min-height/height) so the blocks stack
-                             // TIGHT like the reference. set false if you strip the 100vh in Webflow
-                             // yourself and want the authored heights respected.
-    var LEAD_TOP_VH    = 0.15;  // blank scroll BEFORE the first block.
-    var LEAD_BOTTOM_VH = 0.1;   // blank scroll AFTER the last block. lower = the section ENDS earlier with
-                                // the last text still visible (not scrolled all the way out) → next section peeks in.
-    var START_LIFT_VH  = 0.45;  // lift the text column so block 0 enters near centre (vh; higher = higher)
-    var GAP_VH     = 0;      // EXTRA vertical gap between blocks, in viewports. 0 = keep the tight
-                             // Webflow stacking (blocks sit next to each other, several visible at once,
-                             // like the reference). Raise it to give each card a longer reign at centre.
-    var DRIFT_FRAC = 0.2;    // sideways drift at centre, as a fraction of the text-column width (peaks at
-                             // centre). reference ≈ 0.26. 0 = no drift; negative flips the side.
-    var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks (active = 1)
-    var POP_SCALE  = 1;      // quick scale-pop of the card wrap on active change (1 = off; try 1.04)
-    // each card's animation sequence plays AUTOMATICALLY (time-based) when its block becomes active,
-    // instead of scrubbing to scroll. only this changes — drift, dim, crossfade, spacing stay as-is.
-    var LANG_AUTOPLAY    = true;
-    var LANG_AUTOPLAY_MS = [6000, 9000, 4500, 5000];   // per-card sequence duration (ms), one per block
-                                                       // slower overall; card 1 (vocab) longest so its full form plays
-    var LANG_REPLAY      = true;   // replay from 0 whenever a block becomes active again
-    var LANG_LOOP        = true;   // active card's sequence loops (replays continuously) while active
-    var LANG_SCRUB       = [];      // card indices kept scrubbed to scroll ([] = all autoplay incl. switcher)
-    var LANG_START       = { 0: 0.3 };   // per-card starting progress (switcher enters 30% in, text already showing)
-    function langIsAuto(i) { return LANG_AUTOPLAY && LANG_SCRUB.indexOf(i) === -1; }
-    function langStart(i) { return (LANG_START && LANG_START[i]) || 0; }
 
     var textWrap = section.querySelector('.lang_text-anim-wrap');
     var blocks   = textWrap
       ? Array.prototype.slice.call(textWrap.querySelectorAll('.lang_anim-text-wrap'))
       : [];
 
-    // triangle 0→1→0 (peak at p=0.5), smoothstepped so the drift eases in/out like the resource
-    function easeTri(p) {
-      var t = 1 - Math.abs(2 * p - 1);
-      return t * t * (3 - 2 * t);
-    }
-    function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-
-    // JS pads the track so the first block can reach the centre and the last can leave it (LEAD_VH),
-    // but keeps the blocks tightly stacked (GAP_VH, default 0) so several are visible at once — the
-    // drift + centre-detection do the rest, exactly like the resource's packed list.
+    // pad the track so the first block can reach the centre and the last can leave it, while the blocks
+    // themselves stay tightly stacked (GAP_VH 0) with several visible at once
     function layout() {
       if (!textWrap || !blocks.length) { return; }
       var vh = window.innerHeight;
       textWrap.style.paddingTop = (vh * LEAD_TOP_VH) + 'px';
       textWrap.style.paddingBottom = (vh * LEAD_BOTTOM_VH) + 'px';
-      textWrap.style.transform = 'translateY(' + (-vh * START_LIFT_VH) + 'px)';   // lift so block 0 enters near centre
+      textWrap.style.transform = 'translateY(' + (-vh * START_LIFT_VH) + 'px)';
       for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
         b.style.position = 'relative';
         b.style.willChange = 'transform, opacity';
-        if (FORCE_TIGHT) {                                        // kill the Webflow 100vh → natural height
+        if (FORCE_TIGHT) {
           b.style.minHeight = '0';
           b.style.height = 'auto';
         }
@@ -663,11 +690,11 @@
     }
     layout();
 
-    // smoothed per-block scalars so the drift + inner scrub GLIDE and settle on stop (like the flow).
-    // active detection stays on the RAW rect (immediate) so the card swap never lags.
+    // smoothed per-block scalars so the drift glides and settles on stop. Active detection stays on the
+    // RAW rect so the card swap never lags behind.
     var driftCur = [], tpCur = [], lastActive = -1;
     for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; tpCur[bi] = 0; }
-    var autoTp = 0, autoDone = {};   // active card's auto-play progress (see LANG_AUTOPLAY)
+    var autoTp = 0, autoDone = {};
 
     function update() {
       if (!blocks.length) { if (renderers[0]) { renderers[0](0); } return; }
@@ -678,18 +705,15 @@
       var closest = -1, closestDist = Infinity;
       for (var i = 0; i < blocks.length; i++) {
         var r = blocks[i].getBoundingClientRect();
-        // block's progress through the viewport: 0 as its top enters the bottom, 1 as its bottom exits the top
-        var prog = clamp01((vh - r.top) / (vh + r.height));
-        // inner card scrub: 0 when the centre sits at the block's top, 1 at its bottom
-        var tpT  = r.height ? clamp01((cY - r.top) / r.height) : 0;
+        var prog = clamp01((vh - r.top) / (vh + r.height));            // 0 entering the bottom, 1 exiting the top
+        var tpT  = r.height ? clamp01((cY - r.top) / r.height) : 0;    // 0 at the block's top, 1 at its bottom
 
         driftCur[i] += (offset * easeTri(prog) - driftCur[i]) * lerp;
         tpCur[i]    += (tpT - tpCur[i]) * lerp;
         if (Math.abs(tpT - tpCur[i]) < 0.0002) { tpCur[i] = tpT; }
 
         blocks[i].style.transform = 'translateX(' + driftCur[i] + 'px)';
-        // scrubbed cards (e.g. the SVG switcher) are driven by their block's scroll progress every
-        // frame, offset by langStart so the switcher enters ~30% in (text already showing on scroll-in)
+        // scrubbed cards follow their block's scroll progress, offset by langStart
         if (renderers[i] && !langIsAuto(i)) { renderers[i](langStart(i) + (1 - langStart(i)) * tpCur[i]); }
 
         // nearest block midpoint to the centre = active
@@ -707,18 +731,17 @@
         for (var b2 = 0; b2 < blocks.length; b2++) {         // dim everything but the active block
           gsap.set(blocks[b2], { autoAlpha: b2 === closest ? 1 : DIM_ALPHA });
         }
-        if (POP_SCALE !== 1 && cardWrap) {                   // optional pop on swap (like the preview)
+        if (POP_SCALE !== 1 && cardWrap) {
           gsap.fromTo(cardWrap, { scale: POP_SCALE }, { scale: 1, duration: 0.3, ease: 'back.out(2)' });
         }
-        for (var rr = 0; rr < cardEls.length; rr++) {         // reset only the autoplay cards to their start
+        for (var rr = 0; rr < cardEls.length; rr++) {         // rewind the autoplay cards
           if (renderers[rr] && langIsAuto(rr)) { renderers[rr](langStart(rr)); }
         }
         autoTp = (!LANG_REPLAY && autoDone[closest]) ? 1 : langStart(closest);
         lastActive = closest;
       }
 
-      // autoplay: play the active card's sequence on a timer (scrubbed cards are handled above); loops
-      // while active when LANG_LOOP
+      // the active card plays on a timer; scrubbed cards were handled in the loop above
       if (closest >= 0 && langIsAuto(closest) && renderers[closest]) {
         if (autoTp < 1 || LANG_LOOP) {
           var dur = LANG_AUTOPLAY_MS[closest] || 2500;
@@ -730,26 +753,214 @@
     }
     gsap.ticker.add(update);
 
-    // re-space + re-measure on viewport/webfont changes, then repaint
+    // re-space + re-measure on viewport/webfont changes
     function refreshAll() {
       layout();
-      measure();
-      if (card1Measure) { card1Measure(); }
-      if (card2Measure) { card2Measure(); }
-      if (card3Measure) { card3Measure(); }
+      for (var m = 0; m < cards.length; m++) { if (cards[m]) { cards[m].measure(); } }
       lastActive = -1;
     }
     ScrollTrigger.addEventListener('refresh', refreshAll);
-    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(refreshAll); }
+    var fontsHook = function () { refreshAll(); };
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(fontsHook); }
 
-    // public hook — kept for parity with the other sections
-    window.Languages = {
-      render: update,
-      relayout: layout,
-      remeasure: measure
-    };
+    window.Languages = { render: update, relayout: layout, remeasure: refreshAll };
 
     update();
+
+    return function cleanup() {
+      gsap.ticker.remove(update);
+      ScrollTrigger.removeEventListener('refresh', refreshAll);
+      for (var d = 0; d < cards.length; d++) { if (cards[d]) { cards[d].destroy(); } }
+      for (var cc = 0; cc < cardEls.length; cc++) {
+        var e = cardEls[cc];
+        if (!e) { continue; }
+        e.style.position = ''; e.style.left = ''; e.style.right = ''; e.style.top = '';
+        e.style.transform = ''; e.style.transition = ''; e.style.willChange = '';
+        e.style.opacity = ''; e.style.pointerEvents = '';
+      }
+      if (textWrap) { textWrap.style.paddingTop = ''; textWrap.style.paddingBottom = ''; textWrap.style.transform = ''; }
+      for (var bb = 0; bb < blocks.length; bb++) {
+        var bl = blocks[bb];
+        bl.style.transform = ''; bl.style.opacity = ''; bl.style.visibility = '';
+        bl.style.minHeight = ''; bl.style.height = ''; bl.style.marginBottom = ''; bl.style.willChange = '';
+      }
+    };
+  }
+
+  // ==========================================================================
+  // MOBILE driver — no scroll-list. Desktop card wrap + text column hidden; each block gets a CLONE of
+  // its card and loops it while in view. Leaving the viewport rewinds, so scrolling back replays.
+  // ==========================================================================
+  function initMobile(section, cardEls) {
+    var host = section.querySelector(MOBILE_SEL) || document.querySelector(MOBILE_SEL);
+    if (!host) { console.warn('[languages] mobile: no ' + MOBILE_SEL + ' found'); return function () {}; }
+
+    var playBlocks = Array.prototype.slice.call(host.querySelectorAll(MOBILE_BLOCK_SEL));
+    if (!playBlocks.length) { console.warn('[languages] mobile: no ' + MOBILE_BLOCK_SEL + ' inside the mobile wrap'); }
+
+    // hide the desktop rig. The clone SOURCE ends up inside a display:none ancestor, which is fine — the
+    // clones live outside it and measure normally.
+    var cardWrap = cardEls[0] ? cardEls[0].parentNode : null;
+    var textWrap = section.querySelector('.lang_text-anim-wrap');
+    var hidden = [];
+    [cardWrap, textWrap].forEach(function (el) {
+      if (!el) { return; }
+      hidden.push([el, el.style.display]);
+      el.style.display = 'none';
+    });
+    host.style.display = '';
+
+    var items = [];
+    playBlocks.forEach(function (block, order) {
+      // index = data-lang-play if authored, else the block's position in the stack
+      var attrI = parseInt(block.getAttribute(ATTR + '-play'), 10);
+      var idx   = isNaN(attrI) ? order : attrI;
+      var slot  = block.querySelector(MOBILE_SLOT_SEL) || block;
+
+      // a card pasted into the slot by hand is driven as-is
+      var pasted = slot.querySelector('[' + ATTR + '-anim]');
+      var el = pasted, clone = null;
+      if (!el) {
+        var src = cardEls[idx];
+        if (!src) { console.warn('[languages] mobile: no [' + ATTR + '-anim="' + idx + '"] to clone for block ' + order); return; }
+        clone = src.cloneNode(true);
+        uniqIds(clone, 'lm' + idx);
+        clone.setAttribute(ATTR + '-anim-clone', String(idx));
+        clone.removeAttribute(ATTR + '-anim');            // so nothing re-collects it as a desktop card
+        // relative, not static: inner pieces (card 1's .lang_form-wrap) are absolute against the card,
+        // which WAS absolute on desktop — static here would anchor them to some outer ancestor.
+        clone.style.position = 'relative';
+        clone.style.left = ''; clone.style.right = ''; clone.style.top = '';
+        clone.style.transform = ''; clone.style.transition = ''; clone.style.opacity = '';
+        clone.style.pointerEvents = '';
+        slot.appendChild(clone);
+        el = clone;
+      }
+
+      // set the design width BEFORE the card measures itself, so card 2's pill widths and card 3's
+      // message box are measured in design space, not the live slot width
+      if (MOBILE_FIT_W) { el.style.width = MOBILE_FIT_W + 'px'; }
+
+      var card = buildCard(idx, el, {
+        pathFont: MOBILE_PATH_FONT || LANG_PATH_FONT,
+        hardFont: !!MOBILE_PATH_FONT,
+        clampW:   MOBILE_SNIP_FIT
+      });
+      if (!card) { return; }
+      card.render(langStart(idx));                      // seeded, so it never shows a blank frame
+      items.push({ block: block, clone: clone, el: el, slot: slot, card: card, idx: idx, tp: langStart(idx), on: false });
+    });
+
+    // scale from design width to slot width, then reserve the SCALED height — a transform doesn't affect
+    // layout, so the slot would otherwise keep the unscaled box
+    function fit(it) {
+      if (!MOBILE_FIT_W) { return; }
+      var avail = it.slot.clientWidth || it.slot.offsetWidth || 0;
+      if (!avail) { return; }
+      var k = avail / MOBILE_FIT_W;
+      it.el.style.width = MOBILE_FIT_W + 'px';
+      it.el.style.transformOrigin = 'top left';         // so the scaled box starts at the slot's left edge
+      it.el.style.transform = 'scale(' + k + ')';
+      it.slot.style.height = (it.el.offsetHeight * k) + 'px';
+    }
+    items.forEach(fit);
+
+    var io = null;
+    if (window.IntersectionObserver && items.length) {
+      io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          for (var i = 0; i < items.length; i++) {
+            if (items[i].block !== en.target) { continue; }
+            if (en.isIntersecting) {
+              items[i].on = true;
+            } else {                                    // out of view → rewind for the next entry
+              items[i].on = false;
+              items[i].tp = langStart(items[i].idx);
+              items[i].card.render(items[i].tp);
+            }
+            break;
+          }
+        });
+      }, { threshold: 0, rootMargin: '0px 0px ' + MOBILE_IO_MARGIN + ' 0px' });
+      items.forEach(function (it) { io.observe(it.block); });
+    } else {
+      items.forEach(function (it) { it.on = true; });    // no IO → just play
+    }
+
+    function tick() {
+      var step = gsap.ticker.deltaRatio() * (1000 / 60);
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it.on) { continue; }
+        var dur = MOBILE_MS[it.idx] || LANG_AUTOPLAY_MS[it.idx] || 2500;
+        if (it.tp < 1 || MOBILE_LOOP) {
+          it.tp += step / dur;
+          if (it.tp >= 1) { it.tp = MOBILE_LOOP ? langStart(it.idx) : 1; }
+        }
+        it.card.render(it.tp);
+      }
+    }
+    gsap.ticker.add(tick);
+
+    function remeasure() {
+      items.forEach(function (it) {
+        if (MOBILE_FIT_W) { it.el.style.transform = ''; }   // measure unscaled, then re-fit
+        it.card.measure();
+        fit(it);
+      });
+    }
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(remeasure); }
+    ScrollTrigger.addEventListener('refresh', remeasure);
+
+    window.Languages = { render: tick, relayout: remeasure, remeasure: remeasure };
+
+    return function cleanup() {
+      gsap.ticker.remove(tick);
+      ScrollTrigger.removeEventListener('refresh', remeasure);
+      if (io) { io.disconnect(); }
+      items.forEach(function (it) {
+        it.card.destroy();
+        it.slot.style.height = '';
+        if (it.clone && it.clone.parentNode) { it.clone.parentNode.removeChild(it.clone); }
+        else { it.el.style.width = ''; it.el.style.transform = ''; it.el.style.transformOrigin = ''; }
+      });
+      hidden.forEach(function (pair) { pair[0].style.display = pair[1]; });
+    };
+  }
+
+  // hide the mobile block on desktop from the first paint (before JS decides which mode runs)
+  function injectCSS() {
+    if (document.getElementById('lang-mode-css')) { return; }
+    var st = document.createElement('style');
+    st.id = 'lang-mode-css';
+    st.textContent = '@media (min-width:' + (MOBILE_BP + 1) + 'px){' + MOBILE_SEL + '{display:none !important;}}';
+    (document.head || document.documentElement).appendChild(st);
+  }
+
+  function init() {
+    if (typeof window.gsap === 'undefined' || typeof window.ScrollTrigger === 'undefined') {
+      console.warn('[languages] GSAP + ScrollTrigger required before this script.');
+      return;
+    }
+    gsap.registerPlugin(ScrollTrigger);
+
+    var section = document.querySelector('[' + ATTR + '="section"]');
+    if (!section) { console.warn('[languages] no [data-lang="section"] found'); return; }
+    injectCSS();
+
+    // collect every [data-lang-anim] by its index (the clone source for mobile too)
+    var cardWrap = section.querySelector('[' + ATTR + '-anim="0"]');
+    cardWrap = cardWrap ? cardWrap.parentNode : section;
+    var cardEls = [];
+    Array.prototype.forEach.call(cardWrap.querySelectorAll('[' + ATTR + '-anim]'), function (el) {
+      var idx = parseInt(el.getAttribute(ATTR + '-anim'), 10);
+      if (!isNaN(idx)) { cardEls[idx] = el; }
+    });
+
+    // one rig at a time; crossing the breakpoint tears the old one down and builds the other
+    var mm = gsap.matchMedia();
+    mm.add('(min-width: ' + (MOBILE_BP + 1) + 'px)', function () { return initDesktop(section, cardEls); });
+    mm.add('(max-width: ' + MOBILE_BP + 'px)',       function () { return initMobile(section, cardEls); });
   }
 
   if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); }
