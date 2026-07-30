@@ -1138,10 +1138,15 @@
       }
       var pillEls      = Array.prototype.slice.call(section.querySelectorAll('[data-pill]'));
       var pillMap = {};
+      // the mobile blocks sit INSIDE the section and hold duplicated cards with the same data-pill keys.
+      // pillMap must never bind one: last-in-DOM would win, and on desktop the mobile wrap is
+      // display:none, so the desktop pill silently never lights up. Char-wrapping still runs on every
+      // pill so the clones keep their label ripple.
+      var mobRoot = section.querySelector(MOBILE_SEL);
       pillEls.forEach(function (el) {
         guardStyle(el);
         var key = (el.getAttribute('data-pill') || '').trim().toLowerCase();
-        if (key) { pillMap[key] = el; }
+        if (key && !(mobRoot && mobRoot.contains(el))) { pillMap[key] = el; }
         // char-wrap the label so it can ripple; CSS drives visibility via the .is-on class.
         // prefer .flow_text-type, else the first leaf element that actually holds text (variants
         // and the separate polishing component may class their label differently).
@@ -1179,6 +1184,9 @@
 
       // chapter-3 "done" state morphs the polishing pill (spinner+label → voice waveform). inject bars.
       var polishPill = pillMap.polishing || null;
+      if (!polishPill && isDesktop) {
+        console.warn('[flow-stack] no [data-pill="polishing"] in the DESKTOP card (mobile clones do not count)');
+      }
       if (polishPill) {
         var polishWrap = polishPill.querySelector('.flow_pill-polish_wrap') || polishPill;
         if (!polishWrap.querySelector('.flow_pill-dots')) {
