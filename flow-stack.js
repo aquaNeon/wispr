@@ -97,7 +97,30 @@
   // MOBILE: each [data-flow-play="chN"] block in the data-stack="mobile" container clones its desktop
   // chapter and plays on scroll-into-view (replays on re-enter). per-chapter play duration in ms.
   var MOBILE_CH_MS        = [4000, 3000, 3000];
-  var MOBILE_IO_THRESHOLD = 0.35;   // fraction of a block visible before it plays
+  // a card plays when its TOP crosses a line this far up from the bottom of the screen. '-10%' = fires
+  // almost as soon as it enters; '-40%' = waits until it's ~40% up the viewport (later). tune to taste.
+  var MOBILE_IO_MARGIN    = '-15%';
+  // extra px shaved off the open message box on mobile (ch2 + ch3). the box is already clamped to the
+  // polished text by mobileBoxFit — this is the manual dial on top of it.
+  var MOBILE_MSG_TRIM     = 0;
+  // mobile ch2 "cleaning up" pill: tp at which the polishing pill grows in (and the audio pill fades
+  // out), plus a px nudge if the clone's pill sits off its spot (+down / −up).
+  var MOBILE_PILL_AT      = 0.06;
+  var MOBILE_PILL_Y       = 0;
+  // mobile: the 45 + 220 wpm cards stack in normal flow, equal height, marquee text autoplaying
+  // (no pin/morph/chapter content). false = hide the desktop stage entirely, as before.
+  var MOBILE_WPM          = true;
+  var MOBILE_WPM_GAP      = 0;    // px between the two cards (they split the stage height evenly)
+  var MOBILE_WPM_PAD      = 12;   // px inner padding of each card
+  // marquee text size in RENDERED px (the authored font-size is in viewBox units, so it shrinks with
+  // the svg — see fitMarqueeText). 0 = leave the authored size alone.
+  var MOBILE_WPM_TEXT_PX  = 13;
+  // where the marquee TEXT lands, as % of card height from the TOP. aligned per marquee from its
+  // rendered text box — the straight (45) and curved (220) svgs sit at different heights in the viewBox.
+  var MOBILE_WPM_MQ_TOP   = 60;
+  // same for the wpm HEADINGS — pinned, not flex-centred, so the 45 card (heading only) and the 220
+  // card (heading + recorder pill in flow) put their label at the identical height.
+  var MOBILE_WPM_HEAD_TOP = 38;
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
   // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
@@ -1805,50 +1828,518 @@
         if (activeTab >= 0) { moveIndicator(activeTab); }
       }
 
-      // ---- MOBILE chapter driver: clone each desktop chapter into its data-flow-play block, play on view ----
-      function mobileCloneSource(ch) {
-        if (ch === 'ch1') { return section.querySelector('[data-type="raw"]'); }
-        if (ch === 'ch2') { return composerEl || section.querySelector('[' + FLOW + '="composer"]'); }
-        if (ch === 'ch3') { return section.querySelector('.flow_icons-destination'); }
-        return null;
+      // ---- MOBILE chapter driver: you duplicate the desktop card into each [data-flow-play] block
+      // (mobile-sized, in Webflow); this plays that chapter's animation on scroll-into-view ----
+      var mobUid = 0;
+      function uniquifyIds(root) {                       // rename ids + refs so duplicate cards don't clash
+        var ided = root.querySelectorAll('[id]');
+        if (!ided.length) { return; }
+        var suffix = '_m' + (++mobUid), map = {}, i;
+        for (i = 0; i < ided.length; i++) { var o = ided[i].id; map[o] = o + suffix; ided[i].id = map[o]; }
+        var all = root.querySelectorAll('*'), XL = 'http://www.w3.org/1999/xlink';
+        for (i = 0; i < all.length; i++) {
+          var el = all[i];
+          var h = el.getAttribute('href');
+          if (h && h.charAt(0) === '#' && map[h.slice(1)]) { el.setAttribute('href', '#' + map[h.slice(1)]); }
+          var xh = el.getAttributeNS ? el.getAttributeNS(XL, 'href') : null;
+          if (xh && xh.charAt(0) === '#' && map[xh.slice(1)]) { el.setAttributeNS(XL, 'href', '#' + map[xh.slice(1)]); }
+          var attrs = ['clip-path', 'mask', 'fill', 'stroke', 'filter'], a;
+          for (a = 0; a < attrs.length; a++) {
+            var v = el.getAttribute(attrs[a]);
+            if (v && v.indexOf('url(#') !== -1) {
+              for (var k in map) { if (map.hasOwnProperty(k)) { v = v.split('url(#' + k + ')').join('url(#' + map[k] + ')'); } }
+              el.setAttribute(attrs[a], v);
+            }
+          }
+        }
+      }
+      function mobileChIndex(ch) { return ch === 'ch2' ? 1 : ch === 'ch3' ? 2 : 0; }
+      function mobileSetPill(pills, cat) {
+        for (var p = 0; p < pills.length; p++) { pills[p].classList.toggle('is-on', pills[p].getAttribute('data-pill') === cat); }
       }
       function mobilePlay(host, ch) {
-        if (ch === 'ch1') {
-          var ws = host.querySelectorAll('.flow_w'), n = ws.length;
-          if (!n) { return; }
-          var obj = host._mobTween || (host._mobTween = { c: 0 });
-          gsap.killTweensOf(obj); obj.c = 0;
-          gsap.to(obj, { c: n, duration: (MOBILE_CH_MS[0] || 4000) / 1000, ease: 'none', overwrite: true,
-            onUpdate: function () { var k = Math.round(obj.c); for (var i = 0; i < n; i++) { ws[i].style.opacity = i < k ? '1' : '0'; } } });
-        }
-        // ch2 / ch3 play logic added once ch1 is proven
+        if (ch === 'ch2') { mobileCh2Play(host); return; }   // polish sequence, not typing
+        if (ch === 'ch3') { mobileCh3Play(host); return; }   // fan swing + logo rotation
+        var ws = host.querySelectorAll('.flow_w'), n = ws.length;
+        if (!n) { return; }
+        var pills = host.querySelectorAll('[data-pill="filler"],[data-pill="correction"],[data-pill="repetition"]');
+        var obj = host._mobTween || (host._mobTween = { c: 0 });
+        gsap.killTweensOf(obj); obj.c = 0;
+        gsap.to(obj, { c: n, duration: (MOBILE_CH_MS[mobileChIndex(ch)] || 4000) / 1000, ease: 'none', overwrite: true,
+          onUpdate: function () {
+            var k = Math.round(obj.c), i;
+            for (i = 0; i < n; i++) { ws[i].style.opacity = i < k ? '1' : '0'; }
+            if (pills.length) {                        // pill = category of the latest revealed word
+              var cat = null;
+              for (i = k - 1; i >= 0; i--) { var c = ws[i].getAttribute('data-cat'); if (c) { cat = c; break; } }
+              mobileSetPill(pills, cat);
+            }
+          } });
       }
       function mobileReset(host, ch) {
-        if (ch === 'ch1') {
-          if (host._mobTween) { gsap.killTweensOf(host._mobTween); }
-          var ws = host.querySelectorAll('.flow_w');
-          for (var i = 0; i < ws.length; i++) { ws[i].style.opacity = '0'; }
+        if (ch === 'ch2') { mobileCh2Reset(host); return; }
+        if (ch === 'ch3') { mobileCh3Reset(host); return; }
+        if (host._mobTween) { gsap.killTweensOf(host._mobTween); }
+        var ws = host.querySelectorAll('.flow_w');
+        for (var i = 0; i < ws.length; i++) { ws[i].style.opacity = '0'; }
+        var pills = host.querySelectorAll('[data-pill="filler"],[data-pill="correction"],[data-pill="repetition"]');
+        mobileSetPill(pills, null);
+      }
+
+      // ---- ch2 (polish): raw shown → gradient wave → raw wipes out → box grows + polished fills in ----
+      function mobileWrapPolished(polished) {
+        if (!polished || polished.querySelector('.flow_pw')) { return; }
+        var kids = Array.prototype.slice.call(polished.childNodes);
+        for (var i = 0; i < kids.length; i++) {
+          var n = kids[i];
+          if (n.nodeType === 3) {
+            var frag = document.createDocumentFragment();
+            n.textContent.split(/(\s+)/).forEach(function (chunk) {
+              if (chunk === '') { return; }
+              if (/^\s+$/.test(chunk)) { frag.appendChild(document.createTextNode(chunk)); return; }
+              var w = document.createElement('span'); w.className = 'flow_pw'; w.textContent = chunk; w.style.opacity = '0';
+              frag.appendChild(w);
+            });
+            polished.replaceChild(frag, n);
+          }
         }
+      }
+      // same normalise as desktop buildPolished: authored opacity:0 / height:0 / position:absolute would
+      // keep the text invisible and out of flow (so it can't grow the box). words do the fade.
+      function mobileNormalisePolished(el) {
+        if (!el) { return; }
+        guardStyle(el);
+        if (window.getComputedStyle(el).display === 'none') { el.style.display = 'block'; }
+        el.style.position  = 'relative';
+        el.style.overflow  = 'visible';
+        el.style.opacity   = '1';
+        el.style.height    = 'auto';
+        el.style.transform = 'translateY(-' + POLISH_RISE + 'px)';   // sit where the placeholder was
+      }
+      function mobileCh2Prep(host) {
+        var ctx = host._ch2 = {};
+        ctx.rawTr = host.querySelector('[data-type="raw"]');
+        mobileWrapWords(host);
+        if (ctx.rawTr) { ctx.rawTr.classList.add('is-polishing'); }
+        ctx.rawWords = ctx.rawTr ? ctx.rawTr.querySelectorAll('.flow_w') : [];
+        // mask the WRAPPER for the raw-out (per-word opacity can't fade a gradient painted on the
+        // container via background-clip:text) — same as desktop's rawWrap
+        ctx.rawWrap = (ctx.rawTr && ctx.rawTr.parentNode && ctx.rawTr.parentNode.nodeType === 1)
+          ? ctx.rawTr.parentNode : ctx.rawTr;
+        if (ctx.rawWrap) { guardStyle(ctx.rawWrap); }
+        ctx.polished = host.querySelector('[data-type="polished"]');
+        mobileWrapPolished(ctx.polished);
+        mobileNormalisePolished(ctx.polished);
+        ctx.pwords = ctx.polished ? ctx.polished.querySelectorAll('.flow_pw') : [];
+        ctx.msgGrow = host.querySelector('[' + FLOW + '="msg-grow"]');
+        if (ctx.msgGrow) {
+          guardStyle(ctx.msgGrow);
+          ctx.msgGrow.style.overflow = 'hidden';        // so the height grow REVEALS the message (opens)
+          var mc = ctx.msgGrow.parentNode;
+          if (mc && mc.nodeType === 1) {
+            var ccs = window.getComputedStyle(mc);      // the growing box must BE the white composer surface
+            if (ccs.backgroundColor && ccs.backgroundColor !== 'rgba(0, 0, 0, 0)') { ctx.msgGrow.style.backgroundColor = ccs.backgroundColor; }
+            ctx.msgGrow.style.borderTopLeftRadius  = ccs.borderTopLeftRadius;
+            ctx.msgGrow.style.borderTopRightRadius = ccs.borderTopRightRadius;
+            guardStyle(mc); mc.style.overflow = 'visible';   // must not clip the upward-grown box
+          }
+        }
+        ctx.placeholder = host.querySelector('.flow_message-placeholder');
+        // "cleaning up" pill — the global [data-pill] rule keeps it at opacity 0 until .is-on, so the
+        // clone's pill is invisible unless ch2 turns it on. hug content (beat the authored width rule).
+        ctx.polishPill = host.querySelector('[data-pill="polishing"]');
+        if (ctx.polishPill) {
+          guardStyle(ctx.polishPill);
+          ctx.polishPill.style.setProperty('align-self', 'center', 'important');
+          ctx.polishPill.style.setProperty('flex', '0 0 auto', 'important');
+          ctx.polishPill.style.setProperty('width', 'fit-content', 'important');
+          ctx.polishPill.style.setProperty('min-width', '0', 'important');
+          ctx.polishPill.style.setProperty('max-width', '100%', 'important');
+          if (MOBILE_PILL_Y) { ctx.polishPill.style.position = 'relative'; ctx.polishPill.style.top = MOBILE_PILL_Y + 'px'; }
+        } else {
+          console.warn('[flow-stack] mobile ch2: no [data-pill="polishing"] inside this block');
+        }
+        ctx.pillAudio = host.querySelector('[' + FLOW + '="pill-audio"]');
+        ctx.measured = false;
+      }
+      // the open box must hug the POLISHED text, not the box's auto height: rows that are invisible but
+      // still in flow (the masked-out raw transcript, the faded placeholder) keep inflating `auto`, and
+      // the polished block is visually lifted POLISH_RISE by a transform (layout doesn't shrink with it).
+      // → height = polished's visual bottom + the box's own bottom padding.
+      // GOTCHA: the message blocks are authored with trailing <br>s, so a box's own height runs far
+      // taller than its text. measure to the last TEXT NODE's rect (a Range ignores the <br>s, and
+      // rects already include the POLISH_RISE transform) — works for polished spans and plain text.
+      function mobileTextBottom(root) {
+        var walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false), n, last = null;
+        while ((n = walk.nextNode())) { if ((n.textContent || '').trim()) { last = n; } }
+        if (!last) { return null; }
+        var r = document.createRange(); r.selectNodeContents(last);
+        var rect = r.getBoundingClientRect(); r.detach && r.detach();
+        return rect.bottom || null;
+      }
+      // clamp an open message box to its own text. returns the px height it was set to (null = skipped)
+      function mobileFitBox(mg, apply) {
+        if (!mg) { return null; }
+        var sv = mg.style.cssText;
+        mg.style.height = 'auto'; mg.style.maxHeight = 'none'; mg.style.overflow = 'visible';
+        var bottom = mobileTextBottom(mg);
+        var fit = bottom ? Math.round(bottom - mg.getBoundingClientRect().top +
+          (parseFloat(window.getComputedStyle(mg).paddingBottom) || 0)) : null;
+        mg.style.cssText = sv;
+        if (fit && apply) {
+          guardStyle(mg);
+          mg.style.height = Math.max(0, fit - MOBILE_MSG_TRIM) + 'px';
+          mg.style.overflow = 'hidden';
+        }
+        return fit;
+      }
+      function mobileBoxFit(ctx) { return mobileFitBox(ctx.msgGrow, false); }
+      function mobileCh2Measure(ctx) {
+        if (ctx.measured || !ctx.msgGrow) { ctx.measured = true; return; }
+        var mg = ctx.msgGrow, sv = mg.style.cssText;
+        mg.style.height = 'auto'; mg.style.maxHeight = 'none'; mg.style.overflow = 'visible';   // unclamp before measuring
+        if (ctx.polished) { var pd = ctx.polished.style.display; ctx.polished.style.display = 'none'; ctx.collapsedH = mg.offsetHeight; ctx.polished.style.display = pd; }
+        ctx.expandedH = mg.offsetHeight;
+        if (ctx.collapsedH == null) { ctx.collapsedH = ctx.expandedH; }
+        // fallback: if polished is absolutely positioned it won't add height -> grow to its own content
+        if (ctx.polished && ctx.expandedH - ctx.collapsedH < 8) { ctx.expandedH = ctx.collapsedH + ctx.polished.scrollHeight; }
+        var fit = mobileBoxFit(ctx);
+        if (fit) { ctx.expandedH = Math.min(ctx.expandedH, fit); }                    // hug the polished text
+        ctx.expandedH = Math.max(ctx.collapsedH, ctx.expandedH - MOBILE_MSG_TRIM);   // extra manual tighten
+        mg.style.cssText = sv; mg.style.overflow = 'hidden';
+        ctx.measured = true;
+        console.log('[flow-stack] mobile ch2: collapsed=' + ctx.collapsedH + ' expanded=' + ctx.expandedH +
+          ' rawWords=' + ctx.rawWords.length + ' polishedWords=' + ctx.pwords.length);
+      }
+      function mobileCh2Render(ctx, tp) {
+        var rw = ctx.rawWords, pw = ctx.pwords, nR = rw.length, nP = pw.length, i;
+        var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
+        var Fglow = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * (1 + GLOW_BAND + 0.05);
+        for (i = 0; i < nR; i++) {
+          var ph = nR > 1 ? i / (nR - 1) : 0;
+          rw[i].style.color = (Fg > ph) ? 'transparent' : '';
+          if (GLOW_EDGE) {                                            // light band trailing the wavefront
+            var df = Fglow - ph, g = (df >= 0 && df < GLOW_BAND) ? (1 - df / GLOW_BAND) : 0;
+            rw[i].style.textShadow = g > 0.02
+              ? ('0 0 ' + (GLOW_MAX * g).toFixed(1) + 'px rgba(' + GLOW_COLOR + ',' + (0.9 * g).toFixed(2) + ')')
+              : '';
+          }
+        }
+        var wipe = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
+        if (ctx.rawWrap) {                                            // raw waves OUT bottom→top
+          var soft = 16, stop = wipe * (100 + soft);
+          var m = 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
+            '%, #000 ' + stop.toFixed(1) + '%)';
+          ctx.rawWrap.style.webkitMaskImage = m;
+          ctx.rawWrap.style.maskImage = m;
+        }
+        var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
+        var gpx  = (ctx.expandedH - ctx.collapsedH) * grow;
+        // grow UPWARD: negative marginTop cancels the extra height, so the icons below stay put
+        if (ctx.msgGrow && ctx.measured) { ctx.msgGrow.style.height = (ctx.collapsedH + gpx) + 'px'; ctx.msgGrow.style.marginTop = (-gpx) + 'px'; }
+        var F = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
+        for (i = 0; i < nP; i++) { pw[i].style.opacity = String(smooth((F - (nP > 1 ? i / (nP - 1) : 0) - POLISH_GAP) / POLISH_BAND)); }
+        if (ctx.placeholder) { ctx.placeholder.style.opacity = String(1 - smooth(Math.min(1, grow * 2.4))); }
+        var pillOn = tp >= MOBILE_PILL_AT;                       // audio pill out, polishing pill in
+        if (ctx.polishPill) { ctx.polishPill.classList.toggle('is-on', pillOn); }
+        if (ctx.pillAudio) { ctx.pillAudio.style.opacity = pillOn ? '0' : '1'; }
+      }
+      function mobileCh2Reset(host) {
+        var ctx = host._ch2; if (!ctx) { return; }
+        if (host._mobTween) { gsap.killTweensOf(host._mobTween); }
+        var i;
+        for (i = 0; i < ctx.rawWords.length; i++) {   // raw fully shown (wrapWords left them at 0)
+          ctx.rawWords[i].style.color = ''; ctx.rawWords[i].style.opacity = '1'; ctx.rawWords[i].style.textShadow = '';
+        }
+        if (ctx.rawTr) { ctx.rawTr.style.opacity = '1'; }
+        if (ctx.rawWrap) { ctx.rawWrap.style.webkitMaskImage = ''; ctx.rawWrap.style.maskImage = ''; }
+        for (i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '0'; }
+        if (ctx.measured && ctx.msgGrow) { ctx.msgGrow.style.height = ctx.collapsedH + 'px'; ctx.msgGrow.style.marginTop = '0px'; }
+        if (ctx.placeholder) { ctx.placeholder.style.opacity = '1'; }
+        if (ctx.polishPill) { ctx.polishPill.classList.remove('is-on', 'is-done', 'is-in', 'is-wave'); }
+        if (ctx.pillAudio) { ctx.pillAudio.style.opacity = '1'; }
+      }
+      function mobileCh2Play(host) {
+        var ctx = host._ch2; if (!ctx) { return; }
+        mobileCh2Measure(ctx);
+        mobileCh2Reset(host);
+        var obj = host._mobTween || (host._mobTween = { c: 0 });
+        gsap.killTweensOf(obj); obj.c = 0;
+        gsap.to(obj, { c: 1, duration: (MOBILE_CH_MS[1] || 3000) / 1000, ease: 'none', overwrite: true,
+          onUpdate: function () { mobileCh2Render(ctx, obj.c); } });
+      }
+
+      // ---- ch3 (distribute): note + destination cards swing through centre, logos rotate in. same
+      // math as the desktop fan (fanRender/fanStep), scoped to one block and driven by time ----
+      function mobileCh3Prep(host) {
+        var ctx = host._ch3 = {}, slice = Array.prototype.slice;
+        ctx.screen = host.querySelector('[' + FLOW + '="screen"]');
+        ctx.live   = host.querySelector('[' + FLOW + '="composer"]');      // card 0 = the live note (slack)
+        ctx.wrap   = host.querySelector('.flow_icons-destination');
+        ctx.logos  = ctx.wrap ? slice.call(ctx.wrap.querySelectorAll('[data-dest]')) : [];
+        ctx.layer  = host.querySelector('[' + FLOW + '="fan"]');
+        ctx.cards  = slice.call(host.querySelectorAll('[data-dest]')).filter(function (el) {
+          if (ctx.wrap && ctx.wrap.contains(el)) { return false; }          // it's a logo, not a card
+          return (el.getAttribute('data-dest') || '').trim().toLowerCase() !== 'slack';
+        });
+        ctx.cards.sort(function (a, b) {
+          return (DEST_ORDER[a.getAttribute('data-dest')] || 9) - (DEST_ORDER[b.getAttribute('data-dest')] || 9);
+        });
+        // the fan layer must be anchored by the block's screen — in the mobile clone it's usually
+        // static (desktop's is an absolute cover), so give it a positioning context
+        if (ctx.screen && window.getComputedStyle(ctx.screen).position === 'static') {
+          guardStyle(ctx.screen); ctx.screen.style.position = 'relative';
+        }
+        if (ctx.layer) { guardStyle(ctx.layer); ctx.layer.style.position = 'absolute'; ctx.layer.style.opacity = '0'; }
+        ctx.cards.forEach(function (el) {
+          guardStyle(el);
+          el.style.position = 'absolute';            // out of flow so they don't inflate the card
+          el.style.transformOrigin = FAN_PIVOT;
+          el.style.backfaceVisibility = 'hidden';
+          el.style.willChange = 'transform,opacity';
+          el.style.pointerEvents = 'none';
+          el.style.opacity = '0';
+        });
+        ctx.logos.forEach(function (el) { guardStyle(el); el.style.transformOrigin = '50% 50%'; el.style.opacity = '0'; });
+        if (ctx.wrap) { guardStyle(ctx.wrap); }
+        if (ctx.live) { guardStyle(ctx.live); }
+        // ch3 opens on the FINISHED message: raw gone, polished full, box already open
+        ctx.rawTr = host.querySelector('[data-type="raw"]');
+        if (ctx.rawTr) { guardStyle(ctx.rawTr); }
+        ctx.polished = host.querySelector('[data-type="polished"]');
+        mobileWrapPolished(ctx.polished);
+        mobileNormalisePolished(ctx.polished);
+        ctx.pwords  = ctx.polished ? ctx.polished.querySelectorAll('.flow_pw') : [];
+        ctx.msgGrow = host.querySelector('[' + FLOW + '="msg-grow"]');
+        if (ctx.msgGrow) { guardStyle(ctx.msgGrow); }
+        ctx.placeholders = slice.call(host.querySelectorAll('.flow_message-placeholder'));   // one per fan card
+        ctx.placeholders.forEach(function (el) { guardStyle(el); });
+        ctx.n = (ctx.live ? 1 : 0) + ctx.cards.length;
+        ctx.positioned = false;
+      }
+      // place the absolute cards over the live note; each card's lift centres its OWN box in the frame
+      function mobileCh3Position(ctx) {
+        if (!ctx.live) { return; }
+        var scr = ctx.screen || ctx.live.offsetParent;
+        var scH = scr ? scr.clientHeight : 0;
+        var t = ctx.live.offsetTop, l = ctx.live.offsetLeft, w = ctx.live.offsetWidth;
+        ctx.live._fanCY = Math.round(scH / 2 - (t + ctx.live.offsetHeight / 2));
+        for (var i = 0; i < ctx.cards.length; i++) {
+          var el = ctx.cards[i];
+          el.style.top = t + 'px'; el.style.left = l + 'px'; el.style.width = w + 'px';
+          // clamp AFTER the width lands (wrap changes the text height) — these cards carry their own
+          // msg-grow with no [data-type="polished"], so nothing else tightens them
+          mobileFitBox(el.querySelector('[' + FLOW + '="msg-grow"]'), true);
+          el._fanCY = Math.round(scH / 2 - (t + el.offsetHeight / 2));
+        }
+      }
+      function mobileCh3Static(ctx) {          // the message state ch3 inherits from ch2's end
+        if (ctx.rawTr) { ctx.rawTr.classList.remove('is-polishing'); ctx.rawTr.style.opacity = '0'; }
+        for (var i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '1'; }
+        if (ctx.msgGrow) {
+          // same as ch2's end state — clamp to the text (auto keeps the invisible rows + <br> padding)
+          if (!mobileFitBox(ctx.msgGrow, true)) { ctx.msgGrow.style.height = 'auto'; ctx.msgGrow.style.overflow = 'visible'; }
+          ctx.msgGrow.style.marginTop = '0px';
+        }
+        for (var q = 0; q < ctx.placeholders.length; q++) { ctx.placeholders[q].style.opacity = '0'; }
+      }
+      function mobileCh3Render(ctx, tp, show) {
+        var n = ctx.n; if (n < 2) { return; }
+        var liftT   = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);   // note rises to centre
+        var swingTp = FAN_LIFT_END < 1 ? Math.max(0, (tp - FAN_LIFT_END) / (1 - FAN_LIFT_END)) : 0;
+        var f = fanStep(swingTp, n);           // parked beat per card, fast swing between (FAN_HOLD)
+        if (ctx.layer) { ctx.layer.style.opacity = show ? '1' : '0'; }
+        if (ctx.wrap)  { ctx.wrap.style.opacity  = show ? '1' : '0'; }
+        function place(el, i, isLive) {
+          var rel = i - f, ar = Math.abs(rel);
+          if (!show) {
+            if (isLive) { el.style.transform = ''; el.style.transformOrigin = ''; }
+            else { el.style.opacity = '0'; }
+            return;
+          }
+          var op = 1 - Math.max(0, Math.min(1, (ar - 1) / FAN_FADE));
+          var cy = ((el._fanCY || 0) + FAN_CENTER_NUDGE) * liftT;
+          el.style.transformOrigin = FAN_PIVOT;
+          el.style.transform = 'translate(' + (FAN_TX * rel) + 'px,' + cy + 'px) rotate(' + (FAN_ANGLE * rel) +
+            'deg) scale(' + (1 - (1 - FAN_SCALE) * Math.min(1, ar)) + ')';
+          el.style.opacity = String(op < 0 ? 0 : op);
+          el.style.zIndex  = String(100 - Math.round(ar * 10));
+        }
+        var ci = 0;
+        if (ctx.live) { place(ctx.live, ci++, true); }
+        for (var e = 0; e < ctx.cards.length; e++) { place(ctx.cards[e], ci++, false); }
+        for (var g = 0; g < ctx.logos.length; g++) {   // each logo tracks its card's offset from centre
+          var lk = (ctx.logos[g].getAttribute('data-dest') || '').trim().toLowerCase();
+          var li = (lk === 'slack') ? 0 : -1;
+          if (li < 0) {
+            for (var x = 0; x < ctx.cards.length; x++) {
+              if ((ctx.cards[x].getAttribute('data-dest') || '').trim().toLowerCase() === lk) { li = x + 1; break; }
+            }
+          }
+          if (!show || li < 0) { ctx.logos[g].style.opacity = '0'; continue; }
+          var lrel = (li === 0) ? ((li - f) + (1 - liftT)) : (li - f);   // slack enters via the lift
+          var lar  = Math.abs(lrel);
+          ctx.logos[g].style.opacity   = String(Math.max(0, 1 - lar / LOGO_FADE));
+          ctx.logos[g].style.transform = 'rotate(' + (LOGO_ROT * lrel) + 'deg) scale(' +
+            (1 - (1 - LOGO_SCALE) * Math.min(1, lar)) + ')';
+        }
+      }
+      function mobileCh3Reset(host) {
+        var ctx = host._ch3; if (!ctx) { return; }
+        if (host._mobTween) { gsap.killTweensOf(host._mobTween); }
+        mobileCh3Static(ctx);
+        mobileCh3Render(ctx, 0, false);
+      }
+      function mobileCh3Play(host) {
+        var ctx = host._ch3; if (!ctx) { return; }
+        mobileCh3Static(ctx);
+        if (!ctx.positioned) { mobileCh3Position(ctx); ctx.positioned = true; }
+        var obj = host._mobTween || (host._mobTween = { c: 0 });
+        gsap.killTweensOf(obj); obj.c = 0;
+        mobileCh3Render(ctx, 0, true);
+        gsap.to(obj, { c: 1, duration: (MOBILE_CH_MS[2] || 3000) / 1000, ease: 'none', overwrite: true,
+          onUpdate: function () { mobileCh3Render(ctx, obj.c, true); } });
+      }
+      // wrap each word of a transcript in a .flow_w span (opacity 0) so the mobile typer can reveal
+      // them — the copied markup has category spans but not per-word spans
+      function mobileWrapWords(root) {
+        var tr = root.querySelector('[data-type="raw"]');
+        if (!tr || tr.querySelector('.flow_w')) { return; }
+        (function walk(node, cat) {
+          var kids = Array.prototype.slice.call(node.childNodes);
+          for (var i = 0; i < kids.length; i++) {
+            var n = kids[i];
+            if (n.nodeType === 3) {
+              var frag = document.createDocumentFragment();
+              n.textContent.split(/(\s+)/).forEach(function (chunk) {
+                if (chunk === '') { return; }
+                if (/^\s+$/.test(chunk)) { frag.appendChild(document.createTextNode(chunk)); return; }
+                var w = document.createElement('span');
+                w.className = 'flow_w'; w.textContent = chunk; w.style.opacity = '0';
+                if (cat) { w.setAttribute('data-cat', cat); }   // filler / correction / repetition
+                frag.appendChild(w);
+              });
+              node.replaceChild(frag, n);
+            } else if (n.nodeType === 1) {
+              var m = /(?:^|\s)flow_type-([a-z]+)/.exec(n.className || '');
+              walk(n, m ? m[1] : cat);
+            }
+          }
+        }(tr, null));
+      }
+      // ---- MOBILE wpm cards: the 45 (kb) + 220 (flow) cards just stack in normal flow and their
+      // marquee text autoplays. no pin, no morph, no chapter content (the mobile blocks own that).
+      // undoes the desktop prep's absolute positioning / px widths so Webflow's own layout governs.
+      function buildMobileWpm() {
+        if (!stage || !MOBILE_WPM) { return false; }
+        var wpmCard = (card && stage.contains(card)) ? card : one(stage, 'card');
+        guardStyle(stage);
+        stage.style.setProperty('display', 'flex', 'important');       // stack the two cards
+        stage.style.setProperty('flex-direction', 'column', 'important');
+        stage.style.alignItems    = 'stretch';
+        stage.style.gap           = MOBILE_WPM_GAP + 'px';
+        stage.style.position      = 'static';
+        stage.style.width = ''; stage.style.height = '';               // authored 100vh — cards split it
+        stage.style.overflow = 'hidden';
+        [kb, wpmCard].forEach(function (c) {
+          if (!c) { return; }
+          guardStyle(c);
+          c.style.width = '100%'; c.style.maxWidth = 'none';
+          c.style.flex = '1 1 0'; c.style.height = 'auto'; c.style.minHeight = '0';
+          c.style.transform = ''; c.style.visibility = ''; c.style.opacity = '1';
+          c.style.position = 'relative'; c.style.left = ''; c.style.top = ''; c.style.margin = '0';
+          c.style.overflow = 'hidden';
+          c.style.display = 'flex'; c.style.flexDirection = 'column';
+          c.style.alignItems = 'center'; c.style.justifyContent = 'center';
+          c.style.gap = '8px'; c.style.boxSizing = 'border-box';
+          c.style.padding = MOBILE_WPM_PAD + 'px';
+          Array.prototype.forEach.call(c.querySelectorAll('img[data-bg]'), function (im) {
+            guardStyle(im);
+            im.style.position = 'absolute'; im.style.inset = '0'; im.style.zIndex = '0';
+            im.style.width = '100%'; im.style.height = '100%'; im.style.objectFit = 'cover';
+          });
+        });
+        for (var h = 0; h < headEls.length; h++) {      // pin both wpm headings to the same height
+          if (!stage.contains(headEls[h])) { continue; }
+          headEls[h].style.position = 'absolute';
+          headEls[h].style.left = '0'; headEls[h].style.right = '0';
+          headEls[h].style.top = MOBILE_WPM_HEAD_TOP + '%';
+          headEls[h].style.transform = 'translateY(-50%)';
+          headEls[h].style.margin = '0'; headEls[h].style.textAlign = 'center'; headEls[h].style.zIndex = '1';
+        }
+        [kbMq, cardMq].forEach(function (mq) {
+          if (!mq) { return; }
+          // absolute → containing block is the card's PADDING box, so left/right:0 spans the full card
+          // width (100% in flow was inset by the padding); top is set in fitMarqueeText
+          mq.style.position = 'absolute';
+          mq.style.left = '0'; mq.style.right = '0'; mq.style.width = 'auto'; mq.style.marginRight = '0';
+          mq.style.top = '0'; mq.style.transform = ''; mq.style.zIndex = '1';
+          var svg = mq.querySelector('svg');
+          if (svg) {
+            guardStyle(svg);
+            svg.style.width = '100%'; svg.style.height = 'auto'; svg.style.maxWidth = 'none';
+            svg.style.overflow = 'visible';            // the curve's crests ride above the viewBox
+          }
+        });
+        // chapter layers + status pills off; the recorder pill stays (220 card = heading + text + pill)
+        Array.prototype.forEach.call(stage.querySelectorAll('[' + FLOW + '="screen"],[data-pill]'),
+          function (el) { guardStyle(el); el.style.display = 'none'; });
+        if (pillAudioEl && stage.contains(pillAudioEl)) {
+          pillAudioEl.style.display = ''; pillAudioEl.style.position = 'relative';
+          pillAudioEl.style.transform = ''; pillAudioEl.style.opacity = '1'; pillAudioEl.style.zIndex = '1';
+        }
+        if (introEl && stage.contains(introEl)) { introEl.style.opacity = '1'; }   // build starts it at 0
+        // the authored font-size (16px) is in VIEWBOX units: at width:100% in a ~300px card the svg
+        // scales by 300/928, so the text renders ~5px. counter-scale it to a real px size.
+        function fitMarqueeText() {
+          if (!MOBILE_WPM_TEXT_PX) { return; }
+          for (var i = 0; i < marquees.length; i++) {
+            var m = marquees[i];
+            if (!m.svg || !stage.contains(m.svg)) { continue; }
+            var w = m.svg.getBoundingClientRect().width;
+            if (w <= 0) { continue; }
+            m.text.style.fontSize = (MOBILE_WPM_TEXT_PX * m.vbw / w).toFixed(1) + 'px';
+            try { m.len = m.text.getComputedTextLength ? m.text.getComputedTextLength() : 0; } catch (e) { m.len = 0; }
+            // slide the wrapper so the TEXT (not the svg box) lands at the target height
+            var host = (kb && kb.contains(m.svg)) ? kb : wpmCard;
+            var wrap = m.svg.parentNode;
+            if (!host || !wrap || wrap.nodeType !== 1) { continue; }
+            wrap.style.top = '0px';
+            var hostR = host.getBoundingClientRect(), txtR = m.text.getBoundingClientRect();
+            if (!txtR.height) { continue; }
+            var want = hostR.top + hostR.height * (MOBILE_WPM_MQ_TOP / 100);
+            wrap.style.top = Math.round(want - (txtR.top + txtR.height / 2)) + 'px';
+          }
+        }
+        fitMarqueeText();
+        if (typeof window.requestAnimationFrame === 'function') { window.requestAnimationFrame(fitMarqueeText); }
+        var tick = function () {                       // marquee runs on mqClock (MQ_AUTOPLAY)
+          mqClock += gsap.ticker.deltaRatio() / 60;
+          updateMarquees(0);
+        };
+        gsap.ticker.add(tick);
+        teardown.push(function () { gsap.ticker.remove(tick); });
+        return true;
       }
       function buildMobileChapters() {
         var mob = section.querySelector('[' + ATTR + '="mobile"]');
         if (!mob) { return; }
-        if (stage) { stage.style.display = 'none'; }   // desktop stage is the clone SOURCE only on mobile
         var blocks = Array.prototype.slice.call(mob.querySelectorAll('[data-flow-play]'));
         blocks.forEach(function (block) {
           var ch = block.getAttribute('data-flow-play');
           var host = block.querySelector('.mobile_visual_contain') || block;
-          if (!host.children.length) {                 // clone the desktop chapter in (once)
-            var src = mobileCloneSource(ch);
-            if (src) { host.appendChild(src.cloneNode(true)); }
-          }
+          if (!host.children.length) { return; }        // nothing authored in this block yet → skip
+          uniquifyIds(host);                            // your duplicated card(s) → make ids unique (safety)
+          if (ch === 'ch2')      { mobileCh2Prep(host); }   // polish: wrap raw + polished, is-polishing, measure box
+          else if (ch === 'ch3') { mobileCh3Prep(host); }   // fan: collect cards + logos, park the message open
+          else { mobileWrapWords(host); }                   // typer: wrap transcript words
           mobileReset(host, ch);                        // start hidden
           if (typeof window.IntersectionObserver === 'function') {
             var io = new IntersectionObserver(function (entries) {
               for (var e = 0; e < entries.length; e++) {
                 if (entries[e].isIntersecting) { mobilePlay(host, ch); } else { mobileReset(host, ch); }
               }
-            }, { threshold: MOBILE_IO_THRESHOLD });
+            }, { threshold: 0, rootMargin: '0px 0px ' + MOBILE_IO_MARGIN + ' 0px' });
             io.observe(block);
             teardown.push(function () { io.disconnect(); });
           } else { mobilePlay(host, ch); }
@@ -1938,7 +2429,8 @@
         gsap.ticker.add(pillTick);
         teardown.push(function () { gsap.ticker.remove(pillTick); });
       } else {
-        // mobile: stacked chapters, each clones its desktop animation + plays on scroll-into-view
+        // mobile: wpm cards stacked + autoplaying, then the stacked chapter blocks
+        if (!buildMobileWpm() && stage) { stage.style.display = 'none'; }
         buildMobileChapters();
       }
 
