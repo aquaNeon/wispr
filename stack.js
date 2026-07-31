@@ -99,6 +99,32 @@
   var CARD_FADE      = 0.4;
   var LANDED_BG      = '';                      // '' = read LANDED_BG_VAR
   var LANDED_BG_VAR  = '--base-color--fathom';  // row bg once gathered
+  var STACK_ITEM_RADIUS = '12px';   // every row's corners once stacked (scattered = authored). '' = off
+
+  // images that pop in around the card once the rows have stacked. authored at their FINAL spots
+  // in Webflow; JS only animates them in (and reverses on scroll-back). per-element overrides:
+  // data-pop-x / data-pop-y / data-pop-rot / data-pop-scale, order via data-stack-order.
+  var POP_IMG_AT      = 0.45;  // seconds into the gather timeline before the first image fires
+  var POP_IMG_STAGGER = 0.12;
+  var POP_IMG_DUR     = 0.5;
+  var POP_IMG_EASE    = 'back.out(2)';
+  var POP_IMG_SCALE   = 0.6;   // scale it grows from
+  var POP_IMG_Y       = 24;    // px it rises from
+  var POP_IMG_X       = 0;
+  var POP_IMG_ROT     = -6;    // deg it rotates in from (alternates sign per image)
+  var POP_IMG_Z       = 995;   // above the rows AND the light clone (LIGHT_Z 990), below the nav (999)
+  // parallax: images drift AGAINST the scroll once they've popped in. px of drift per full unit of
+  // pin progress (so ~POP_PAR_DIST × the progress left after the gather). per-image: data-pop-depth.
+  var POP_PAR_DIST    = 65;
+  var POP_PAR_DEPTH   = [1, 0.6, 1.35];   // cycles over the images; overridden by data-pop-depth
+  var POP_PAR_SMOOTH  = 0.1;   // per-frame ease toward the scroll position; lower = more drag
+
+  // chapter 1 handoff (card landing on the tabs): images out, task rows shoot up and vanish
+  var CH1_EXIT_FROM   = 0.72;  // where in the pG->pHold travel the exit starts (1 = only at the very end)
+  var CH1_ROW_RISE    = 120;   // px each row travels up
+  var CH1_ROW_STAGGER = 0.08;  // share of the window between rows (top row leaves first)
+  var CH1_ROW_FADE    = 1.8;   // >1 = fades faster than it rises, so rows die at the card edge
+  var CH1_POP_SCALE   = 0.55;  // scale the pop images shrink to as they fade
 
   var HOLD_STEPS    = 0;
 
@@ -117,6 +143,14 @@
   var LIGHT_ROW_BG   = '#FFFDF9';
   var LIGHT_Z        = 990;    // above section content, below the nav (999)
   var LIGHT_TEXT     = '#1A1A1A';
+  // per-speaker name tag in the LIGHT phase, keyed by the Webflow component variant on the tag
+  // (read from whatever data-wf--…--variant attribute it carries, or a w-variant class).
+  // value = text colour string, or { color: '#..', bg: '#..' }. {} = leave the tag alone.
+  var NAME_TAG_SEL   = '.meeting_name-tag';
+  var NAME_TAG_LIGHT = {
+    dawn: '#7232A6'
+    // add more variants as needed: pulse / glow / fathom / dusk …
+  };
 
   var ATTR  = 'data-stack';
   var ORDER = 'data-stack-order';
@@ -350,8 +384,75 @@
           onStart: function () { it.style.zIndex = 100 + slot; }
         };
         if (landedBg) { tween.backgroundColor = landedBg; }
+        if (STACK_ITEM_RADIUS) {                       // scattered bubbles carry mixed corners
+          tween.borderTopLeftRadius = tween.borderTopRightRadius =
+          tween.borderBottomLeftRadius = tween.borderBottomRightRadius = STACK_ITEM_RADIUS;
+        }
         gatherTl.to(it, tween, CARD_FADE * 0.5 + slot * GATHER_STAGGER);
       });
+
+      // pop-in images: ride the same timeline as the gather, so they're fully scrubbed
+      var pops = Array.prototype.slice.call(sel(section, 'pop')).sort(function (a, b) {
+        var ao = parseFloat(a.getAttribute(ORDER)); if (isNaN(ao)) { ao = Infinity; }
+        var bo = parseFloat(b.getAttribute(ORDER)); if (isNaN(bo)) { bo = Infinity; }
+        return ao - bo;
+      });
+      // parallax rides the INNER element, so it never fights the entrance tween on the wrapper
+      var popPar = [];
+      pops.forEach(function (el, i) {
+        guardStyle(el);
+        // always on top: the rows sit at 100+, the light clone at LIGHT_Z (990)
+        if (window.getComputedStyle(el).position === 'static') { el.style.position = 'relative'; }
+        el.style.zIndex = String(POP_IMG_Z);
+        function num(attr, dflt) { var v = parseFloat(el.getAttribute(attr)); return isNaN(v) ? dflt : v; }
+        var inner = el.querySelector('img') || el.firstElementChild;
+        if (inner) {
+          guardStyle(inner);
+          inner.style.willChange = 'transform';
+          popPar.push({ el: inner, depth: num('data-pop-depth', POP_PAR_DEPTH[i % POP_PAR_DEPTH.length]) });
+        }
+        var fromRot = num('data-pop-rot', POP_IMG_ROT * (i % 2 ? -1 : 1));   // alternate the tilt
+        gsap.set(el, {
+          opacity: 0, transformOrigin: '50% 50%',
+          scale: num('data-pop-scale', POP_IMG_SCALE),
+          x: num('data-pop-x', POP_IMG_X), y: num('data-pop-y', POP_IMG_Y), rotation: fromRot
+        });
+        gatherTl.to(el, { opacity: 1, scale: 1, x: 0, y: 0, rotation: 0, duration: POP_IMG_DUR, ease: POP_IMG_EASE },
+          POP_IMG_AT + i * POP_IMG_STAGGER);
+      });
+      // drift opposite the scroll, measured from the moment they pop in (0 offset there). the scroll
+      // position only sets a TARGET; a ticker eases toward it so the float drags instead of snapping.
+      var popTgt = 0, popCur = 0, popPainted = null;
+      function popParallax(p) {
+        if (!popPar.length) { return; }
+        popTgt = Math.max(0, p - gatherThresh * pA);
+      }
+      function paintPopParallax() {
+        if (popPainted === popCur) { return; }
+        popPainted = popCur;
+        for (var i = 0; i < popPar.length; i++) {
+          popPar[i].el.style.transform =
+            'translate3d(0,' + (-popCur * POP_PAR_DIST * popPar[i].depth).toFixed(2) + 'px,0)';
+        }
+      }
+      if (pops.length) {
+        var popTicker = function () {
+          var diff = popTgt - popCur;
+          if (Math.abs(diff) < 0.00002) { if (popCur !== popTgt) { popCur = popTgt; paintPopParallax(); } return; }
+          popCur += diff * (1 - Math.pow(1 - POP_PAR_SMOOTH, gsap.ticker.deltaRatio()));
+          paintPopParallax();
+        };
+        gsap.ticker.add(popTicker);
+        teardown.push(function () { gsap.ticker.remove(popTicker); });
+      }
+      // they must live INSIDE the card to ride its travel transform — warn instead of silently
+      // leaving them behind up in the stage
+      var popsOutside = pops.filter(function (el) { return !card.contains(el); }).length;
+      if (popsOutside) {
+        console.warn('[stack] ' + popsOutside + ' [data-stack="pop"] element(s) are outside ' +
+          '[data-stack="card"] — they will not travel with the card. move them inside it.');
+      }
+      if (DEBUG) { console.log('[stack] pop images:', pops.length, 'outside card:', popsOutside); }
 
       var stepCount = batchCount + 1 + HOLD_STEPS;
       var popPlayed = popTls.map(function () { return false; });
@@ -541,24 +642,54 @@
         sCardStart = sCenter - cardRiseDist;
       }
 
+      // name tags in the light clone: each speaker keeps its own colour, looked up from the Webflow
+      // variant. the variant name lives in a data-wf--<component>--variant attr (component name
+      // varies, so match by shape) and falls back to a w-variant-* class.
+      function variantOf(el) {
+        var at = el.attributes, i;
+        for (i = 0; i < at.length; i++) {
+          if (/^data-wf--.*--variant$/.test(at[i].name) && at[i].value) { return at[i].value.trim().toLowerCase(); }
+        }
+        var m = /(?:^|\s)w-variant-([\w-]+)/.exec(el.className || '');
+        return m ? m[1].toLowerCase() : '';
+      }
+      function recolorNameTags(root) {
+        Array.prototype.forEach.call(root.querySelectorAll(NAME_TAG_SEL), function (tag) {
+          var v = variantOf(tag) || variantOf(tag.parentNode || tag);
+          var spec = NAME_TAG_LIGHT[v];
+          if (!spec) { return; }
+          if (typeof spec === 'string') { tag.style.color = spec; return; }
+          if (spec.color) { tag.style.color = spec.color; }
+          if (spec.bg)    { tag.style.backgroundColor = spec.bg; }
+        });
+      }
+
       // light clone: a light-themed copy of the card, absolute inset:0 inside the card, clipped at
       // the green/white boundary so the card reads dark above the line and light below.
       var cardClone = null;
       if (LIGHT_REVEAL && isDesktop) {
         cardClone = card.cloneNode(true);
         cardClone.removeAttribute(ATTR);
+        // pop images live in the card, so the clone would show a frozen ghost copy of each
+        Array.prototype.forEach.call(cardClone.querySelectorAll('[' + ATTR + '="pop"]'), function (el) {
+          if (el.parentNode) { el.parentNode.removeChild(el); }
+        });
         cardClone.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;margin:0;' +
           'box-sizing:border-box;pointer-events:none;overflow:hidden;border-radius:inherit;' +
           'z-index:' + LIGHT_Z + ';display:none;' +
           'background:' + LIGHT_CARD_BG + ';color:' + LIGHT_TEXT + ';will-change:clip-path;';
         Array.prototype.forEach.call(cardClone.querySelectorAll('*'), function (el) { el.style.transform = ''; el.style.opacity = '1'; });
-        Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) { el.style.backgroundColor = LIGHT_ROW_BG; });
+        Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="item"], .meeting_item'), function (el) {
+          el.style.backgroundColor = LIGHT_ROW_BG;
+          if (STACK_ITEM_RADIUS) { el.style.borderRadius = STACK_ITEM_RADIUS; }   // clone is a pre-gather snapshot
+        });
         Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) { el.style.color = LIGHT_TEXT; });
         Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) { el.style.borderColor = LIGHT_TEXT; });
         cardClone.style.borderColor = LIGHT_CARD_BG;
         cardClone.style.boxShadow   = '0 0 0 2px ' + LIGHT_CARD_BG;   // outer ring masks the dark card edge
         card.appendChild(cardClone);
         teardown.push(function () { if (cardClone.parentNode) { cardClone.parentNode.removeChild(cardClone); } });
+        recolorNameTags(cardClone);
         // recolor icons on the property each shape actually paints with (stroke vs fill)
         Array.prototype.forEach.call(cardClone.querySelectorAll('[data-stack="icon"]'), function (icon) {
           icon.style.color = LIGHT_TEXT;
@@ -590,6 +721,32 @@
       }
       computeTiming();
 
+      // ---- chapter 1 handoff: as the card lands on the tabs, the pop images scale+fade out and the
+      // task rows shoot up and vanish by the card's top edge, clearing the card for chapter 1.
+      // scrubbed over the tail of the card travel (pG -> pHold). anything tagged data-stack="keep"
+      // (e.g. the svg at the card bottom) is left alone.
+      var exitRows = items.filter(function (it) { return it.getAttribute(ATTR) !== 'keep' && !it.hasAttribute('data-stack-keep'); });
+      var exitCloneRows = cardClone
+        ? Array.prototype.slice.call(cardClone.querySelectorAll('[' + ATTR + '="item"], .meeting_item'))
+        : [];
+      function ch1Exit(p) {
+        var from = pG + (pHold - pG) * CH1_EXIT_FROM;
+        var t = (pHold > from) ? (p - from) / (pHold - from) : (p >= pHold ? 1 : 0);
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        var n = exitRows.length, i, span = 1 - CH1_ROW_STAGGER * Math.max(0, n - 1);
+        if (span < 0.15) { span = 0.15; }
+        for (i = 0; i < n; i++) {
+          var e = smooth((t - i * CH1_ROW_STAGGER) / span);          // top row leaves first
+          var op = 1 - smooth(e * CH1_ROW_FADE);                     // gone before it clears the edge
+          gsap.set(exitRows[i], { y: -CH1_ROW_RISE * e, opacity: op });
+          if (exitCloneRows[i]) { gsap.set(exitCloneRows[i], { y: -CH1_ROW_RISE * e, opacity: op }); }
+        }
+        var pe = smooth(t);
+        for (i = 0; i < pops.length; i++) {
+          gsap.set(pops[i], { scale: 1 - (1 - CH1_POP_SCALE) * pe, opacity: 1 - pe });
+        }
+      }
+
       // maps scroll progress -> every visual; used by both onUpdate and refresh
       function applyScroll(p) {
         var ap = pA > 0 ? Math.min(1, p / pA) : 1;
@@ -617,6 +774,8 @@
           for (var ci = 0; ci < contentEls.length; ci++) { gsap.set(contentEls[ci], { y: -S }); }
           gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
         }
+        popParallax(p);
+        ch1Exit(p);
 
         // seam cover: show while the green panel is docked flush to the viewport top
         if (canLeave && topCover) {
