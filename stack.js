@@ -119,13 +119,6 @@
   var POP_PAR_DEPTH   = [1, 0.6, 1.35];   // cycles over the images; overridden by data-pop-depth
   var POP_PAR_SMOOTH  = 0.1;   // per-frame ease toward the scroll position; lower = more drag
 
-  // chapter 1 handoff (card landing on the tabs): images out, task rows shoot up and vanish
-  var CH1_EXIT_FROM   = 0.72;  // where in the pG->pHold travel the exit starts (1 = only at the very end)
-  var CH1_ROW_RISE    = 120;   // px each row travels up
-  var CH1_ROW_STAGGER = 0.08;  // share of the window between rows (top row leaves first)
-  var CH1_ROW_FADE    = 1.8;   // >1 = fades faster than it rises, so rows die at the card edge
-  var CH1_POP_SCALE   = 0.55;  // scale the pop images shrink to as they fade
-
   var HOLD_STEPS    = 0;
 
   // pin sequence: assemble -> green hold -> content scroll (card rises to centre) -> sticky tabs
@@ -292,6 +285,18 @@
         it.style.boxSizing  = 'border-box';
         it.style.whiteSpace = 'nowrap';
         it.style.willChange = 'transform, opacity';
+      });
+
+      // the append above lands every task at the end of the card, so authored DOM order can't put
+      // anything below them. tag an element data-stack="foot" (e.g. the voice pill) to be moved
+      // after the tasks. runs before the light clone is taken, so the clone inherits the order.
+      Array.prototype.forEach.call(sel(card, 'foot'), function (el) {
+        var fph = document.createComment('stack-foot');
+        el.parentNode.insertBefore(fph, el);
+        teardown.push(function () {
+          if (fph.parentNode) { fph.parentNode.insertBefore(el, fph); fph.parentNode.removeChild(fph); }
+        });
+        card.appendChild(el);
       });
 
       var checks = items.map(function (it) { return it.querySelector('[' + ATTR + '="check"], .meeting_check'); });
@@ -721,32 +726,6 @@
       }
       computeTiming();
 
-      // ---- chapter 1 handoff: as the card lands on the tabs, the pop images scale+fade out and the
-      // task rows shoot up and vanish by the card's top edge, clearing the card for chapter 1.
-      // scrubbed over the tail of the card travel (pG -> pHold). anything tagged data-stack="keep"
-      // (e.g. the svg at the card bottom) is left alone.
-      var exitRows = items.filter(function (it) { return it.getAttribute(ATTR) !== 'keep' && !it.hasAttribute('data-stack-keep'); });
-      var exitCloneRows = cardClone
-        ? Array.prototype.slice.call(cardClone.querySelectorAll('[' + ATTR + '="item"], .meeting_item'))
-        : [];
-      function ch1Exit(p) {
-        var from = pG + (pHold - pG) * CH1_EXIT_FROM;
-        var t = (pHold > from) ? (p - from) / (pHold - from) : (p >= pHold ? 1 : 0);
-        t = t < 0 ? 0 : (t > 1 ? 1 : t);
-        var n = exitRows.length, i, span = 1 - CH1_ROW_STAGGER * Math.max(0, n - 1);
-        if (span < 0.15) { span = 0.15; }
-        for (i = 0; i < n; i++) {
-          var e = smooth((t - i * CH1_ROW_STAGGER) / span);          // top row leaves first
-          var op = 1 - smooth(e * CH1_ROW_FADE);                     // gone before it clears the edge
-          gsap.set(exitRows[i], { y: -CH1_ROW_RISE * e, opacity: op });
-          if (exitCloneRows[i]) { gsap.set(exitCloneRows[i], { y: -CH1_ROW_RISE * e, opacity: op }); }
-        }
-        var pe = smooth(t);
-        for (i = 0; i < pops.length; i++) {
-          gsap.set(pops[i], { scale: 1 - (1 - CH1_POP_SCALE) * pe, opacity: 1 - pe });
-        }
-      }
-
       // maps scroll progress -> every visual; used by both onUpdate and refresh
       function applyScroll(p) {
         var ap = pA > 0 ? Math.min(1, p / pA) : 1;
@@ -775,7 +754,6 @@
           gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
         }
         popParallax(p);
-        ch1Exit(p);
 
         // seam cover: show while the green panel is docked flush to the viewport top
         if (canLeave && topCover) {
