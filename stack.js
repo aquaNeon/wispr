@@ -155,6 +155,9 @@
   var STAGE_MATCH_CARD = true;
   // clip each chapter panel to that box, with the card's own corner radius
   var PANEL_CLIP       = true;
+  // stretch whatever is inside a panel (bg wrapper, shader, embed) to that box instead of letting
+  // it size to its own content
+  var PANEL_FILL       = true;
   // walk the travelling card onto the chapter stage as it lands, instead of stopping at viewport
   // centre. needed once anything on the card (pill, pop images) survives into chapter 1.
   var CARD_LANDS_ON_STAGE = true;
@@ -693,6 +696,22 @@
           guardStyle(el);
           el.style.gridArea = '1 / 1';
           el.style.minWidth = el.style.minHeight = '0';   // else content sets an auto floor
+          if (PANEL_FILL) {
+            // beat any authored height on the panel, then make the panel its own single-cell grid
+            // so whatever is inside (bg wrapper, shader, embed) is stretched to the card's box
+            // instead of sizing to its own content. a percentage height authored in Webflow can't
+            // do this on its own: it needs a definite parent height to resolve against.
+            el.style.height = el.style.width = '100%';
+            el.style.display = 'grid';
+            el.style.gridTemplateRows    = '100%';
+            el.style.gridTemplateColumns = '100%';
+            Array.prototype.forEach.call(el.children, function (kid) {
+              if (kid.nodeType !== 1) { return; }
+              guardStyle(kid);
+              kid.style.gridArea = '1 / 1';
+              kid.style.minWidth = kid.style.minHeight = '0';
+            });
+          }
           if (PANEL_CLIP) {
             el.style.overflow = 'hidden';
             if (panelRadius && panelRadius !== '0px') { el.style.borderRadius = panelRadius; }
