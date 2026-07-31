@@ -119,6 +119,50 @@
   var POP_PAR_DEPTH   = [1, 0.6, 1.35];   // cycles over the images; overridden by data-pop-depth
   var POP_PAR_SMOOTH  = 0.1;   // per-frame ease toward the scroll position; lower = more drag
 
+  // exit as the card lands on the tabs. all of it is scrubbed over the tail of the card's travel,
+  // and only inside that window - outside it the rows belong to the gather. tag a row
+  // data-stack-keep to leave it in place.
+  // TRIGGERED, not scrubbed: it fires once the card is CH1_AT of the way down to the tabs and then
+  // plays on its own clock, so it finishes before the card lands. reverses on scroll-back.
+  var CH1_AT          = 0.45;  // point in the pG->pHold travel that fires it (0 = at pG, 1 = landing)
+  var CH1_ROW_Y       = -120;  // px each row travels; negative = up, positive = down
+  var CH1_ROW_DUR     = 0.45;  // seconds per row
+  var CH1_ROW_STAGGER = 0.06;  // seconds between rows (top row leaves first)
+  var CH1_ROW_EASE    = 'power2.in';
+  var CH1_IMG_OUT     = false; // false = the pop images stay in view through chapter 1
+  var CH1_IMG_DUR     = 0.4;
+  var CH1_IMG_STAGGER = 0.06;
+  var CH1_IMG_Y       = -30;   // px the images drift as they go
+  var CH1_IMG_SCALE   = 0.55;  // scale they shrink to
+  var CH1_IMG_EASE    = 'back.in(1.6)';
+
+  // the travelling card dissolves at the end of the exit, handing the tabs stage over to the
+  // chapter embeds. the card sits in the green panel (z 900) and the tabs at z 1, so it covers
+  // the stage until it goes. the pop images are NOT faded - they stay for chapter 1.
+  var CARD_OUT      = true;
+  var CARD_OUT_DUR  = 0.5;
+  var CARD_OUT_EASE = 'power2.out';
+  var CARD_OUT_LAG  = -0.2;    // seconds of overlap with the tail of the row exit
+
+  // what survived chapter 1 (pop images, foot pill, card head) clears when chapter 2 arrives
+  var CH2_OUT         = true;
+  var CH2_OUT_DUR     = 0.45;
+  var CH2_OUT_STAGGER = 0.05;
+  var CH2_OUT_EASE    = 'power2.out';
+
+  // size the tab-panel stage to the travelling card's box on every refresh, so a chapter reads as
+  // the same card rather than a differently-shaped one. false = size it yourself in Webflow.
+  var STAGE_MATCH_CARD = true;
+  // clip each chapter panel to that box, with the card's own corner radius
+  var PANEL_CLIP       = true;
+  // walk the travelling card onto the chapter stage as it lands, instead of stopping at viewport
+  // centre. needed once anything on the card (pill, pop images) survives into chapter 1.
+  var CARD_LANDS_ON_STAGE = true;
+
+  // the tab panel's own animation is shot in once the card has landed. -1 until then, so panel 0
+  // isn't sitting there playing through the whole ride down.
+  var TABS_PLAY_AT    = 1.0;   // point in pG->pHold at which tab 0 activates (1 = at the landing)
+
   var HOLD_STEPS    = 0;
 
   // pin sequence: assemble -> green hold -> content scroll (card rises to centre) -> sticky tabs
@@ -191,7 +235,13 @@
         '[data-tab-text] .meeting_tabs_heading,[data-tab-text] .meeting_tabs_paragraph{' +
           'opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s ease;}' +
         '[data-tab-text].is-active .meeting_tabs_heading{opacity:1;transform:none;transition-delay:.06s;}' +
-        '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}';
+        '[data-tab-text].is-active .meeting_tabs_paragraph{opacity:1;transform:none;transition-delay:.16s;}' +
+        // play gate for the CSS-loop embeds. "off" REMOVES the animations rather than pausing them,
+        // so every activation starts the loop at 0% - a paused animation would resume mid-cycle.
+        // keyed off the panel, so it works whatever the embed calls its own root.
+        '[data-tab-anim][data-play="off"] *,' +
+        '[data-tab-anim][data-play="off"] *::before,' +
+        '[data-tab-anim][data-play="off"] *::after{animation:none !important;}';
       document.head.appendChild(ms);
     }
 
@@ -322,7 +372,7 @@
       // scatter deltas: read natural rects (transforms cleared), invert against the scatter fractions
       function measureGeo() {
         gsap.set(items, { x: 0, y: 0, scaleX: 1, scaleY: 1 });
-        gsap.set(card,  { y: 0 });
+        gsap.set(card,  { x: 0, y: 0 });   // x too: the stage-landing correction also lives on it
         var mi  = scatterCtx.getBoundingClientRect();
         var nat = items.map(function (it) { return it.getBoundingClientRect(); });
         var spot = [], cx = 0, cy = 0, s;
@@ -506,6 +556,10 @@
         } else {
           gsap.set(items, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 });
         }
+        // the reset above returns the rows to their gathered state, which would undo an exit that
+        // has already played (ch1Exit only fires on a threshold crossing, so it won't re-apply it).
+        // invalidate so the tweens re-record from the fresh geometry, then jump back to the end.
+        if (exitTl && exitPlayed) { exitTl.invalidate().progress(1); }
         applyScroll(st ? st.progress : 0);
         if (activeTab >= 0) { moveIndicator(activeTab); }
       }
@@ -616,6 +670,36 @@
         tabIndicator.style.transform = 'translateY(' + label.offsetTop + 'px)';
         tabIndicator.style.height    = label.offsetHeight + 'px';
       }
+      // every panel starts gated off, so no embed is looping behind the card during the ride down.
+      // "off" removes the animations outright (see the injected sheet), so flipping it to "on"
+      // starts that embed's loop at 0% every time the tab is entered.
+      Array.prototype.forEach.call(tabAnims, function (el) { el.setAttribute('data-play', 'off'); });
+
+      // stack the panels in one grid cell. they're siblings in the stage, and visibility:hidden
+      // still occupies layout, so left in flow they pile up and make the stage five panels tall.
+      // grid (not absolute) keeps the stage sizing itself to the tallest panel.
+      var animStage = tabAnims.length ? tabAnims[0].parentNode : null;
+      if (animStage) {
+        guardStyle(animStage);
+        animStage.style.display = 'grid';
+        // pin the single cell to the stage's own box. left implicit the row would be auto-sized and
+        // a tall chapter (the brief expands downward) would stretch the row past the card's height.
+        animStage.style.gridTemplateRows    = '100%';
+        animStage.style.gridTemplateColumns = '100%';
+        // clip each panel to the card's box and corner radius. chapter content is taller than the
+        // card in places (the brief expands downward), and without this it spills past the edge.
+        var panelRadius = PANEL_CLIP ? window.getComputedStyle(card).borderRadius : '';
+        Array.prototype.forEach.call(tabAnims, function (el) {
+          guardStyle(el);
+          el.style.gridArea = '1 / 1';
+          el.style.minWidth = el.style.minHeight = '0';   // else content sets an auto floor
+          if (PANEL_CLIP) {
+            el.style.overflow = 'hidden';
+            if (panelRadius && panelRadius !== '0px') { el.style.borderRadius = panelRadius; }
+          }
+        });
+      }
+
       function setActiveTab(n) {
         if (n === activeTab) { return; }
         activeTab = n;
@@ -624,17 +708,31 @@
         section.setAttribute('data-active-tab', String(n));
         toggleByIndex(tabTexts, 'data-tab-text', n);
         toggleByIndex(tabAnims, 'data-tab-anim', n);
+        // shoot the entering panel's animation in from the top; park every other one
+        Array.prototype.forEach.call(tabAnims, function (el) {
+          el.setAttribute('data-play', parseInt(el.getAttribute('data-tab-anim'), 10) === n ? 'on' : 'off');
+        });
+        ch2Leftovers(n);
         moveIndicator(n);
       }
 
       // measured each refresh: card rise distance, and S to bring the tabs-grid centre to screen centre
       var cardRiseDist = 0, sCenter = 0, sCardStart = 0;
+      var landDX = 0, landDY = 0;   // correction that walks the card onto the chapter stage
       function measurePositions() {
         contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });
-        gsap.set(card, { y: 0 });
-        var mid  = window.innerHeight * CARD_TARGET;
-        var sTop = section.getBoundingClientRect().top;
-        var cr   = card.getBoundingClientRect();
+        gsap.set(card, { x: 0, y: 0 });
+        var mid   = window.innerHeight * CARD_TARGET;
+        var secR  = section.getBoundingClientRect();
+        var sTop  = secR.top;
+        var sLeft = secR.left;
+        var cr    = card.getBoundingClientRect();
+        // the chapter panels take the travelling card's exact box, so the handoff reads as one card
+        // rather than a swap. measured here because the card's transform is already cleared.
+        if (STAGE_MATCH_CARD && animStage && cr.width && cr.height) {
+          animStage.style.width  = cr.width  + 'px';
+          animStage.style.height = cr.height + 'px';
+        }
         cardRiseDist = ((cr.top - sTop) + cr.height / 2) - mid;
         if (cardRiseDist < 0) { cardRiseDist = 0; }
         if (tabsWrap) {
@@ -645,6 +743,24 @@
         }
         if (sCenter < cardRiseDist) { sCenter = cardRiseDist; }
         sCardStart = sCenter - cardRiseDist;
+
+        // sCenter centres the tabs CONTAINER on the viewport, but the chapter stage is a grid cell
+        // inside it, so the card would land near the panel rather than on it. measure the gap
+        // between where the card ends up and where the stage ends up, and walk the card across it
+        // over the same pG->pHold travel. without this the pill and pop images that survive into
+        // chapter 1 sit apart from the panel they belong to.
+        landDX = landDY = 0;
+        if (CARD_LANDS_ON_STAGE && animStage) {
+          var sr = animStage.getBoundingClientRect();
+          if (sr.width && sr.height) {
+            var cardCX = (cr.left - sLeft) + cr.width  / 2;
+            var cardCY = (cr.top  - sTop)  + cr.height / 2;
+            var stgCX  = (sr.left - sLeft) + sr.width  / 2;
+            var stgCY  = (sr.top  - sTop)  + sr.height / 2;
+            landDX = stgCX - cardCX;                             // stage sits off-centre horizontally
+            landDY = (stgCY - sCenter) - (cardCY - cardRiseDist); // both land points, section-relative
+          }
+        }
       }
 
       // name tags in the light clone: each speaker keeps its own colour, looked up from the Webflow
@@ -726,6 +842,81 @@
       }
       computeTiming();
 
+      // ---- exit: the images leave, then the task rows travel on y and fade, clearing the card.
+      // TRIGGERED at CH1_AT of the ride down and played on its own clock, so it's finished before
+      // the card lands. reverses if you scroll back above the trigger.
+      //
+      // it animates y/opacity/scale on elements gatherTl and the fan-out also own, so it must never
+      // touch them outside its own window - hence the play/reverse gate rather than a per-frame
+      // write. (an earlier scrubbed version ran on every frame and wrote y:0 over every scatter
+      // position, flattening the whole assembly.)
+      var exitRows = items.filter(function (it) { return !it.hasAttribute('data-stack-keep'); });
+      var exitCloneRows = cardClone
+        ? Array.prototype.slice.call(cardClone.querySelectorAll('[' + ATTR + '="item"], .meeting_item'))
+        : [];
+      var exitTl = gsap.timeline({ paused: true });
+      var rowsAt = 0;
+      if (CH1_IMG_OUT && pops.length) {
+        exitTl.to(pops, {
+          y: CH1_IMG_Y, scale: CH1_IMG_SCALE, opacity: 0,
+          duration: CH1_IMG_DUR, ease: CH1_IMG_EASE, stagger: CH1_IMG_STAGGER
+        }, 0);
+        rowsAt = CH1_IMG_DUR * 0.5;   // rows follow the images out
+      }
+      if (exitRows.length) {
+        exitTl.to(exitRows, {
+          y: CH1_ROW_Y, opacity: 0,
+          duration: CH1_ROW_DUR, ease: CH1_ROW_EASE, stagger: CH1_ROW_STAGGER
+        }, rowsAt);
+      }
+      if (exitCloneRows.length) {
+        exitTl.to(exitCloneRows, {
+          y: CH1_ROW_Y, opacity: 0,
+          duration: CH1_ROW_DUR, ease: CH1_ROW_EASE, stagger: CH1_ROW_STAGGER
+        }, rowsAt);
+      }
+      // only the card's BACKGROUND goes: its own paint, plus the light clone (which is a full
+      // opaque copy of the plate, so leaving it up would leave the background up). the pop images,
+      // the foot pill and the head all stay for chapter 1 - they clear at chapter 2 instead.
+      if (CARD_OUT) {
+        if (cardClone) {
+          exitTl.to(cardClone, { opacity: 0, duration: CARD_OUT_DUR, ease: CARD_OUT_EASE }, '>' + CARD_OUT_LAG);
+        }
+        exitTl.to(card, {
+          backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', boxShadow: 'none',
+          duration: CARD_OUT_DUR, ease: CARD_OUT_EASE
+        }, cardClone ? '<' : ('>' + CARD_OUT_LAG));
+      }
+      // leftovers: the pop images, the foot pill and the card head ride through chapter 1 and clear
+      // when chapter 2 arrives. driven by the ACTIVE TAB, not by scroll position, so it stays in
+      // step with a tab click as well as a scroll.
+      var leftovers = pops.concat(Array.prototype.slice.call(sel(card, 'foot')));
+      if (head) { leftovers.push(head); }
+      leftovers = leftovers.concat(headIcons);
+      var leftoverTl = gsap.timeline({ paused: true });
+      if (CH2_OUT && leftovers.length) {
+        leftoverTl.to(leftovers, {
+          opacity: 0, duration: CH2_OUT_DUR, ease: CH2_OUT_EASE, stagger: CH2_OUT_STAGGER
+        });
+      }
+      var leftoverOut = false;
+      function ch2Leftovers(n) {
+        if (!leftoverTl) { return; }   // setActiveTab is defined above this; guard the early calls
+        var want = CH2_OUT && n >= 1;
+        if (want === leftoverOut) { return; }
+        leftoverOut = want;
+        if (want) { leftoverTl.play(); } else { leftoverTl.reverse(); }
+      }
+
+      var exitPlayed = false;
+      function ch1Exit(p) {
+        var at   = pG + (pHold - pG) * CH1_AT;
+        var want = p >= at;
+        if (want === exitPlayed) { return; }
+        exitPlayed = want;
+        if (want) { exitTl.play(); } else { exitTl.reverse(); }
+      }
+
       // maps scroll progress -> every visual; used by both onUpdate and refresh
       function applyScroll(p) {
         var ap = pA > 0 ? Math.min(1, p / pA) : 1;
@@ -751,9 +942,15 @@
           else if (p >= pHold) { S = sCenter; }
           else                 { S = (pHold > pG) ? ((p - pG) / (pHold - pG)) * sCenter : sCenter; }
           for (var ci = 0; ci < contentEls.length; ci++) { gsap.set(contentEls[ci], { y: -S }); }
-          gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) });
+          // lp walks the stage correction in over the same travel, so the card arrives on the panel
+          var lp = (p <= pG) ? 0 : (p >= pHold ? 1 : ((pHold > pG) ? (p - pG) / (pHold - pG) : 1));
+          gsap.set(card, {
+            x: landDX * lp,
+            y: (S - Math.min(cardRiseDist, Math.max(0, S - sCardStart))) + landDY * lp
+          });
         }
         popParallax(p);
+        ch1Exit(p);
 
         // seam cover: show while the green panel is docked flush to the viewport top
         if (canLeave && topCover) {
@@ -763,7 +960,8 @@
 
         // light split: clip the clone at the green/white boundary; recolor the real card to light
         // once fully in the white zone so no green hairline peeks around the clone.
-        if (cardClone && st && st.isActive) {
+        // skipped once the card has dissolved, or it would paint the plate straight back in.
+        if (cardClone && st && st.isActive && !(CARD_OUT && exitPlayed)) {
           var cr = card.getBoundingClientRect();
           var B  = canLeave ? greenPanel.getBoundingClientRect().bottom : -1e9;
           var topClip = Math.max(0, Math.min(cr.height, B - cr.top));
@@ -784,12 +982,15 @@
           }
         }
 
-        // tabs (desktop): advance the active tab while sticky; publish bg-line paint target
+        // tabs (desktop): advance the active tab while sticky; publish bg-line paint target.
+        // held at -1 until the card has landed, so panel 0 doesn't play through the ride down.
         if (isDesktop) {
-          var tn = 0;
+          var tn = -1;
           if (p > pHold && pHold < 1) {
             tn = Math.floor((p - pHold) / (1 - pHold) * tabSpan);
             if (tn < 0) { tn = 0; } else if (tn > numTabs - 1) { tn = numTabs - 1; }
+          } else if (p >= pG + (pHold - pG) * TABS_PLAY_AT) {
+            tn = 0;
           }
           setActiveTab(tn);
           bgTargetP = (p > pHold && pHold < 1) ? (p - pHold) / (1 - pHold) : 0;
