@@ -3,6 +3,27 @@
 // card-name|card-sentence] + data-transcript-task on rows that spawn a task.
 (function () {
 
+    // pre-paint guard: without this the Designer-state card and transcript rows
+    // paint first and visibly re-style when init() runs. visibility (not display)
+    // so init can still measure row/card heights.
+    var READY_ATTR = 'data-notetaker-ready';
+    function reveal() {
+      document.documentElement.setAttribute(READY_ATTR, '');
+    }
+    (function preboot() {
+      if (document.documentElement.classList.contains('wf-design-mode')) {
+        return; // Designer canvas: leave the authored state visible for editing
+      }
+      var s = document.createElement('style');
+      s.id = 'notetaker-preboot';
+      s.textContent =
+        '[data-transcript="wrap"],[data-transcript="card"]{visibility:hidden}' +
+        'html[' + READY_ATTR + '] [data-transcript="wrap"],html[' + READY_ATTR + '] [data-transcript="card"]{visibility:visible}';
+      (document.head || document.documentElement).appendChild(s);
+      // failsafe: a script error must never leave the section blank
+      setTimeout(reveal, 4000);
+    })();
+
     var MAX_LINES = 5;
     var LINE_MS = 1100; // minimum time between lines
     // live-transcription typing: letters flow up into place as the line enters —
@@ -56,7 +77,8 @@
     var RIPPLE_LETTER_MS = 500; // per-letter up-and-back duration
     var RIPPLE_EASE = 'linear'; // matches their ease: 'none'
 
-    var CARD_RADIUS = '16px'; // action card corner radius ('' = leave Webflow's value)
+    var CARD_RADIUS = ''; // action card corner radius ('' = leave Webflow's value)
+    var CARD_BORDER = '2px solid var(--border-color--border-secondary)'; // '' = leave Webflow's border
 
     // task deck: newest card slots in at the bottom, aligned with the live
     // transcript line; older tasks stack up behind it
@@ -98,49 +120,99 @@
     // ---- transcript content: edit HERE, not in the Designer ----
     // The Webflow rows are only used as styling templates (one per speaker);
     // the lines below are what actually plays. task '' = no card.
+    // owner = who the task is assigned to on the card. omit when it's the speaker.
     var CONTENT = [
-      { name: 'Tom', text: 'okay launch is Thursday let\'s lock everything down', task: '', pill: 'fathom' },
-      { name: 'Lelia', text: 'I\'ll drop the final images in this afternoon', task: 'Drop in final images', pill: 'glow' },
-      { name: 'Tom', text: 'legal still hasn\'t cleared the new terms', task: '', pill: 'fathom' },
-      { name: 'Sarah', text: 'I\'ll chase legal right after this call', task: 'Chase legal sign off', pill: 'dawn' },
-      { name: 'Jay', text: 'the changelog still needs a proofread', task: '', pill: 'pulse' },
-      { name: 'Lelia', text: 'send it over I\'ll proof it today', task: 'Proof the changelog', pill: 'glow' },
-      { name: 'Tom', text: 'support docs are only halfway there', task: '', pill: 'fathom' },
-      { name: 'Jay', text: 'I\'ll finish the FAQ tomorrow morning', task: 'Finish the FAQ', pill: 'pulse' },
-      { name: 'Lelia', text: 'the launch email needs a subject line', task: '', pill: 'glow' },
-      { name: 'Tom', text: 'I\'ll write three options tonight', task: 'Write subject line options', pill: 'fathom' },
-      { name: 'Sarah', text: 'the demo video ending drags a bit', task: '', pill: 'dawn' },
-      { name: 'Lelia', text: 'I\'ll trim the ending tomorrow', task: 'Trim the demo video', pill: 'glow' },
-      { name: 'Jay', text: 'I still need the beta invite list', task: '', pill: 'pulse' },
-      { name: 'Sarah', text: 'I\'ll export it for you after this', task: 'Send Jay the beta list', pill: 'dawn' },
-      { name: 'Tom', text: 'we never set up the status page', task: '', pill: 'fathom' },
-      { name: 'Jay', text: 'I\'ll set it up on Wednesday', task: 'Set up the status page', pill: 'pulse' },
-      { name: 'Sarah', text: 'press wise it\'s just the newsletter folks', task: '', pill: 'dawn' },
-      { name: 'Lelia', text: 'I\'ll send the press kit Monday', task: 'Send out the press kit', pill: 'glow' },
-      { name: 'Tom', text: 'pricing table needs the annual toggle', task: '', pill: 'fathom' },
-      { name: 'Sarah', text: 'I\'ll switch the toggle on today', task: 'Add the annual toggle', pill: 'dawn' },
-      { name: 'Jay', text: 'the signup flow still skips the survey', task: '', pill: 'pulse' },
-      { name: 'Tom', text: 'I\'ll wire the survey back in', task: 'Fix the signup survey', pill: 'fathom' },
-      { name: 'Lelia', text: 'socials are empty for launch week', task: '', pill: 'glow' },
-      { name: 'Sarah', text: 'I\'ll schedule the launch posts', task: 'Schedule launch posts', pill: 'dawn' },
-      { name: 'Tom', text: 'who\'s watching metrics on the day', task: '', pill: 'fathom' },
-      { name: 'Jay', text: 'I\'ll build the launch dashboard', task: 'Build launch dashboard', pill: 'pulse' },
-      { name: 'Sarah', text: 'the blog post intro still reads flat', task: '', pill: 'dawn' },
-      { name: 'Tom', text: 'I\'ll rewrite the intro tonight', task: 'Rewrite blog intro', pill: 'fathom' },
-      { name: 'Jay', text: 'partners haven\'t heard a launch date yet', task: '', pill: 'pulse' },
-      { name: 'Lelia', text: 'I\'ll email the partner list today', task: 'Email the partners', pill: 'glow' },
-      { name: 'Sarah', text: 'onboarding tooltips are still placeholder', task: '', pill: 'dawn' },
-      { name: 'Jay', text: 'I\'ll write the real copy tomorrow', task: 'Write tooltip copy', pill: 'pulse' },
-      { name: 'Tom', text: 'we should stress test the servers', task: '', pill: 'fathom' },
-      { name: 'Jay', text: 'I\'ll run the load test Wednesday', task: 'Run the load test', pill: 'pulse' },
-      { name: 'Tom', text: 'and let\'s not skip the retro this time', task: '', pill: 'fathom' },
-      { name: 'Sarah', text: 'I\'ll book the retro for Friday', task: 'Book the launch retro', pill: 'dawn' }
+      { name: 'Jay', text: 'Screen\'s up. Everyone see the roadmap?', task: '' },
+      { name: 'Siobhan', text: 'Yep. Lelia, send the brief to Ngozi?', task: 'Send the brief to Ngozi', owner: 'Lelia' },
+      { name: 'Lelia', text: 'For sure, this afternoon.', task: '' },
+      { name: 'Deshawn', text: 'Did the Okta SSO ship?', task: '' },
+      { name: 'Siobhan', text: 'Not yet.', task: '' },
+      { name: 'Jay', text: 'And the SOC 2 audit?', task: '' },
+      { name: 'Lelia', text: 'Still with the auditor, two weeks now.', task: '' },
+      { name: 'Deshawn', text: 'Okay, I\'ll chase it.', task: 'Chase SOC 2 audit' },
+      { name: 'Jay', text: 'Thanks, it\'s blocking the enterprise deals.', task: '' },
+      { name: 'Siobhan', text: 'How\'s the activation funnel?', task: '' },
+      { name: 'Lelia', text: 'Onboarding\'s up, day-two retention dipped.', task: '' },
+      { name: 'Deshawn', text: 'We need the cohort data pre-QBR.', task: '' },
+      { name: 'Jay', text: 'Deshawn, pull the retention curves?', task: 'Pull retention curves into Amplitude', owner: 'Deshawn' },
+      { name: 'Deshawn', text: 'Yeah, into the Amplitude dashboard.', task: '' },
+      { name: 'Siobhan', text: 'Is the pricing page locked?', task: '' },
+      { name: 'Lelia', text: 'Mostly. The usage-based tier keeps moving.', task: '' },
+      { name: 'Siobhan', text: 'The metering logic won\'t settle.', task: '' },
+      { name: 'Deshawn', text: 'Pick one and ship.', task: '' },
+      { name: 'Jay', text: 'Agreed. Done beats perfect.', task: '' },
+      { name: 'Lelia', text: 'I\'ll flag it in the deck.', task: 'Flag pricing decision in the deck' },
+      { name: 'Deshawn', text: 'The SAML rollout is when?', task: '' },
+      { name: 'Siobhan', text: 'Monday, if SCIM provisioning\'s done.', task: '' },
+      { name: 'Jay', text: 'We need the API rate limits and webhook retries locked first.', task: '' },
+      { name: 'Lelia', text: 'Who\'s owning that?', task: '' },
+      { name: 'Deshawn', text: 'Siobhan, take it, you\'ve got context.', task: 'Lock API rate limits + webhook retries', owner: 'Siobhan' },
+      { name: 'Siobhan', text: 'Sure, I\'ll send an invite.', task: '' },
+      { name: 'Lelia', text: 'What about the Segment integration?', task: '' },
+      { name: 'Deshawn', text: 'Still syncing to Snowflake.', task: '' },
+      { name: 'Jay', text: 'And the Zapier and Slack connectors?', task: '' },
+      { name: 'Siobhan', text: 'I\'ll check on that to', task: 'Check on Zapier and Slack connectors' },
+      { name: 'Lelia', text: 'Can we talk referrals?', task: '' },
+      { name: 'Jay', text: 'Half done. Attribution\'s the last piece.', task: '' },
+      { name: 'Deshawn', text: 'Payouts still run through Stripe manually.', task: '' },
+      { name: 'Siobhan', text: 'QA flagged a regression, watch the SLA.', task: 'Watch the SLA', owner: 'Jay' },
+      { name: 'Jay', text: 'Pull up the latest build?', task: '' },
+      { name: 'Siobhan', text: 'Yeah, one sec.', task: '' }
     ];
+    // pill variant per speaker — picks which Webflow row's colours get cloned
+    var PILL_BY_NAME = { Jay: 'pulse', Siobhan: 'signal', Lelia: 'dawn', Deshawn: 'fathom' };
+
+    // hard override, wins over the cloned Webflow colours — the variant lookup
+    // can't be trusted here. bg only; `text` is derived from bg luminance
+    // unless stated. leave a name out to keep using its Webflow row.
+    var COLOR_BY_NAME = {
+      Jay: { bg: '#7F1C34' }, // pulse
+      Siobhan: { bg: '#FFBCF2' }, // signal
+      Lelia: { bg: '#FFA946' }, // dawn
+      Deshawn: { bg: '#034F46' }, // fathom
+    };
+    var TEXT_ON_DARK = '#FFFDF9';
+    var TEXT_ON_LIGHT = '#1A1A1A';
+
+    // readable name colour for a pill background (sRGB relative luminance)
+    function autoText(hex) {
+      var h = String(hex).replace('#', '');
+      if (h.length === 3) {
+        h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+      }
+      if (h.length !== 6) {
+        return TEXT_ON_LIGHT;
+      }
+      var c = [parseInt(h.substr(0, 2), 16), parseInt(h.substr(2, 2), 16), parseInt(h.substr(4, 2), 16)];
+      var i, v, lin = [];
+      for (i = 0; i < 3; i++) {
+        v = c[i] / 255;
+        lin.push(v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      }
+      var L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+      return L > 0.42 ? TEXT_ON_LIGHT : TEXT_ON_DARK;
+    }
+
+    // resolved {bg, text} for a speaker, or null when no override is set
+    function overrideFor(name) {
+      var o = COLOR_BY_NAME[name];
+      if (!o || !o.bg) {
+        return null;
+      }
+      return { bg: o.bg, text: o.text || autoText(o.bg) };
+    }
     // what the card shows before the first task fires (last task in the loop,
     // so the rotation reads as continuous)
-    var CARD_DEFAULT = { name: 'Sarah', task: 'Book the launch retro', pill: 'dawn' };
+    var CARD_DEFAULT = { name: 'Jay', task: 'Watch the SLA' };
     var tplByName = {};
     var tplByVariant = {};
+
+    // styling template for a speaker: explicit pill wins, then PILL_BY_NAME,
+    // then a same-named Webflow row, then the first row as a last resort
+    function pillTemplate(name, pill) {
+      var v = pill || PILL_BY_NAME[name];
+      return (v && tplByVariant[v]) || tplByName[name] || SENTENCES[0];
+    }
 
     function readSentencesFromDOM() {
       var tracks = container.querySelectorAll('[' + ATTR + '="' + A_TRACK + '"]');
@@ -300,21 +372,30 @@
       }
     }
 
-    // rebuild the text as per-letter inline-block spans so each can be animated
+    // rebuild the text as per-letter inline-block spans so each can be animated.
+    // letters are grouped into per-word wrappers: an inline-block is a break
+    // opportunity, so ungrouped letters let the browser split mid-word
+    // ("Amplitud|e"). the wrapper keeps each word whole; breaks land on spaces.
     function setTextLetters(el, txt) {
       el.textContent = '';
-      var spans = [],
-        i,
-        ch,
-        s;
-      for (i = 0; i < txt.length; i++) {
-        ch = txt.charAt(i);
-        s = document.createElement('span');
-        s.textContent = ch === ' ' ? '\u00A0' : ch; // keep spaces in inline-block flow
-        s.style.display = 'inline-block';
-        s.style.willChange = 'transform';
-        el.appendChild(s);
-        spans.push(s);
+      var spans = [];
+      var words = txt.split(' ');
+      var w, word, wrap, i, ch, s;
+      for (w = 0; w < words.length; w++) {
+        word = words[w] + (w < words.length - 1 ? ' ' : '');
+        wrap = document.createElement('span');
+        wrap.style.display = 'inline-block';
+        wrap.style.whiteSpace = 'pre'; // no break inside the word
+        for (i = 0; i < word.length; i++) {
+          ch = word.charAt(i);
+          s = document.createElement('span');
+          s.textContent = ch === ' ' ? '\u00A0' : ch; // keep spaces in inline-block flow
+          s.style.display = 'inline-block';
+          s.style.willChange = 'transform';
+          wrap.appendChild(s);
+          spans.push(s);
+        }
+        el.appendChild(wrap);
       }
       return spans;
     }
@@ -343,7 +424,12 @@
         return;
       }
 
-      var key = sentence.name + ' ' + taskText;
+      // the badge names the assignee — often not the speaker who said the line
+      var ownerName = sentence.owner || sentence.name;
+      var ownerBg = sentence.ownerBg || sentence.nameBg;
+      var ownerColor = sentence.ownerColor || sentence.nameColor;
+
+      var key = ownerName + ' ' + taskText;
       if (key === lastCardKey) {
         return;
       } // already showing this — no flash
@@ -359,12 +445,14 @@
       var sentEl = node.querySelector('[' + ATTR + '="' + A_CARD_SENT + '"]');
 
       if (nameWrap) {
-        nameWrap.style.backgroundColor = sentence.nameBg;
-        nameWrap.style.color = sentence.nameColor;
+        nameWrap.style.backgroundColor = ownerBg;
+        nameWrap.style.color = ownerColor;
+        nameWrap.style.whiteSpace = 'nowrap'; // the badge never breaks mid-name
+        nameWrap.style.flexShrink = '0'; // ...and the task text yields to it, not the reverse
       }
       if (nameText) {
-        nameText.style.color = sentence.nameColor;
-        nameText.textContent = sentence.name;
+        nameText.style.color = ownerColor;
+        nameText.textContent = ownerName;
         nameText.style.opacity = '0'; // waves in once the pill has expanded
       }
 
@@ -398,7 +486,7 @@
           setTimeout(function () {
             waveInLetters(el, txt);
           }, PILL_DELAY + PILL_IN_MS);
-        })(nameText, sentence.name);
+        })(nameText, ownerName);
       }
 
       // task text ripples as the card lands
@@ -495,6 +583,17 @@
       var nmEl = badge ? badge.querySelector('.hero_record_name') : null;
       if (nmEl) {
         nmEl.textContent = sentence.name;
+      }
+      // re-apply the resolved colours: the clone carries its template row's
+      // baked-in background, which a COLOR_BY_NAME override must beat
+      if (badge) {
+        if (sentence.nameBg) {
+          badge.style.backgroundColor = sentence.nameBg;
+        }
+        badge.style.whiteSpace = 'nowrap';
+      }
+      if (nmEl && sentence.nameColor) {
+        nmEl.style.color = sentence.nameColor;
       }
 
       if (sentEl) {
@@ -709,16 +808,18 @@
       container = document.querySelector('[' + ATTR + '="' + A_WRAP + '"]');
       if (!container) {
         console.warn('[transcript] no element with data-transcript="wrap" found');
+        reveal();
         return;
       }
 
       SENTENCES = readSentencesFromDOM();
       if (!SENTENCES.length) {
         console.warn('[transcript] no data-transcript="track" rows found inside wrap');
+        reveal();
         return;
       }
 
-      // index styling templates by pill variant (fathom/pulse/dawn/glow) and by
+      // index styling templates by pill variant (fathom/pulse/dawn/signal) and by
       // speaker name as a fallback — the production rows use colors
       // inconsistently, so CONTENT declares its pill explicitly
       var bi, c, tpl;
@@ -730,18 +831,34 @@
           tplByName[SENTENCES[bi].name] = SENTENCES[bi];
         }
       }
+      // what the DOM actually offers — variant names must match PILL_BY_NAME exactly
+      console.log('[notetaker] variants found:', Object.keys(tplByVariant), '| row names:', Object.keys(tplByName));
+      for (var pk in PILL_BY_NAME) {
+        if (!tplByVariant[PILL_BY_NAME[pk]]) {
+          console.warn('[notetaker] no row with variant "' + PILL_BY_NAME[pk] + '" (for ' + pk + ') — falling back');
+        }
+      }
+
       if (CONTENT.length) {
         var rebuilt = [];
         for (bi = 0; bi < CONTENT.length; bi++) {
           c = CONTENT[bi];
-          tpl = (c.pill && tplByVariant[c.pill]) || tplByName[c.name] || SENTENCES[0];
+          tpl = pillTemplate(c.name, c.pill);
+          // the card badge names the ASSIGNEE, who may not be the speaker
+          var own = c.owner || c.name;
+          var oTpl = own === c.name ? tpl : pillTemplate(own, '');
+          var ovr = overrideFor(c.name) || {};
+          var oOvr = overrideFor(own) || {};
           rebuilt.push({
             template: tpl.template,
             text: c.text,
             task: c.task || '',
             name: c.name,
-            nameColor: tpl.nameColor,
-            nameBg: tpl.nameBg,
+            nameColor: ovr.text || tpl.nameColor,
+            nameBg: ovr.bg || tpl.nameBg,
+            owner: own,
+            ownerColor: oOvr.text || oTpl.nameColor,
+            ownerBg: oOvr.bg || oTpl.nameBg,
           });
         }
         SENTENCES = rebuilt;
@@ -775,7 +892,7 @@
         origInner.style.transform = 'rotate(' + origInner._tilt + 'deg)';
 
         // overwrite the Designer's placeholder with CARD_DEFAULT
-        var dTpl = (CARD_DEFAULT.pill && tplByVariant[CARD_DEFAULT.pill]) || tplByName[CARD_DEFAULT.name];
+        var dTpl = pillTemplate(CARD_DEFAULT.name, CARD_DEFAULT.pill);
         var dSent = origInner.querySelector('[' + ATTR + '="' + A_CARD_SENT + '"]');
         var dNw = origInner.querySelector('[' + ATTR + '="' + A_CARD_NAME + '"]');
         if (dSent) {
@@ -784,11 +901,17 @@
         if (dNw) {
           var dNt = dNw.querySelector('*') || dNw;
           dNt.textContent = CARD_DEFAULT.name;
-          if (dTpl) {
-            dNw.style.backgroundColor = dTpl.nameBg;
-            dNw.style.color = dTpl.nameColor;
-            dNt.style.color = dTpl.nameColor;
+          var dOvr = overrideFor(CARD_DEFAULT.name) || {};
+          var dBg = dOvr.bg || (dTpl && dTpl.nameBg);
+          var dCol = dOvr.text || (dTpl && dTpl.nameColor);
+          if (dBg) {
+            dNw.style.backgroundColor = dBg;
           }
+          if (dCol) {
+            dNw.style.color = dCol;
+            dNt.style.color = dCol;
+          }
+          dNw.style.whiteSpace = 'nowrap';
         }
 
         cardStack.push(origInner);
@@ -807,7 +930,7 @@
         '.hero_bottom{align-items:end}' +
         '.hero_animation_wrap{overflow:visible}' +
         '[data-transcript="card"]{align-self:end;overflow:visible}' +
-        '[data-transcript="card"] .hero_select_inner{border:1px solid var(--base-color--vast, #1a1a1a)}';
+        (CARD_BORDER ? '[data-transcript="card"] .hero_select_inner{border:' + CARD_BORDER + '}' : '');
       document.head.appendChild(waveCss);
 
       container.style.display = 'flex';
@@ -869,6 +992,13 @@
       
       container.style.transition = 'opacity 0.3s ease';
       container.style.opacity = '1';
+
+      // everything is positioned and re-texted — safe to show, one frame later
+      // so the browser paints the finished state rather than an intermediate one
+      requestAnimationFrame(function () {
+        requestAnimationFrame(reveal);
+      });
+
       startSentence();
     }
 
