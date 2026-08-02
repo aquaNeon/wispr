@@ -79,7 +79,7 @@
   var SNAP          = false;   // magnetic scroll-to-nearest-step
   var SNAP_DUR      = 0.3;
 
-  var POP_BATCH     = 2;
+  var POP_BATCH     = 1;       // one bubble at a time - reads as a conversation, not a burst
   var POP_STAGGER   = 0.05;
   var POP_DUR       = 0.34;
   var POP_BUNCH     = 0.55;    // <1 pulls pops earlier & tighter
@@ -87,7 +87,37 @@
   var POP_SCALE_X   = 0.35;
   var POP_SCALE_Y   = 0.85;
   var POP_EASE      = 'back.out(2)';
-  var FIST          = 0.5;     // fan-out tightness: 0.5 = start half-open, 1 = pop in place
+  var FIST          = 1;       // fan-out tightness: 1 = pop in place at the authored scatter spot,
+                               // lower = start bunched toward the centre and spread out on scroll
+
+  // "detected" words: in Webflow, select the word inside a bubble's text and give it the class
+  // below (spans there can't carry attributes). when that bubble pops in the word takes the
+  // gradient and runs the single-hump letter wave (the wisprflow button motion, same as
+  // notetaker.js / flow-stack.js), then settles back to its own colour.
+  var DETECT_SEL       = '.meeting_item_animate';
+  var DETECT_GRAD      = 'linear-gradient(100deg,#F0D7FF 0%,#FFA946 23%,#FF6C4C 39%,#FFBCF2 67%,#7232A6 91%)';
+  var DETECT_AT        = 0.22;  // seconds after the bubble starts popping
+  var DETECT_FADE      = 350;   // ms: own colour -> gradient
+  var DETECT_HOLD      = 1100;  // ms the gradient sits before releasing
+  var DETECT_BACK      = 600;   // ms: gradient -> own colour
+  var DETECT_Y_PCT     = 20;    // crest height as a % of letter height
+  var DETECT_ROT       = 5;     // deg at the crest
+  var DETECT_STAGGER   = 45;    // ms per letter (wave speed)
+  var DETECT_LETTER_MS = 500;   // per-letter up-and-back
+
+  // audio pill: the bars in [data-anim="audio"] pulse like a live waveform. the authored icon is a
+  // SINGLE path holding all the bars as subpaths, so it can't be animated per-bar - the script hides
+  // it and generates <rect> bars across its bounding box instead. same motion model as flow-stack.js.
+  var AUDIO_SEL       = '[data-anim="audio"]';
+  var AUDIO_BARS      = 5;     // bars to generate. '' / 0 = leave the icon alone
+  var AUDIO_GAP_RATIO = 1;     // gap width as a multiple of bar width (1 = equal bars and gaps)
+  var AUDIO_MIN       = 0.18;  // shortest a bar gets, as a fraction of the icon's bar-block height
+  var AUDIO_MAX       = 1.0;   // tallest a bar reaches
+  var AUDIO_CYCLES    = 8;     // activity rate across the whole pin (higher = busier)
+  var AUDIO_ENV       = 0.22;  // 0 = per-bar jitter only, 1 = strong syllable bursts
+  var AUDIO_SPEED     = 2.4;   // live clock (cycles/sec) so bars stay alive when scroll is idle
+  var AUDIO_WAVE      = 0.72;  // 0 = jagged speech bursts, 1 = smooth travelling wave
+  var AUDIO_WAVE_SPAN = 1.7;   // crests spanning the row
 
   var CHECK_DELAY   = 0.18;
   var CHECK_DUR     = 0.4;
@@ -129,6 +159,8 @@
   var CH1_ROW_DUR     = 0.45;  // seconds per row
   var CH1_ROW_STAGGER = 0.06;  // seconds between rows (top row leaves first)
   var CH1_ROW_EASE    = 'power2.in';
+  var CH1_ROW_FADE    = 0.55;  // fade duration as a fraction of the travel. <1 = gone before it
+                               // clears the card's top edge, which is what stops rows bleeding out
   var CH1_IMG_OUT     = false; // false = the pop images stay in view through chapter 1
   var CH1_IMG_DUR     = 0.4;
   var CH1_IMG_STAGGER = 0.06;
@@ -140,9 +172,8 @@
   // chapter embeds. the card sits in the green panel (z 900) and the tabs at z 1, so it covers
   // the stage until it goes. the pop images are NOT faded - they stay for chapter 1.
   var CARD_OUT      = true;
-  var CARD_OUT_DUR  = 0.5;
-  var CARD_OUT_EASE = 'power2.out';
-  var CARD_OUT_LAG  = -0.2;    // seconds of overlap with the tail of the row exit
+  // the swap is instant and happens at pHold, where the card and the plate are coincident, so it
+  // needs no duration, ease or offset - see cardSwap().
 
   // what survived chapter 1 (pop images, foot pill, card head) clears when chapter 2 arrives
   var CH2_OUT         = true;
@@ -158,6 +189,23 @@
   // stretch whatever is inside a panel (bg wrapper, shader, embed) to that box instead of letting
   // it size to its own content
   var PANEL_FILL       = true;
+
+  // a plate that sits UNDER every chapter panel and never fades. the panels crossfade against each
+  // other, so without it you see straight through to the page for a few frames on every tab change
+  // - which reads as a glitch. it takes over from the travelling card's own background, same box
+  // and same colour, so the handoff is invisible.
+  var CHAPTER_PLATE = true;
+  var PLATE_BG      = '';     // '' = use LIGHT_CARD_BG
+
+  // per-chapter background photos: tag an <img> data-chapter-bg="<tab index>" anywhere in the
+  // section. they're moved onto the plate and swapped as the active tab changes.
+  var CHAPTER_BG    = 'data-chapter-bg';
+  var BG_FADE_MS    = 700;    // duration of the melt swap between chapter photos
+  // melt: a self-contained WebGL displacement crossfade (codrops technique, no three.js), the same
+  // one flow-stack.js uses. texture-clamped so there are no edge gaps; falls back to a plain
+  // crossfade if WebGL or the texture upload (CORS) isn't available.
+  var MELT_INTENSITY = 0.35;  // displacement strength as a fraction of the image. 0 = plain crossfade
+  var MELT_NOISE     = 3.0;   // cloud scale of the displacement noise (higher = smaller, busier)
   // walk the travelling card onto the chapter stage as it lands, instead of stopping at viewport
   // centre. needed once anything on the card (pill, pop images) survives into chapter 1.
   var CARD_LANDS_ON_STAGE = true;
@@ -183,6 +231,7 @@
   var LIGHT_ROW_BG   = '#FFFDF9';
   var LIGHT_Z        = 990;    // above section content, below the nav (999)
   var LIGHT_TEXT     = '#1A1A1A';
+  var LIGHT_RING     = 2;      // px of outer ring that hides the dark card edge against the cream
   // per-speaker name tag in the LIGHT phase, keyed by the Webflow component variant on the tag
   // (read from whatever data-wf--…--variant attribute it carries, or a w-variant class).
   // value = text colour string, or { color: '#..', bg: '#..' }. {} = leave the tag alone.
@@ -427,6 +476,107 @@
         }(b));
       }
 
+      // ---- detected words ----
+      // the gradient lives on each LETTER, not on the word: background-clip:text fights transforms
+      // on the same element in Blink/WebKit (same trap flow-stack.js hit at its raw-out wipe). each
+      // letter's background is sized to the whole word and offset by that letter's position, so it
+      // reads as one continuous gradient while every span still owns its own clip and can move.
+      var detectByBatch = [];
+      for (b = 0; b < batchCount; b++) {
+        detectByBatch.push(items.filter(function (it, i) { return Math.floor(i / POP_BATCH) === b; })
+          .reduce(function (acc, it) {
+            return acc.concat(Array.prototype.slice.call(it.querySelectorAll(DETECT_SEL)));
+          }, []));
+      }
+      var detectCalls = [];
+
+      function splitWord(el) {
+        if (el._letters) { return el._letters; }
+        var txt = el.textContent, spans = [], i, s;
+        el._color = window.getComputedStyle(el).color;
+        el.textContent = '';
+        for (i = 0; i < txt.length; i++) {
+          s = document.createElement('span');
+          s.textContent = txt.charAt(i);
+          s.style.display = 'inline-block';
+          s.style.whiteSpace = 'pre';        // keep spaces inside the phrase
+          el.appendChild(s);
+          spans.push(s);
+        }
+        el._letters = spans;
+        teardown.push(function () { el.textContent = txt; el._letters = null; });
+        return spans;
+      }
+
+      function paintDetect(el, on) {
+        var spans = splitWord(el);
+        var wordLeft = el.getBoundingClientRect().left;
+        var wordW = el.getBoundingClientRect().width || 1;
+        for (var i = 0; i < spans.length; i++) {
+          var s = spans[i];
+          if (on) {
+            s.style.backgroundImage = DETECT_GRAD;
+            s.style.backgroundSize = wordW + 'px 100%';
+            s.style.backgroundRepeat = 'no-repeat';
+            s.style.backgroundPosition = (-(s.getBoundingClientRect().left - wordLeft)) + 'px 0';
+            s.style.setProperty('-webkit-background-clip', 'text');
+            s.style.backgroundClip = 'text';
+          }
+          s.style.transition = 'color ' + (on ? DETECT_FADE : DETECT_BACK) + 'ms ease';
+          s.style.color = on ? 'transparent' : (el._color || '');
+        }
+      }
+
+      // one hump: up to a crest and back, staggered left to right. yPercent = relative to letter height
+      function rippleWord(el) {
+        var spans = splitWord(el);
+        for (var i = 0; i < spans.length; i++) {
+          (function (sp, idx) {
+            if (typeof sp.animate !== 'function') { return; }
+            sp.animate([
+              { transform: 'translateY(0%) rotate(0deg)' },
+              { transform: 'translateY(' + (-DETECT_Y_PCT) + '%) rotate(' + (-DETECT_ROT) + 'deg)', offset: 0.5 },
+              { transform: 'translateY(0%) rotate(0deg)' }
+            ], { duration: DETECT_LETTER_MS, delay: idx * DETECT_STAGGER, easing: 'linear' });
+          }(spans[i], i));
+        }
+      }
+
+      function playDetect(batch) {
+        (detectByBatch[batch] || []).forEach(function (el) {
+          detectCalls.push(gsap.delayedCall(DETECT_AT, function () {
+            paintDetect(el, true);
+            rippleWord(el);
+            detectCalls.push(gsap.delayedCall((DETECT_FADE + DETECT_HOLD) / 1000, function () {
+              paintDetect(el, false);
+            }));
+          }));
+        });
+      }
+
+      function resetDetect(batch) {
+        // kill everything pending, not just this batch's: a scheduled call would otherwise fire
+        // onto a bubble that has already reversed back out
+        for (var i = 0; i < detectCalls.length; i++) { detectCalls[i].kill(); }
+        detectCalls.length = 0;
+        (detectByBatch[batch] || []).forEach(function (el) {
+          if (el._letters) { paintDetect(el, false); }
+        });
+      }
+
+      teardown.push(function () {
+        for (var i = 0; i < detectCalls.length; i++) { detectCalls[i].kill(); }
+        detectCalls.length = 0;
+      });
+
+      if (DEBUG) {
+        console.log('[stack] detect "' + DETECT_SEL + '" per batch: [' +
+          detectByBatch.map(function (a) { return a.length; }).join(',') + '] total=' +
+          detectByBatch.reduce(function (n, a) { return n + a.length; }, 0) +
+          ' | inSection=' + section.querySelectorAll(DETECT_SEL).length);
+        window.stackDetect = function (batch) { playDetect(batch || 0); };   // fire one by hand
+      }
+
       var landedBg = LANDED_BG ||
         window.getComputedStyle(card).getPropertyValue(LANDED_BG_VAR).trim() ||
         window.getComputedStyle(document.documentElement).getPropertyValue(LANDED_BG_VAR).trim();
@@ -529,8 +679,8 @@
       function update(p) {
         var i;
         for (i = 0; i < popTls.length; i++) {
-          if (p >= popThresh[i] && !popPlayed[i])      { popTls[i].play();    popPlayed[i] = true;  }
-          else if (p < popThresh[i] && popPlayed[i])   { popTls[i].reverse(); popPlayed[i] = false; }
+          if (p >= popThresh[i] && !popPlayed[i])      { popTls[i].play();    popPlayed[i] = true;  playDetect(i); }
+          else if (p < popThresh[i] && popPlayed[i])   { popTls[i].reverse(); popPlayed[i] = false; resetDetect(i); }
         }
         if (p >= gatherThresh && !gatherOn)            { gatherTl.play();    gatherOn = true;  }
         else if (p < gatherThresh && gatherOn)         { gatherTl.reverse(); gatherOn = false; }
@@ -719,6 +869,254 @@
         });
       }
 
+      // ---- chapter plate: one never-fading surface under all the panels, plus the per-chapter
+      // photos and the melt crossfade between them.
+      var plate = null, plateRadius = window.getComputedStyle(card).borderRadius;
+      var bgList = [], bgByTab = {}, bgShown = -1, bgMeltTween = null, meltGL = null;
+
+      // DEBUG helper: reports whether the stage/panels actually took the card's box
+      if (DEBUG) { window.stackBoxes = function () {
+        function box(el) {
+          if (!el) { return 'none'; }
+          var r = el.getBoundingClientRect();
+          return Math.round(r.width) + 'x' + Math.round(r.height);
+        }
+        console.log('[stack] card=' + box(card) + ' stage=' + box(animStage) +
+          ' stageInline=' + (animStage ? animStage.style.width + '/' + animStage.style.height : '-'));
+        Array.prototype.forEach.call(tabAnims, function (el) {
+          console.log('  tab' + el.getAttribute('data-tab-anim') + ' panel=' + box(el) +
+            ' child=' + box(el.firstElementChild) +
+            ' grandchild=' + box(el.firstElementChild && el.firstElementChild.firstElementChild));
+        });
+      }; }
+
+      if (CHAPTER_PLATE && animStage) {
+        plate = document.createElement('div');
+        plate.setAttribute('aria-hidden', 'true');
+        plate.className = 'stack-chapter-plate';
+        // first child = paints below every panel. opacity 0 until the travelling card hands over.
+        plate.style.cssText = 'grid-area:1 / 1;position:relative;overflow:hidden;pointer-events:none;' +
+          'min-width:0;min-height:0;opacity:0;box-sizing:border-box;' +
+          (plateRadius && plateRadius !== '0px' ? 'border-radius:' + plateRadius + ';' : '');
+
+        // the plate stands in for the travelling card once the card's own paint leaves, so it has to
+        // BE the card visually: same fill, same border, same shadow, same radius. colours come from
+        // the light phase, because that's what's on screen at the handoff (the light clone).
+        var cardCS = window.getComputedStyle(card);
+        plate.style.backgroundColor = PLATE_BG || (LIGHT_REVEAL ? LIGHT_CARD_BG : origBg);
+        if (cardCS.backgroundImage && cardCS.backgroundImage !== 'none') {
+          plate.style.backgroundImage    = cardCS.backgroundImage;
+          plate.style.backgroundSize     = cardCS.backgroundSize;
+          plate.style.backgroundPosition = cardCS.backgroundPosition;
+          plate.style.backgroundRepeat   = cardCS.backgroundRepeat;
+        }
+        // per-side: copying one side's width onto all four invents borders the card doesn't have
+        ['Top', 'Right', 'Bottom', 'Left'].forEach(function (side) {
+          if (parseFloat(cardCS['border' + side + 'Width']) > 0 &&
+              cardCS['border' + side + 'Style'] !== 'none') {
+            plate.style['border' + side + 'Width'] = cardCS['border' + side + 'Width'];
+            plate.style['border' + side + 'Style'] = cardCS['border' + side + 'Style'];
+            plate.style['border' + side + 'Color'] = LIGHT_REVEAL ? LIGHT_CARD_BG : origBorder;
+          }
+        });
+        // in the light phase the plate wears the same 2px outer ring the clone does, rather than the
+        // card's authored shadow - that shadow is the dark hairline the ring exists to hide, and it
+        // shows against the cream section below. only fall back to the real shadow if there's no
+        // light reveal to impersonate.
+        if (LIGHT_REVEAL) { plate.style.boxShadow = '0 0 0 ' + LIGHT_RING + 'px ' + LIGHT_CARD_BG; }
+        else if (origShadow && origShadow !== 'none') { plate.style.boxShadow = origShadow; }
+        animStage.insertBefore(plate, animStage.firstChild);
+        teardown.push(function () { if (plate.parentNode) { plate.parentNode.removeChild(plate); } });
+
+        // photos are authored anywhere in the section, tagged with the tab index they belong to
+        bgList = Array.prototype.slice.call(section.querySelectorAll('[' + CHAPTER_BG + ']'))
+          .sort(function (a, b) {
+            return (parseInt(a.getAttribute(CHAPTER_BG), 10) || 0) - (parseInt(b.getAttribute(CHAPTER_BG), 10) || 0);
+          });
+        bgList.forEach(function (im, k) {
+          bgByTab[parseInt(im.getAttribute(CHAPTER_BG), 10)] = k;
+          var ph = document.createComment('chapter-bg');
+          im.parentNode.insertBefore(ph, im);
+          teardown.push(function () {
+            if (ph.parentNode) { ph.parentNode.insertBefore(im, ph); ph.parentNode.removeChild(ph); }
+          });
+          guardStyle(im);
+          plate.appendChild(im);
+          // authored hidden in Webflow is fine - we take over, opacity is the only thing that shows
+          im.style.setProperty('display', 'block', 'important');
+          im.style.setProperty('visibility', 'visible', 'important');
+          im.style.position = 'absolute';
+          im.style.top = im.style.left = '0';
+          im.style.width = im.style.height = '100%';
+          im.style.objectFit = 'cover';
+          im.style.zIndex = '0';
+          im.style.pointerEvents = 'none';
+          im.style.opacity = '0';
+          // gsap owns opacity here. any CSS transition (authored, or left by an earlier fade) would
+          // animate the melt's settle-onto-the-real-image step and read as a second fade after it.
+          im.style.transition = 'none';
+        });
+      }
+
+      // WebGL melt: a canvas that overlays the plate ONLY during a photo swap and runs a
+      // texture-clamped displacement crossfade between the two. Ported from flow-stack.js so both
+      // pages share the same transition. Silently no-ops if WebGL or the texture upload fails.
+      (function initMeltGL() {
+        if (!plate || bgList.length < 2 || MELT_INTENSITY <= 0) { return; }
+        var canvas = document.createElement('canvas');
+        canvas.className = 'stack-melt-canvas';
+        canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;pointer-events:none;z-index:1;';
+        plate.appendChild(canvas);
+        var gl = null;
+        try { gl = canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true }) || canvas.getContext('experimental-webgl'); } catch (e) {}
+        if (!gl) { if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); } return; }
+
+        var VS = 'attribute vec2 aPos;varying vec2 vUv;void main(){vUv=aPos*0.5+0.5;gl_Position=vec4(aPos,0.,1.);}';
+        var FS = [
+          'precision mediump float;',
+          'uniform sampler2D uFrom;uniform sampler2D uTo;',
+          'uniform float uDisp;uniform float uIntensity;uniform float uNoise;',
+          'uniform vec4 uCoverFrom;uniform vec4 uCoverTo;varying vec2 vUv;',
+          'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}',
+          'float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);float a=hash(i),b=hash(i+vec2(1.,0.)),c=hash(i+vec2(0.,1.)),d=hash(i+vec2(1.,1.));vec2 u=f*f*(3.-2.*f);return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);}',
+          'float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*vnoise(p);p*=2.;a*=.5;}return v;}',
+          'void main(){',
+          ' float n=fbm(vUv*uNoise);float amt=n*uIntensity;',
+          ' vec2 uF=clamp(vUv+vec2(amt*uDisp,0.0),0.,1.)*uCoverFrom.xy+uCoverFrom.zw;',
+          ' vec2 uT=clamp(vUv-vec2(amt*(1.0-uDisp),0.0),0.,1.)*uCoverTo.xy+uCoverTo.zw;',
+          ' gl_FragColor=mix(texture2D(uFrom,uF),texture2D(uTo,uT),uDisp);',
+          '}'
+        ].join('\n');
+
+        function sh(t, src) { var s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
+          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn('[melt] shader', gl.getShaderInfoLog(s)); } return s; }
+        var prog = gl.createProgram();
+        gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+        gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn('[melt] link', gl.getProgramInfoLog(prog)); if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); } return; }
+        gl.useProgram(prog);
+
+        var buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+        var aPos = gl.getAttribLocation(prog, 'aPos');
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+        var uFrom = gl.getUniformLocation(prog, 'uFrom'), uTo = gl.getUniformLocation(prog, 'uTo'),
+            uDisp = gl.getUniformLocation(prog, 'uDisp'), uInt = gl.getUniformLocation(prog, 'uIntensity'),
+            uNoi = gl.getUniformLocation(prog, 'uNoise'),
+            uCF = gl.getUniformLocation(prog, 'uCoverFrom'), uCT = gl.getUniformLocation(prog, 'uCoverTo');
+        gl.uniform1i(uFrom, 0); gl.uniform1i(uTo, 1);
+        gl.uniform1f(uInt, MELT_INTENSITY); gl.uniform1f(uNoi, MELT_NOISE);
+
+        function mkTex() { var t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([20, 20, 20, 255]));
+          return t; }
+        var meta = bgList.map(function (im) {
+          var m = { tex: mkTex(), w: 1, h: 1, ready: false };
+          var ld = new Image(); ld.crossOrigin = 'anonymous';
+          ld.onload = function () {
+            try {
+              gl.bindTexture(gl.TEXTURE_2D, m.tex);
+              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ld);
+              m.w = ld.naturalWidth || 1; m.h = ld.naturalHeight || 1; m.ready = true;
+            } catch (e) { console.warn('[melt] texture upload failed (CORS?) - plain crossfade fallback', e); }
+          };
+          ld.onerror = function () {};
+          ld.src = im.currentSrc || im.src;
+          return m;
+        });
+
+        function cover(m) {
+          var cw = canvas.width || 1, ch = canvas.height || 1;
+          var ca = cw / ch, ia = m.w / m.h, sx, sy;
+          if (ia > ca) { sx = ca / ia; sy = 1; } else { sx = 1; sy = ia / ca; }
+          return [sx, sy, (1 - sx) / 2, (1 - sy) / 2];
+        }
+        function resize() {
+          var r = canvas.getBoundingClientRect();
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          var w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+          if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        meltGL = {
+          ready: function (a, b) { return meta[a] && meta[b] && meta[a].ready && meta[b].ready; },
+          show: function (on) { canvas.style.opacity = on ? '1' : '0'; },
+          render: function (a, b, disp) {
+            resize();
+            gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, meta[a].tex);
+            gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, meta[b].tex);
+            var cf = cover(meta[a]), ct = cover(meta[b]);
+            gl.uniform4f(uCF, cf[0], cf[1], cf[2], cf[3]);
+            gl.uniform4f(uCT, ct[0], ct[1], ct[2], ct[3]);
+            gl.uniform1f(uDisp, disp);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          }
+        };
+        teardown.push(function () { if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); } });
+      }());
+
+      // swap the plate's photo to whatever this tab wants. tabs with no photo (0 and 1) fade the
+      // current one out and leave the plate's flat colour showing.
+      function setChapterBg(n) {
+        if (!plate) { return; }
+        var want = bgByTab.hasOwnProperty(n) ? bgByTab[n] : -1;
+        if (want === bgShown) { return; }
+        var prev = bgShown;
+        bgShown = want;
+        // tear down any swap still in flight. killing the tween skips its onComplete, so the canvas
+        // has to be hidden HERE too - otherwise it's left showing a frozen melt frame on top of the
+        // images (canvas z-index 1, images 0) and every later fade happens invisibly underneath it.
+        if (bgMeltTween) { bgMeltTween.kill(); bgMeltTween = null; }
+        if (meltGL) { meltGL.show(false); }
+        if (bgList.length) { gsap.killTweensOf(bgList); }   // no half-finished fade under the swap
+        // and re-assert the last COMMITTED state. an interrupted swap leaves the images mid-fade
+        // (or both at 0, which is how a melt starts) while bgShown already claims the target, so
+        // asking for that chapter again would early-return onto a blank plate.
+        for (var i = 0; i < bgList.length; i++) { gsap.set(bgList[i], { opacity: i === prev ? 1 : 0 }); }
+
+        // melt needs two real textures; anything involving "no photo" is a plain fade
+        if (prev >= 0 && want >= 0 && meltGL && meltGL.ready(prev, want)) {
+          meltGL.render(prev, want, 0);            // paint the "from" frame before showing, no flash
+          meltGL.show(true);
+          bgList[prev].style.opacity = '0';
+          bgList[want].style.opacity = '0';
+          var proxy = { p: 0 };
+          bgMeltTween = gsap.to(proxy, {
+            p: 1, duration: BG_FADE_MS / 1000, ease: 'power1.inOut',
+            onUpdate: function () { meltGL.render(prev, want, proxy.p); },
+            onComplete: function () {
+              // instant, and before the canvas goes, so there's no frame showing neither
+              gsap.set(bgList[want], { opacity: 1 });
+              meltGL.show(false);
+              for (var b = 0; b < bgList.length; b++) { if (b !== want) { gsap.set(bgList[b], { opacity: 0 }); } }
+              bgMeltTween = null;
+            }
+          });
+        } else {
+          // no melt available (no "from" photo, no WebGL, textures not ready): plain crossfade,
+          // driven by gsap so it can't collide with the melt's own opacity writes
+          for (var b = 0; b < bgList.length; b++) {
+            gsap.to(bgList[b], {
+              opacity: (b === want) ? 1 : 0,
+              duration: BG_FADE_MS / 1000, ease: 'power1.inOut'
+            });
+          }
+        }
+      }
+      teardown.push(function () {
+        if (bgMeltTween) { bgMeltTween.kill(); bgMeltTween = null; }
+        if (meltGL) { meltGL.show(false); }
+      });
+
       function setActiveTab(n) {
         if (n === activeTab) { return; }
         activeTab = n;
@@ -732,6 +1130,7 @@
           el.setAttribute('data-play', parseInt(el.getAttribute('data-tab-anim'), 10) === n ? 'on' : 'off');
         });
         ch2Leftovers(n);
+        setChapterBg(n);
         moveIndicator(n);
       }
 
@@ -826,7 +1225,7 @@
         Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) { el.style.color = LIGHT_TEXT; });
         Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) { el.style.borderColor = LIGHT_TEXT; });
         cardClone.style.borderColor = LIGHT_CARD_BG;
-        cardClone.style.boxShadow   = '0 0 0 2px ' + LIGHT_CARD_BG;   // outer ring masks the dark card edge
+        cardClone.style.boxShadow   = '0 0 0 ' + LIGHT_RING + 'px ' + LIGHT_CARD_BG;   // masks the dark card edge
         card.appendChild(cardClone);
         teardown.push(function () { if (cardClone.parentNode) { cardClone.parentNode.removeChild(cardClone); } });
         recolorNameTags(cardClone);
@@ -841,6 +1240,84 @@
             if (cs.stroke && !none[cs.stroke]) { p.style.stroke = LIGHT_TEXT; }
           });
         });
+      }
+
+      // ---- audio pill: generate the bars and pulse them like a live waveform ----
+      // runs AFTER the clone is built so both copies of the pill get bars; otherwise the clone shows
+      // a frozen icon on top of the animating one all through the light phase.
+      var audioBars = [];
+      (function buildAudio() {
+        if (!AUDIO_BARS) { return; }
+        Array.prototype.forEach.call(section.querySelectorAll(AUDIO_SEL), function (host) {
+          var svg  = (host.tagName && host.tagName.toLowerCase() === 'svg') ? host : host.querySelector('svg');
+          if (!svg) { return; }
+          // the authored bars: one path holding every bar as a subpath
+          var src = svg.querySelector('path');
+          if (!src) { return; }
+          var bb;
+          try { bb = src.getBBox(); } catch (e) { return; }     // display:none -> no box
+          if (!bb || !bb.width || !bb.height) { return; }
+          var fill = window.getComputedStyle(src).fill;
+          src.style.display = 'none';
+          teardown.push(function () { src.style.display = ''; });
+
+          var n  = AUDIO_BARS;
+          var bw = bb.width / (n + (n - 1) * AUDIO_GAP_RATIO);   // bars + gaps span the same box
+          var gap = bw * AUDIO_GAP_RATIO;
+          var cy = bb.y + bb.height / 2;
+          for (var i = 0; i < n; i++) {
+            var r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            r.setAttribute('x', String(bb.x + i * (bw + gap)));
+            r.setAttribute('width', String(bw));
+            r.setAttribute('rx', String(bw / 2));
+            r.setAttribute('fill', fill && fill !== 'none' ? fill : 'currentColor');
+            src.parentNode.insertBefore(r, src);
+            (function (el) { teardown.push(function () { if (el.parentNode) { el.parentNode.removeChild(el); } }); }(r));
+            audioBars.push({
+              el: r, cy: cy, span: bb.height,
+              ceil: AUDIO_MIN + (AUDIO_MAX - AUDIO_MIN) * (0.82 + 0.18 * Math.random()),
+              // two detuned frequencies + random phase per bar so they move independently
+              f1: 0.8 + Math.random() * 1.5, f2: 2.0 + Math.random() * 3.0,
+              ph1: Math.random() * 6.2832, ph2: Math.random() * 6.2832
+            });
+          }
+        });
+        if (DEBUG) { console.log('[stack] audio bars:', audioBars.length); }
+      }());
+
+      var envPh1 = Math.random() * 6.2832, envPh2 = Math.random() * 6.2832;
+      var audioClock = 0, audioP = 0;
+      function updateAudio(p) {
+        if (!audioBars.length) { return; }
+        var TWO_PI = Math.PI * 2;
+        var t = p * AUDIO_CYCLES + audioClock * AUDIO_SPEED;
+        // loudness envelope: two beat frequencies multiply, giving uneven bursts and near-silent
+        // gaps the way speech has loud syllables and pauses, rather than a steady hum
+        var e = (0.5 + 0.5 * Math.sin(t * TWO_PI * 0.9 + envPh1)) *
+                (0.5 + 0.5 * Math.sin(t * TWO_PI * 2.3 + envPh2));
+        var n = audioBars.length;
+        for (var i = 0; i < n; i++) {
+          var b = audioBars[i];
+          var v = 0.55 * Math.sin(t * TWO_PI * b.f1 + b.ph1) +
+                  0.45 * Math.sin(t * TWO_PI * b.f2 + b.ph2);
+          var sJag = (0.5 + 0.5 * v) * (AUDIO_ENV * e + (1 - AUDIO_ENV));
+          var xi = n > 1 ? i / (n - 1) : 0.5;
+          var wave = 0.6 * Math.sin((xi * AUDIO_WAVE_SPAN - t) * TWO_PI) +
+                     0.4 * Math.sin((xi * AUDIO_WAVE_SPAN * 0.5 - t * 0.6) * TWO_PI + 1.7);
+          var sWav = (0.5 + 0.5 * wave) * (0.7 + 0.3 * Math.sin(xi * Math.PI));   // gentle centre lift
+          var s = AUDIO_WAVE * sWav + (1 - AUDIO_WAVE) * sJag;
+          var h = (AUDIO_MIN + (b.ceil - AUDIO_MIN) * s) * b.span;
+          b.el.setAttribute('height', String(h));
+          b.el.setAttribute('y', String(b.cy - h / 2));          // grow from the bar's own centre
+        }
+      }
+      if (audioBars.length && AUDIO_SPEED) {
+        var audioTicker = function () {
+          audioClock += gsap.ticker.deltaRatio() / 60;
+          updateAudio(audioP);
+        };
+        gsap.ticker.add(audioTicker);
+        teardown.push(function () { gsap.ticker.remove(audioTicker); });
       }
 
       var cardLightOn = false;   // real card flipped to the light theme in the full-light phase
@@ -882,30 +1359,27 @@
         }, 0);
         rowsAt = CH1_IMG_DUR * 0.5;   // rows follow the images out
       }
-      if (exitRows.length) {
-        exitTl.to(exitRows, {
-          y: CH1_ROW_Y, opacity: 0,
+      // travel and fade are SEPARATE tweens: the fade is shorter, so a row is already invisible by
+      // the time it reaches the card's top edge. the card can't clip them (the pop images live
+      // inside it and deliberately hang outside its bounds), so the fade is what does the masking.
+      [exitRows, exitCloneRows].forEach(function (rows) {
+        if (!rows.length) { return; }
+        exitTl.to(rows, {
+          y: CH1_ROW_Y,
           duration: CH1_ROW_DUR, ease: CH1_ROW_EASE, stagger: CH1_ROW_STAGGER
         }, rowsAt);
-      }
-      if (exitCloneRows.length) {
-        exitTl.to(exitCloneRows, {
-          y: CH1_ROW_Y, opacity: 0,
-          duration: CH1_ROW_DUR, ease: CH1_ROW_EASE, stagger: CH1_ROW_STAGGER
+        exitTl.to(rows, {
+          opacity: 0,
+          duration: CH1_ROW_DUR * CH1_ROW_FADE, ease: 'power1.in', stagger: CH1_ROW_STAGGER
         }, rowsAt);
-      }
+      });
       // only the card's BACKGROUND goes: its own paint, plus the light clone (which is a full
       // opaque copy of the plate, so leaving it up would leave the background up). the pop images,
       // the foot pill and the head all stay for chapter 1 - they clear at chapter 2 instead.
-      if (CARD_OUT) {
-        if (cardClone) {
-          exitTl.to(cardClone, { opacity: 0, duration: CARD_OUT_DUR, ease: CARD_OUT_EASE }, '>' + CARD_OUT_LAG);
-        }
-        exitTl.to(card, {
-          backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', boxShadow: 'none',
-          duration: CARD_OUT_DUR, ease: CARD_OUT_EASE
-        }, cardClone ? '<' : ('>' + CARD_OUT_LAG));
-      }
+      // the card/plate swap is deliberately NOT part of this timeline. it's driven by pHold below,
+      // because it has to follow the card's POSITION: tied to the exit it only reversed once you
+      // scrolled back to CH1_AT, so on the way up the plate sat in the tabs while the invisible card
+      // rode up with you, then the paint snapped back partway. see cardSwap().
       // leftovers: the pop images, the foot pill and the card head ride through chapter 1 and clear
       // when chapter 2 arrives. driven by the ACTIVE TAB, not by scroll position, so it stays in
       // step with a tab click as well as a scroll.
@@ -925,6 +1399,26 @@
         if (want === leftoverOut) { return; }
         leftoverOut = want;
         if (want) { leftoverTl.play(); } else { leftoverTl.reverse(); }
+      }
+
+      // hand the card's paint over to the plate, and back again. driven by pHold, where the card and
+      // the plate are exactly coincident, so the switch is invisible in both directions. instant on
+      // purpose: they're identical, so there's nothing to crossfade, and crossfading two opaque
+      // layers composites to ~75% coverage mid-way and shows the page through.
+      var cardSwapped = false;
+      function cardSwap(p) {
+        if (!CARD_OUT) { return; }
+        var want = (p >= pHold);
+        if (want === cardSwapped) { return; }
+        cardSwapped = want;
+        if (plate)     { gsap.set(plate,     { opacity: want ? 1 : 0 }); }
+        if (cardClone) { gsap.set(cardClone, { opacity: want ? 0 : 1 }); }
+        if (want) {
+          gsap.set(card, { backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', boxShadow: 'none' });
+        } else {
+          gsap.set(card, { backgroundColor: origBg, borderColor: origBorder, boxShadow: origShadow });
+          cardLightOn = false;   // let the light-split block re-decide from scratch
+        }
       }
 
       var exitPlayed = false;
@@ -970,6 +1464,9 @@
         }
         popParallax(p);
         ch1Exit(p);
+        cardSwap(p);
+        audioP = p;
+        updateAudio(p);
 
         // seam cover: show while the green panel is docked flush to the viewport top
         if (canLeave && topCover) {
@@ -979,8 +1476,8 @@
 
         // light split: clip the clone at the green/white boundary; recolor the real card to light
         // once fully in the white zone so no green hairline peeks around the clone.
-        // skipped once the card has dissolved, or it would paint the plate straight back in.
-        if (cardClone && st && st.isActive && !(CARD_OUT && exitPlayed)) {
+        // skipped once the plate has taken over, or it would paint the card straight back in
+        if (cardClone && st && st.isActive && !(CARD_OUT && cardSwapped)) {
           var cr = card.getBoundingClientRect();
           var B  = canLeave ? greenPanel.getBoundingClientRect().bottom : -1e9;
           var topClip = Math.max(0, Math.min(cr.height, B - cr.top));
@@ -989,7 +1486,11 @@
             cardClone.style.display = 'none';
           } else {
             cardClone.style.display  = '';
-            cardClone.style.clipPath = 'inset(' + topClip + 'px 0 0 0)';
+            // negative insets on the other three sides: inset() clips at the border box, which would
+            // cut off the outer ring (a box-shadow lives OUTSIDE that box) and re-expose the card's
+            // dark edge for the whole split phase. only the top is a real cut.
+            cardClone.style.clipPath = 'inset(' + topClip + 'px ' + (-LIGHT_RING - 2) + 'px ' +
+              (-LIGHT_RING - 2) + 'px ' + (-LIGHT_RING - 2) + 'px)';
           }
           var wantLight = (p >= pHold);
           if (wantLight && !cardLightOn) {
