@@ -27,16 +27,31 @@
   //   name = visible label · code = flag country code · flag = emoji fallback
   var FLAG_URL = 'https://flagcdn.com/w80/{code}.png';   // {code} → country code
   var SEP      = '   ';                                  // gap between languages in the joined line
+  // keep these within a few characters of each other: the sweep runs at a constant speed and each
+  // language's share of the CHARACTER count is its share of the card's time (see MID_FRAC). they were
+  // 35–104 chars, which is why the switches landed unevenly.
   var SEGS = [
-    { text: 'I’m getting started with the project. Here are a few options.', name: 'English',  code: 'us', flag: '🇺🇸' },
-    { text: 'Wie möchten Sie die Datei einrichten.',                          name: 'Deutsch',  code: 'de', flag: '🇩🇪' },
-    { text: 'Ecco alcune opzioni. Sto iniziando.',                            name: 'Español',  code: 'es', flag: '🇪🇸' }, // NB text is Italian, flag/name=es per your list — fix one
-    { text: 'प्रोजेक्ट पर काम शुरू हो गया, आप किस तरह से चाहेंगे। प्रोजेक्ट पर काम शुरू हो गया, आप किस तरह से चाहेंगे', name: 'हिन्दी',    code: 'in', flag: '🇮🇳' }
+    { text: 'I’m getting started with the project. Here are a few options.',  name: 'English',  code: 'us', flag: '🇺🇸' },
+    { text: 'Wie möchten Sie die Datei einrichten? Hier sind ein paar Optionen für Sie.', name: 'Deutsch', code: 'de', flag: '🇩🇪' },
+    { text: 'Estoy empezando con el proyecto. Aquí van algunas opciones.',   name: 'Español',  code: 'es', flag: '🇪🇸' },
+    // longer than the others ON PURPOSE: the sweep is linear in characters but moves in rendered px,
+    // and Devanagari packs more characters into less width — at equal counts it flashes past.
+    { text: 'प्रोजेक्ट पर काम शुरू हो गया। आप इसे कैसे सेट करना चाहेंगे? यहाँ कुछ विकल्प हैं।', name: 'हिन्दी',   code: 'in', flag: '🇮🇳' }
   ];
 
   // ---- config ----
   var SCRUB_LERP = 0.08;    // scrub easing — lower = more trailing glide (1 = instant)
   var ANCHOR     = 0.5;     // point along the curve (0..1) each language parks at
+  // pad the line's ends with the neighbouring languages so the curve is never bare past the first or
+  // last one. filler only — the sweep and the flags ignore it.
+  var EDGE_FILL = true;
+  // how far past the first/last centre the sweep runs, as a fraction of half a gap. 1 = every language
+  // gets an equal dwell; 0 = the old behaviour, where the end languages got half. needs EDGE_FILL.
+  var EDGE_LEAD = 1;
+  var LANG_DEBUG = false;   // logs each language's RENDERED width + the time it actually holds
+  // fix the language wrap to its widest content so it stops resizing per word
+  var LABEL_FIXED_W = true;
+  var LABEL_W_PAD   = 0;    // px added to the measured widest width
   var LANG_PATH_FONT = '14px';   // switcher curved-text size ('' = leave to CSS)
 
   // ---- cards (desktop stacking) ----
@@ -74,7 +89,9 @@
   var BACK     = 'cubic-bezier(.34,1.56,.64,1)';
 
   // ---- playback (both modes) ----
-  var LANG_AUTOPLAY_MS = [6000, 9000, 4500, 5000];   // per-card duration (ms); card 1 longest, see C1_BEATS
+  // per-card duration (ms); card 1 longest, see C1_BEATS. with EDGE_LEAD the switcher covers one full
+  // pass of the list, so seconds-per-language = this / SEGS.length — 8000/4 = 2s each.
+  var LANG_AUTOPLAY_MS = [8000, 9000, 4500, 5000];
   var LANG_START       = { 0: 0.3 };   // per-card starting progress (switcher enters 30% in)
 
   // ---- MOBILE (≤ MOBILE_BP) ----
@@ -185,11 +202,18 @@
   var LINE = '', MID_FRAC = [];
   (function buildLine() {
     var starts = [];
+    // FILLER: the sweep only ever travels segment 0 → segment N-1, but the path is wider than that
+    // run, so past either end there was bare curve — the gap after the last language. padding the
+    // line with the neighbouring segments keeps text under the whole path. it is never swept, never
+    // flagged: purely what you see either side of the active language.
+    var head = EDGE_FILL ? (SEGS[SEGS.length - 1].text + SEP) : '';
+    LINE = head;
     for (var s = 0; s < SEGS.length; s++) {
       starts[s] = LINE.length;
       LINE += SEGS[s].text;
       if (s < SEGS.length - 1) { LINE += SEP; }
     }
+    if (EDGE_FILL) { LINE += SEP + SEGS[0].text; }
     var totalLen = LINE.length || 1;
     for (var s2 = 0; s2 < SEGS.length; s2++) {
       MID_FRAC[s2] = (starts[s2] + SEGS[s2].text.length / 2) / totalLen;
@@ -249,17 +273,68 @@
 
     if (nameEl && nameEl.textContent !== LINE) { nameEl.textContent = LINE; }
 
+    // lock the wrap to the widest language so it stops resizing as the word changes. measured by
+    // swapping each name in and reading the box — offsetWidth, not a rect, so a scaled mobile clone
+    // still reports layout px.
+    var labelWrap = labelEl ? (labelEl.parentElement || labelEl) : null;
+    function fitLabelWrap() {
+      if (!LABEL_FIXED_W || !labelEl || !labelWrap) { return; }
+      var prevText = labelEl.textContent;
+      labelWrap.style.width = 'auto';
+      var widest = 0;
+      for (var i = 0; i < SEGS.length; i++) {
+        labelEl.textContent = SEGS[i].name || '';
+        if (labelWrap.offsetWidth > widest) { widest = labelWrap.offsetWidth; }
+      }
+      labelEl.textContent = prevText;
+      labelWrap.style.width = (Math.ceil(widest) + LABEL_W_PAD) + 'px';
+    }
+
     // span = rendered length of the line, in arc units. Re-measured after webfonts load + on resize.
     var span = 0, anchorArc = 0;
     function measure() {
+      try { fitLabelWrap(); } catch (eW) {}     // must never abort the span measure below
       try { span = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
       catch (e) { span = 0; }
       var pathLen = 0;
       try { pathLen = pathEl && pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e2) {}
       if (!pathLen && svgEl && svgEl.viewBox && svgEl.viewBox.baseVal) { pathLen = svgEl.viewBox.baseVal.width; }
       anchorArc = ANCHOR * pathLen;
+      if (LANG_DEBUG) { reportPacing(); }
     }
     measure();
+
+    // read-only: what each language ACTUALLY costs. the sweep is linear in CHARACTERS but moves the
+    // line in RENDERED px, and Devanagari packs very differently from Latin — so equal char counts
+    // don't mean equal time on screen. this prints both so the copy can be tuned against real numbers.
+    function reportPacing() {
+      if (reportPacing._done || !nameEl) { return; }
+      try {
+        var meas = nameEl.getSubStringLength ? nameEl : textEl;
+        if (!meas || !meas.getSubStringLength || !span) { return; }
+        var head = EDGE_FILL ? (SEGS[SEGS.length - 1].text + SEP).length : 0;
+        var at = head, rows = [], i, total = 0;
+        for (i = 0; i < SEGS.length; i++) {
+          var w = meas.getSubStringLength(at, SEGS[i].text.length);
+          rows.push({ n: SEGS[i].name, chars: SEGS[i].text.length, px: w });
+          total += w;
+          at += SEGS[i].text.length + SEP.length;
+        }
+        if (!total) { return; }
+        reportPacing._done = true;
+        var dur = LANG_AUTOPLAY_MS[0] || 6000, charTotal = 0;
+        for (i = 0; i < rows.length; i++) { charTotal += rows[i].chars; }
+        console.log('[languages] card 0 pacing — dur ' + dur + 'ms, span ' + Math.round(span) + 'px');
+        for (i = 0; i < rows.length; i++) {
+          console.log('  ' + rows[i].n +
+            '  chars ' + rows[i].chars + ' (' + Math.round(rows[i].chars / charTotal * 100) + '%)' +
+            '  rendered ' + Math.round(rows[i].px) + 'px (' + Math.round(rows[i].px / total * 100) + '%)' +
+            '  holds ~' + Math.round(rows[i].chars / charTotal * dur) + 'ms' +
+            '  reads as ~' + Math.round(rows[i].px / total * dur) + 'ms');
+        }
+        console.log('  → to even it, match the RENDERED px column, not the chars');
+      } catch (e) {}
+    }
 
     var lastFlagI = -1;
     function render(progress) {
@@ -269,7 +344,15 @@
 
       // linear along the STRING (not per-segment), so the sweep keeps a constant speed regardless of how
       // long each language's text is
-      var ff = MID_FRAC[0] + (MID_FRAC[N - 1] - MID_FRAC[0]) * p;
+      var a = MID_FRAC[0], b = MID_FRAC[N - 1];
+      // ...but ending ON the last centre gives the first and last language only HALF a dwell each —
+      // the loop restarts the instant the last one lands. run half a gap past both ends so every
+      // language gets the same time. only safe because EDGE_FILL puts text out there.
+      if (EDGE_LEAD && EDGE_FILL && N > 1) {
+        var half = ((b - a) / (N - 1)) * 0.5 * EDGE_LEAD;
+        a -= half; b += half;
+      }
+      var ff = a + (b - a) * p;
       if (textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
       }
@@ -616,11 +699,13 @@
   var LEAD_TOP_VH    = 0.15;  // blank scroll before the first block
   var LEAD_BOTTOM_VH = 0.1;   // blank scroll after the last. lower = section ends earlier with the last
                               // text still visible → next section peeks in
-  var START_LIFT_VH  = 0.45;  // lift the text column so block 0 enters near centre (higher = higher)
+  var START_LIFT_VH  = 0.62;  // lift the text column so block 0 enters near centre (higher = higher)
   var GAP_VH     = 0;      // extra gap between blocks, in viewports. 0 = tight Webflow stacking. raise it
                            // to give each card a longer reign at centre
-  var DRIFT_FRAC = 0.2;    // sideways drift at centre, as a fraction of column width. 0 = off, negative
-                           // flips the side
+  var GAP_PX     = 120;    // fixed px gap between blocks — takes precedence over GAP_VH. 0 = use GAP_VH
+  var DRIFT_FRAC = 0.12;   // sideways drift at centre, as a fraction of column width. 0 = off, negative
+                           // flips the side. this pushes the block AWAY from the card at centre, so it's
+                           // the main control on how big that gap reads
   // entry sweep: a block starts this far LEFT of its slot and swings in, reaching the DRIFT_FRAC spot at
   // centre — so the landing position is unchanged, only the travel into it grows.
   var ENTER_FRAC  = 0.22;  // how far left, as a fraction of column width. 0 = off (old symmetric drift)
@@ -628,8 +713,13 @@
   var ENTER_CURVE = 2.2;   // >1 holds the offset low in the viewport, so the path swings in late
   var ENTER_FIRST = 0;     // multiplier for block 0 — it's already near centre when the section arrives,
                            // so a full sweep has nowhere to travel from and just pops
-  var CARD_CLEAR  = 24;    // px a block must keep clear of the card's right edge. it may NEVER cross
+  var CARD_CLEAR  = 12;    // px a block must keep clear of the card's right edge. it may NEVER cross —
+                           // this is the hard floor on the gap, so it's what stops an overlap
   var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks
+  // when a block takes over (card swap + un-dim). the handover line sits at the CARD's centre, so the
+  // two are level at the moment it fires — not at the viewport centre, which can be somewhere else.
+  var ACTIVE_LINE_CARD = true;
+  var ACTIVE_DELAY_VH  = 0.08;  // viewports LATER than that line. bigger = the block rises further first
   var POP_SCALE  = 1;      // scale-pop of the card wrap on swap (1 = off; try 1.04)
   var LANG_AUTOPLAY = true;   // cards play on a timer when active instead of scrubbing to scroll
   var LANG_REPLAY   = true;   // replay from the start whenever a block becomes active again
@@ -693,7 +783,10 @@
           b.style.minHeight = '0';
           b.style.height = 'auto';
         }
-        if (i < blocks.length - 1) { b.style.marginBottom = (GAP_VH > 0 ? (vh * GAP_VH) + 'px' : ''); }
+        if (i < blocks.length - 1) {
+          b.style.marginBottom = GAP_PX > 0 ? (GAP_PX + 'px')
+            : (GAP_VH > 0 ? (vh * GAP_VH) + 'px' : '');
+        }
       }
     }
     layout();
@@ -719,6 +812,11 @@
         var cwr = cardBox.getBoundingClientRect();
         if (cwr.width && cwr.height) { cardR = cwr; }
       }
+
+      // the line a block has to reach to take over. anchored to the CARD's own centre rather than the
+      // viewport's (the sticky column can put them at different heights), then pushed up by
+      // ACTIVE_DELAY_VH — blocks travel upward, so a higher line means they take over later.
+      var lineY = (ACTIVE_LINE_CARD && cardR ? (cardR.top + cardR.height / 2) : cY) - ACTIVE_DELAY_VH * vh;
 
       var closest = -1, closestDist = Infinity;
       for (var i = 0; i < blocks.length; i++) {
@@ -752,8 +850,8 @@
         // scrubbed cards follow their block's scroll progress, offset by langStart
         if (renderers[i] && !langIsAuto(i)) { renderers[i](langStart(i) + (1 - langStart(i)) * tpCur[i]); }
 
-        // nearest block midpoint to the centre = active
-        var d = Math.abs(r.top + r.height / 2 - cY);
+        // nearest block midpoint to the ALIGNMENT LINE = active (see activeLine)
+        var d = Math.abs(r.top + r.height / 2 - lineY);
         if (d < closestDist) { closestDist = d; closest = i; }
       }
 
