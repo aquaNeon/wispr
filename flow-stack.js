@@ -91,9 +91,16 @@
   // in-card animations play once on tab entry (time-based) instead of scrubbing to scroll; each
   // tab is a snap stop, so landing on it plays its chapter. per-tab durations in ms.
   var AUTOPLAY        = true;
-  var AUTOPLAY_MS     = [9500, 6200, 3000];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
+  var AUTOPLAY_MS     = [9500, 6200, 4800];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
   var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
   var AUTOPLAY_LOOP   = false;  // false = play once and hold the end frame (looping looked weird)
+  var AUTOPLAY_LOOP_TABS = [2]; // ...except these tabs, which do loop. chapter 3's fan reads as a cycle
+  var LOOP_GAP_MS     = 400;    // beat held on the empty stage before a looping tab restarts
+  // chapter 3's tail: rather than cutting on a parked card, the swing carries PAST the last one so it
+  // exits like the others, then the next pass fades back in from the start.
+  var FAN_EXIT    = 2;     // card-units the swing travels past the last card. ~2 clears it fully
+  var FAN_EXIT_AT = 0.78;  // point in the swing where that tail starts
+  var FAN_IN_T    = 0.10;  // fraction of the chapter over which the fan fades back in at the top
   // MOBILE: each [data-flow-play="chN"] block in the data-stack="mobile" container clones its desktop
   // chapter and plays on scroll-into-view (replays on re-enter). per-chapter play duration in ms.
   var MOBILE_CH_MS        = [4000, 5200, 3000];
@@ -203,6 +210,14 @@
   // bar row is fixed: n bars + (n-1) gaps. side padding is whatever's left of PILL_WAVE_W.
   var BARS_W        = BAR_SHAPE.length * BAR_W + (BAR_SHAPE.length - 1) * BAR_GAP;
   var PILL_WAVE_PAD_X = PILL_WAVE_W ? Math.max(0, (PILL_WAVE_W - BARS_W) / 2) : PILL_WAVE_PADX;
+  // ch2 dots capsule — the state the pill lands in as the text waves out, before ch3 grows the bars.
+  // matches the authored svg: 10 dots, 2.25px, 2px apart, white at 40%, in a 72px capsule.
+  var PILL_DOTS_AT = 0.46;   // tp within chapter 2 at which the pill swaps to the dots
+  var DOT_W        = 2.25;
+  var DOT_GAP      = 2;
+  var DOT_COLOR    = 'rgba(255,255,255,0.4)';
+  var DOTS_W       = BAR_SHAPE.length * DOT_W + (BAR_SHAPE.length - 1) * DOT_GAP;
+  var DOTS_PAD_X   = PILL_WAVE_W ? Math.max(0, (PILL_WAVE_W - DOTS_W) / 2) : PILL_WAVE_PADX;
 
   // audio pill: authored at its LANDED spot; recording pose is a transform offset (lifts it up)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
@@ -224,6 +239,12 @@
   var FAN_ANGLE = 45;          // deg a card is rotated at its off (left/right) position
   var FAN_TX    = 300;         // px a card is translated sideways at its off position
   var FAN_SCALE = 1;           // scale of an off card (1 = no shrink; cards just swing + clip)
+  var FAN_CARD_SCALE = 1;      // base size of every fan card. 1 = authored size
+  // clamp each fan card's message box to its own text, killing the dead space under the message.
+  // height only — the card keeps its authored width.
+  var FAN_FIT_BOX = true;
+  var FAN_BOX_PAD = 0;         // px breathing room left under the last line (+ = looser)
+  var FAN_STRIP_BR = true;     // drop the trailing <br>s the authored copies pad their message with
   var FAN_PIVOT = '50% 100%';  // transform-origin at the card's bottom-middle → swings on that hinge
   var FAN_FADE  = 0.6;         // card-units past ±1 over which an off card fades fully out
   var FAN_CENTER_NUDGE = 0;    // px fine-tune for the centred slack note (— = up, + = down)
@@ -491,6 +512,13 @@
           'transition:opacity .22s ease,transform .38s cubic-bezier(.34,1.56,.64,1),height .45s cubic-bezier(.34,1.56,.64,1);}' +
         // STAGE 2 (is-in): bullets wave + fade in (rise + pop to a round dot), with the row grow
         '[data-pill="polishing"].is-in .flow_pill-dot{opacity:1;transform:none;height:' + BAR_W + 'px;}' +
+        // DOTS capsule (ch2): the is-in stage before is-wave. own dot size, gap, colour and side
+        // padding so the capsule still lands at PILL_WAVE_W — the wave bars are a different size.
+        '[data-pill="polishing"].is-in:not(.is-wave) .flow_pill-dots{gap:' + DOT_GAP + 'px;}' +
+        '[data-pill="polishing"].is-in:not(.is-wave) .flow_pill-dot{width:' + DOT_W + 'px;height:' +
+          DOT_W + 'px;background:' + DOT_COLOR + ';}' +
+        '[data-pill="polishing"].is-in:not(.is-wave) .flow_pill-polish_wrap{padding:' + PILL_PAD_Y +
+          'px ' + DOTS_PAD_X + 'px !important;}' +
         // STAGE 3 (is-wave): the audio animation — bars grow OUT to their waveform heights
         '[data-pill="polishing"].is-in.is-wave .flow_pill-dot{height:var(--h);}' +
         '@media (prefers-reduced-motion:reduce){[data-pill="polishing"].is-in .flow_pill-dots{animation:none;}}' +
@@ -1178,6 +1206,10 @@
       var tabIndicator = tabsWrap ? tabsWrap.querySelector('[data-tab-indicator]') : null;
       var activeTab = -1;
       var autoTp = 0, autoPlaying = false, autoDur = 2000, autoDone = {}, sceneLastP = 0;
+      var loopWaitT = 0;   // ticker time at which a looping tab restarts (see LOOP_GAP_MS)
+      function tabLoops(n) {
+        return AUTOPLAY_LOOP || (n >= 0 && AUTOPLAY_LOOP_TABS.indexOf(n) !== -1);
+      }
       var bgTargetP = 0, bgCurrentP = 0;
 
       // ---- card scene: chapter 1 transcript typing + status pills ----
@@ -1227,6 +1259,7 @@
       });
       var slackCenterY = 0;   // reserved; vertical placement handled via FAN_CENTER_NUDGE (manual)
       var fanPositioned = false;   // cards get placed over the note lazily, once the card is landed
+      var fanWasShown = false, fanPlacedAt = 0;   // re-place on re-entry / if the frame resized
       // NB: don't touch screenEl's position — it's an absolute cover; overriding it drops the
       // transcript + note out of view. it's already a positioned ancestor, so it anchors the cards.
       if (fanLayer) { guardStyle(fanLayer); fanLayer.style.position = 'absolute'; fanLayer.style.opacity = '0'; }
@@ -1248,12 +1281,61 @@
       // placed by RECT, not offsetTop: the extra cards live in fanLayer (which this script makes
       // absolute), so they don't share the composer's offsetParent — feeding them the composer's
       // offsetTop dropped them below it. measuring both against the screen removes the guesswork.
+      // the fan cards carry their own msg-grow with no polished text in it, so nothing ever tightened
+      // them on desktop — the box kept its authored height and left dead space under the message.
+      // mobile already does this via mobileFitBox; same idea, own trim. width is untouched.
+      // the authored copies pad their message out with trailing <br>s, which is the dead space under
+      // the text. strip them (restored on teardown) — nothing else reads them.
+      function stripTrailingBr(root) {
+        if (!FAN_STRIP_BR || !root) { return; }
+        var hosts = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')));
+        hosts.forEach(function (h) {
+          var n = h.lastChild, removed = [];
+          while (n) {
+            var prev = n.previousSibling;
+            if (n.nodeType === 3 && !(n.nodeValue || '').trim()) { removed.push(n); }
+            else if (n.nodeType === 1 && n.tagName === 'BR')     { removed.push(n); }
+            else { break; }
+            n = prev;
+          }
+          if (!removed.length) { return; }
+          removed.forEach(function (node) { h.removeChild(node); });
+          teardown.push(function () {
+            for (var i = removed.length - 1; i >= 0; i--) { h.appendChild(removed[i]); }
+          });
+        });
+      }
+
+      function fitFanBox(el) {
+        if (!el) { return; }
+        stripTrailingBr(el);
+        if (!FAN_FIT_BOX) { return; }
+        var mg = el.querySelector('[' + FLOW + '="msg-grow"]');
+        if (!mg) { return; }
+        var sv = mg.style.cssText;
+        mg.style.height = 'auto'; mg.style.maxHeight = 'none'; mg.style.overflow = 'visible';
+        var bottom = mobileTextBottom(mg);
+        var fit = bottom ? Math.round(bottom - mg.getBoundingClientRect().top +
+          (parseFloat(window.getComputedStyle(mg).paddingBottom) || 0)) : null;
+        mg.style.cssText = sv;
+        if (fit && fit > 0) {
+          guardStyle(mg);
+          mg.style.height = Math.max(0, fit + FAN_BOX_PAD) + 'px';
+          mg.style.overflow = 'hidden';
+        }
+      }
+
+      // returns false when the geometry isn't trustworthy yet, so the caller can retry instead of
+      // latching a bad placement for the rest of the session
       function positionFanCards() {
-        if (!composerEl) { return; }
+        if (!composerEl) { return false; }
         var scr = screenEl || composerEl.offsetParent;
         var sr  = scr ? scr.getBoundingClientRect() : { top: 0, left: 0, height: 0 };
         var cr  = composerEl.getBoundingClientRect();
         var scH = sr.height || (scr ? scr.clientHeight : 0);
+        // mid-shrink, hidden panel, or a frame before layout — measuring here parks the cards
+        // somewhere arbitrary and they never come back
+        if (!scH || !cr.width || !cr.height) { return false; }
         // slack: centre by TEXT height only (SLACK_PAD grows the box DOWN, doesn't lift it)
         composerEl._fanCY = Math.round(scH / 2 - ((cr.top - sr.top) + cr.height / 2));
         for (var i = 0; i < destExtra.length; i++) {
@@ -1261,6 +1343,7 @@
           var prevT = el.style.transform;
           el.style.transform = 'none';                 // measure the untransformed box
           el.style.width = cr.width + 'px';
+          fitFanBox(el);                               // clamp the box to its text BEFORE measuring
           var er   = el.getBoundingClientRect();
           var curT = parseFloat(el.style.top)  || 0;
           var curL = parseFloat(el.style.left) || 0;
@@ -1287,6 +1370,7 @@
             ' cy=' + composerEl._fanCY);
         }
         placeLogoRow();
+        fanPlacedAt = sr.height;                    // what the placement was measured against
         // live probe: what the boxes ACTUALLY occupy on screen right now, transforms and all.
         // run window.fanBoxes() from the console while parked on a card.
         if (DEBUG) {
@@ -1311,6 +1395,7 @@
             });
           };
         }
+        return true;
       }
       // the lift is measured once, lazily — but the box it's measured from can still change height
       // (font swap, late layout). watch it and re-derive the lift from the cached frame geometry, so
@@ -1328,6 +1413,7 @@
         var bx = (FAN_CENTER_BY && el.querySelector(FAN_CENTER_BY)) || el;
         var b  = bx.getBoundingClientRect();
         el._fanBoxTop = b.top - sr.top;
+        el._fanBoxH   = b.height;      // needed to re-centre after FAN_CARD_SCALE (pivot is the bottom)
         el._fanScH    = scH;
         el._fanCY     = Math.round(scH / 2 - (el._fanBoxTop + b.height / 2)) + FAN_CARD_NUDGE;
         el.style.transform = prev;
@@ -1491,14 +1577,31 @@
       // chapter-3 pill choreography: STAGE1 is-done (spinner+label out, ring draws) → STAGE2 is-in
       // (row grows bouncy + bullets wave in) → STAGE3 is-wave (bars grow to audio heights).
       // leaving ch3 drops all three so it replays from scratch next time.
-      var pillDoneOn = false, pillCalls = [], pillOffCall = null, voiceLatched = false;
+      var pillDoneOn = false, pillWave = false, pillCalls = [], pillOffCall = null, voiceLatched = false;
       function killPillCalls() { for (var c = 0; c < pillCalls.length; c++) { pillCalls[c].kill(); } pillCalls = []; }
-      function setPillDone(on) {
+      // wave=false stops at the DOTS capsule (stage 2) — that's the ch2 state, reached as the text
+      // waves out. wave=true carries on into the ch3 voice waveform.
+      function setPillDone(on, wave) {
         if (!polishPill) { return; }
+        wave = !!wave;
         if (on) {
           if (pillOffCall) { pillOffCall.kill(); pillOffCall = null; }   // a brief dip below ch3 — cancel the exit
-          if (pillDoneOn) { return; }
-          pillDoneOn = true;
+          if (pillDoneOn && pillWave === wave) { return; }
+          if (pillDoneOn && wave && !pillWave) {                         // dots → waveform, no restart
+            pillWave = true;
+            killPillCalls();
+            polishPill.classList.add('is-wave');
+            pillCalls.push(gsap.delayedCall(0.5, function () { setVoiceLive(true); }));
+            return;
+          }
+          if (pillDoneOn && !wave && pillWave) {                         // scrubbed back into ch2
+            pillWave = false;
+            killPillCalls();
+            setVoiceLive(false);
+            polishPill.classList.remove('is-wave');
+            return;
+          }
+          pillDoneOn = true; pillWave = wave;
           killPillCalls();
           polishPill.classList.add('is-done');                                   // stage 1
           pillCalls.push(gsap.delayedCall(PILL_OUT_MS / 1000, function () {
@@ -1513,18 +1616,20 @@
               row.style.height = BAR_MAX + 'px';
             }
           }));
-          pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS) / 1000, function () {
-            polishPill.classList.add('is-wave');                                 // stage 3: grow out
-          }));
-          pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS + 500) / 1000, function () {
-            setVoiceLive(true);                                                  // stage 4: live wavy loop
-          }));
+          if (wave) {
+            pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS) / 1000, function () {
+              polishPill.classList.add('is-wave');                               // stage 3: grow out
+            }));
+            pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS + 500) / 1000, function () {
+              setVoiceLive(true);                                                // stage 4: live wavy loop
+            }));
+          }
         } else {
           if (!pillDoneOn || pillOffCall) { return; }
           // debounce the exit: only leave voice mode if we STAY below ch3 — a one-frame scrub dip at
           // the ch2/ch3 boundary must not tear down + re-draw the white ring (that was the "twice").
           pillOffCall = gsap.delayedCall(0.2, function () {
-            pillOffCall = null; pillDoneOn = false; killPillCalls();
+            pillOffCall = null; pillDoneOn = false; pillWave = false; killPillCalls();
             setVoiceLive(false);
             polishPill.classList.remove('is-wave');
             polishPill.classList.remove('is-in');
@@ -1698,6 +1803,8 @@
       function startAutoplay(n) {
         if (!AUTOPLAY || !isDesktop || n < 0) { autoPlaying = false; return; }
         autoDur = AUTOPLAY_MS[n] || 2000;
+        loopWaitT = 0;                                  // a fresh entry never inherits a pending loop hold
+        if (tabLoops(n)) { autoDone[n] = false; }        // a looping tab is never "done"
         if (!AUTOPLAY_REPLAY && autoDone[n]) { autoTp = 1; autoPlaying = false; }
         else { autoTp = 0; autoPlaying = true; }
         sceneUpdate(sceneLastP);   // set targets to the fresh frame…
@@ -1781,6 +1888,7 @@
       // values (fanFCur/fanLiftCur) toward them and calls fanRender — so the fan glides + settles
       // on each beat instead of tracking raw scroll. fanShow flips draw on/off (ch3 only).
       var fanFCur = 0, fanFTgt = 0, fanLiftCur = 1, fanLiftTgt = 1, fanShow = false, fanShownState = null, fanN = 0;
+      var fanAlpha = 1;   // whole-fan opacity multiplier — the fade-in at the top of each pass
 
       function fanUpdate(tp, show) {                 // set targets from the scrubbed tp (no render)
         var live = composerEl;
@@ -1788,12 +1896,32 @@
         fanN = n; fanShow = show;
         if (n < 2) { return; }                       // render handled in fanTick / fanRender
         if (fanLayer) { fanLayer.style.opacity = show ? '1' : '0'; }
-        // position lazily on first show — by then the card is LANDED, so the note's offset is correct
-        if (show && !fanPositioned) { positionFanCards(); fanPositioned = true; }
+        // re-check the placement every time chapter 3 is entered, and whenever the frame it was
+        // measured against has changed height. the old code latched after ONE attempt, so a first
+        // entry caught mid-shrink (or with the panel still hidden) left the cards parked off-screen
+        // for good — which is what a lot of fast scrolling up and down tends to produce.
+        if (show && !fanWasShown) { fanPositioned = false; }
+        fanWasShown = show;
+        if (show && fanPositioned && screenEl) {
+          var nowH = screenEl.getBoundingClientRect().height;
+          if (nowH && fanPlacedAt && Math.abs(nowH - fanPlacedAt) > 1) { fanPositioned = false; }
+        }
+        // retry until the geometry is real — positionFanCards reports whether it could trust it
+        if (show && !fanPositioned) { fanPositioned = positionFanCards(); }
         // two scrubbed phases: LIFT the note to centre (no jump from ch2), then SWING the cards through
         fanLiftTgt = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
         var swingTp = FAN_LIFT_END < 1 ? Math.max(0, (tp - FAN_LIFT_END) / (1 - FAN_LIFT_END)) : 0;
-        fanFTgt = fanStep(swingTp, n);   // parked beats at each card, fast swing between (see FAN_HOLD)
+        if (FAN_EXIT > 0 && swingTp > FAN_EXIT_AT) {
+          // tail: carry on past the last beat so the final card swings out the way the others did,
+          // leaving an empty stage to restart from instead of cutting on a parked card
+          var ex = (swingTp - FAN_EXIT_AT) / (1 - FAN_EXIT_AT);
+          fanFTgt = (n - 1) + FAN_EXIT * smooth(ex < 0 ? 0 : (ex > 1 ? 1 : ex));
+        } else {
+          var mainT = FAN_EXIT > 0 && FAN_EXIT_AT > 0 ? Math.min(1, swingTp / FAN_EXIT_AT) : swingTp;
+          fanFTgt = fanStep(mainT, n);   // parked beats at each card, fast swing between (see FAN_HOLD)
+        }
+        // and fade the whole fan back in at the top of each pass, so the restart reads as a beginning
+        fanAlpha = FAN_IN_T > 0 ? smooth(Math.min(1, tp / FAN_IN_T)) : 1;
       }
 
       // render the fan at an explicit eased position (f = which card is centred, liftT = note lift)
@@ -1808,11 +1936,14 @@
             else { el.style.opacity = '0'; }
             return;
           }
-          var op = 1 - Math.max(0, Math.min(1, (ar - 1) / FAN_FADE));
-          var cy = ((el._fanCY || 0) + FAN_CENTER_NUDGE) * liftT;   // ramp the centring lift (smooth)
+          var op = (1 - Math.max(0, Math.min(1, (ar - 1) / FAN_FADE))) * fanAlpha;
+          var sc = FAN_CARD_SCALE * (1 - (1 - FAN_SCALE) * Math.min(1, ar));
+          // the pivot is the card's BOTTOM, so scaling drops its centre by half the height lost —
+          // take that back out or the smaller cards sit low
+          var cy = ((el._fanCY || 0) + FAN_CENTER_NUDGE) * liftT - (1 - sc) * (el._fanBoxH || 0) / 2;
           el.style.transformOrigin = FAN_PIVOT;
           el.style.transform = 'translate(' + (FAN_TX * rel) + 'px,' + cy + 'px) rotate(' + (FAN_ANGLE * rel) +
-            'deg) scale(' + (1 - (1 - FAN_SCALE) * Math.min(1, ar)) + ')';
+            'deg) scale(' + sc + ')';
           el.style.opacity = String(op < 0 ? 0 : op);
           el.style.zIndex  = String(100 - Math.round(ar * 10));
           if (!isLive) { el.style.pointerEvents = 'none'; }
@@ -1833,7 +1964,7 @@
           // slack (index 0) is centred from the start → entrance via the lift; others enter via the swing
           var lrel = (li === 0) ? ((li - f) + (1 - liftT)) : (li - f);
           var lar  = Math.abs(lrel);
-          destLogos[g].style.opacity   = String(Math.max(0, 1 - lar / LOGO_FADE));
+          destLogos[g].style.opacity   = String(Math.max(0, 1 - lar / LOGO_FADE) * fanAlpha);
           destLogos[g].style.transform = 'rotate(' + (LOGO_ROT * lrel) + 'deg) scale(' +
             (1 - (1 - LOGO_SCALE) * Math.min(1, lar)) + ')';
         }
@@ -2131,7 +2262,10 @@
         var voiceHyst = 0.15 * (1 - ch3Start);
         if (p >= ch3Start) { voiceLatched = true; }
         else if (p < ch3Start - voiceHyst) { voiceLatched = false; }
-        setPillDone(voiceLatched);   // bullets pop in, then grow out to the voice-mode waveform
+        // ch2: once the text starts waving out, the "cleaning up" spinner gives way to the dots
+        // capsule. ch3 then carries those same dots on into the voice waveform.
+        var wantDots = (idx === 1 && tp >= PILL_DOTS_AT);
+        setPillDone(voiceLatched || wantDots, voiceLatched);
 
         // chapter 3 (Distribute): fan the cards through centre, scrubbed by this tab's tp
         // (0 → slack/live note, → claude, → gmail). hidden/normal before chapter 3.
@@ -2827,8 +2961,22 @@
           if (!autoPlaying) { return; }
           autoTp += (gsap.ticker.deltaRatio() * (1000 / 60)) / autoDur;
           if (autoTp >= 1) {
-            if (AUTOPLAY_LOOP) { autoTp = 0; }        // loop: replay while the tab stays active
-            else { autoTp = 1; autoPlaying = false; if (activeTab >= 0) { autoDone[activeTab] = true; } }
+            if (tabLoops(activeTab)) {
+              // hold the finished frame for a beat, then restart — going straight back to 0 reads as
+              // a stutter rather than a cycle
+              autoTp = 1;
+              if (!loopWaitT) { loopWaitT = gsap.ticker.time + LOOP_GAP_MS / 1000; }
+              else if (gsap.ticker.time >= loopWaitT) {
+                loopWaitT = 0; autoTp = 0;
+                // the eased fan would REWIND through every card to get back to 0 — snap instead.
+                // safe because the tail left the stage empty and fanAlpha starts the pass at 0.
+                sceneUpdate(sceneLastP);
+                snapEased();
+              }
+            } else {
+              autoTp = 1; autoPlaying = false;
+              if (activeTab >= 0) { autoDone[activeTab] = true; }
+            }
           }
           sceneUpdate(sceneLastP);
         };
