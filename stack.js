@@ -116,6 +116,8 @@
   var GATHER_EASE    = 'power3.inOut';
   var GATHER_LOCK    = 0.4;   // fraction of the gather that plays before scroll is released. 1 = all of it
   var CARD_FADE      = 0.4;
+  var STACK_TOP_PAD     = 0;   // px above the first stacked row, desktop. 0 = off
+  var STACK_TOP_PAD_MOB = 16;  // same, tablet and down (<992px)
   var LANDED_BG      = '';                      // '' = read LANDED_BG_VAR
   var LANDED_BG_VAR  = '--base-color--fathom';  // row bg once gathered
   var STACK_ITEM_RADIUS = '12px';   // every row's corners once stacked (scattered = authored). '' = off
@@ -140,6 +142,7 @@
   var CH1_ROW_EASE    = 'power2.in';
   var CH1_ROW_FADE    = 0.55;  // fade as a fraction of the travel. <1 = gone before it clears the card
   var CH1_IMG_OUT     = false; // false = the pop images stay in view through chapter 1
+  var CH1_IMG_OUT_MOB = true;  // mobile has no chapters to stay for: images leave with the rows
   var CH1_IMG_DUR     = 0.4;
   var CH1_IMG_STAGGER = 0.06;
   var CH1_IMG_Y       = -30;   // px the images drift as they go
@@ -318,6 +321,10 @@
         it.style.whiteSpace = 'nowrap';
         it.style.willChange = 'transform, opacity';
       });
+      // the rows are re-parented into the card with margin:0, so the first one sits flush against
+      // the head. this is the only gap the authored layout can't give back.
+      var topPad = isDesktop ? STACK_TOP_PAD : STACK_TOP_PAD_MOB;
+      if (topPad && items[0]) { items[0].style.marginTop = topPad + 'px'; }
 
       Array.prototype.forEach.call(sel(card, 'foot'), function (el) {
         var fph = document.createComment('stack-foot');
@@ -1171,7 +1178,8 @@
         : [];
       var exitTl = gsap.timeline({ paused: true });
       var rowsAt = 0;
-      if (CH1_IMG_OUT && pops.length) {
+      var ch1ImgOut = isDesktop ? CH1_IMG_OUT : CH1_IMG_OUT_MOB;
+      if (ch1ImgOut && pops.length) {
         exitTl.to(pops, {
           y: CH1_IMG_Y, scale: CH1_IMG_SCALE, opacity: 0,
           duration: CH1_IMG_DUR, ease: CH1_IMG_EASE, stagger: CH1_IMG_STAGGER
