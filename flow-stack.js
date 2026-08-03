@@ -262,6 +262,9 @@
   var CARD_H_MAX   = 0.92;   // never let the card exceed this fraction of the stage height
   var CARD_PAD_BOTTOM = 42;  // px added below the measured content (breathing room under the pills)
   var HEAD_TOP     = 0.16;   // fraction of card height both wpm headings are pinned to (keeps them level)
+  // ...or pin them to a fraction of the VIEWPORT instead, so they ride the screen height rather than
+  // the stage's. both cards use the same number either way, so they stay level. 0 = use HEAD_TOP.
+  var HEAD_TOP_VH  = 0.05;
   var MQ_TOP       = 0.48;   // fraction of card height both marquees are pinned to
   var MQ_NUDGE_KB   = 0;     // px fine-tune, kb marquee only (+ down / − up)
   var MQ_NUDGE_CARD = -35;   // px fine-tune, flow marquee only (+ down / − up)
@@ -960,7 +963,9 @@
         headEls.push(head);
       });
       function alignHeads() {
-        var headPx = (HEAD_TOP * stageH) + 'px';
+        // viewport-relative when HEAD_TOP_VH is set: the stage can stay tall while the screen gets
+        // short, which is when these ended up sitting low with a stage-derived offset.
+        var headPx = (HEAD_TOP_VH ? (window.innerHeight * HEAD_TOP_VH) : (HEAD_TOP * stageH)) + 'px';
         for (var hi = 0; hi < headEls.length; hi++) { headEls[hi].style.top = headPx; }
         var mqBase = MQ_TOP * stageH;
         if (kbMq)   { kbMq.style.top   = (mqBase + MQ_NUDGE_KB)   + 'px'; }
