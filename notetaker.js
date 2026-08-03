@@ -324,6 +324,14 @@
       node.style.left = '0';
       node.style.right = '0';
       node.style.bottom = '0';
+      // width is forced, not inferred. left:0 + right:0 only stretches a box whose width is auto,
+      // and any width Webflow puts on the card wins over that - so each card sized to its OWN task
+      // text and the deck changed shape every time a new one landed. min/max cleared for the same
+      // reason: either one would let the card disagree with the deck it sits in.
+      node.style.width = '100%';
+      node.style.minWidth = '0';
+      node.style.maxWidth = 'none';
+      node.style.boxSizing = 'border-box';
       node.style.transformOrigin = '50% 100%';
       if (CARD_RADIUS) {
         node.style.setProperty('border-radius', CARD_RADIUS, 'important');
@@ -339,7 +347,14 @@
         return;
       }
       var probe = innerTemplate.cloneNode(true);
-      probe.style.cssText += ';position:absolute;left:-9999px;top:0;right:auto;width:auto;' + 'visibility:hidden;pointer-events:none;white-space:nowrap;';
+      // max-content, NOT auto. an absolutely positioned box with width:auto is shrink-to-fit,
+      // and shrink-to-fit is capped by its containing block - which is cardEl, which this
+      // function then pins. so with a pin in place no task could ever measure wider than the
+      // pin already was, long tasks under-measured, and the text wrapped. max-content is the
+      // intrinsic width and ignores the containing block entirely.
+      probe.style.cssText += ';position:absolute;left:-9999px;top:0;right:auto;' +
+        'width:max-content;width:-webkit-max-content;max-width:none;' +
+        'visibility:hidden;pointer-events:none;white-space:nowrap;';
       cardEl.appendChild(probe);
 
       var sentEl = probe.querySelector('[' + ATTR + '="' + A_CARD_SENT + '"]');
@@ -354,11 +369,21 @@
       }
 
       // every task that can reach the card, plus the one it shows before the first task fires
+      // MIRRORS syncCard: a line puts its task on the card, or - when no row carries the task
+      // attribute at all - its whole sentence. measuring only the task strings meant the legacy
+      // path was sized for text that never appears, and the sentences that do appear wrapped.
       var jobs = [];
-      var i;
+      var i, text;
       for (i = 0; i < CONTENT.length; i++) {
-        if (CONTENT[i].task) {
-          jobs.push({ name: CONTENT[i].owner || CONTENT[i].name, task: CONTENT[i].task });
+        text = CONTENT[i].task ? CONTENT[i].task : (hasTasks ? '' : CONTENT[i].text);
+        if (text) {
+          jobs.push({ name: CONTENT[i].owner || CONTENT[i].name, task: text });
+        }
+      }
+      for (i = 0; i < SENTENCES.length; i++) {   // DOM rows can carry their own task text
+        text = SENTENCES[i].task ? SENTENCES[i].task : (hasTasks ? '' : SENTENCES[i].text);
+        if (text) {
+          jobs.push({ name: SENTENCES[i].name, task: text });
         }
       }
       jobs.push({ name: CARD_DEFAULT.name, task: CARD_DEFAULT.task });
@@ -385,16 +410,41 @@
       }
 
       var target = max + CARD_FIT_PAD;
-      if (CARD_MAX_W) {
-        target = Math.min(target, CARD_MAX_W);
-      }
-      var room = (document.documentElement.clientWidth || 0) - CARD_FIT_GUTTER * 2;
-      if (room > 0 && target > room) {
-        target = room; // narrow screen: wrapping is better than pushing the page sideways
-      }
       // min-width, not width: the deck is a grid item, and a set width would be overridden by
       // the track while a min-width makes the track itself grow
-      cardEl.style.minWidth = target + 'px';
+      //
+      // PINNED, not floored. min-width alone was the bug: it stops the deck getting narrower than
+      // the longest task, but says nothing about it getting WIDER. the deck is a grid item beside
+      // the transcript, whose rows are white-space:nowrap and hug their own text - so a long line
+      // widens the transcript's track, the grid re-solves, and the deck takes whatever is left.
+      // above the floor the deck simply followed the transcript, which is why a long line made the
+      // cards grow. all three properties are set so no track sizing can move it in either
+      // direction, and flex is neutralised in case the parent is a flex row rather than a grid.
+      // target is what the CARD needs. the deck is border-box, and the cards inside it are
+      // width:100% - which resolves against the deck's CONTENT box - so any padding or border on
+      // the deck comes straight off the card. pinning the deck to the card's own width therefore
+      // hands the card that much less than it was measured to need, and the text wraps by exactly
+      // the padding. add it back.
+      var dcs = window.getComputedStyle(cardEl);
+      var deckPad = (parseFloat(dcs.paddingLeft) || 0) + (parseFloat(dcs.paddingRight) || 0) +
+                    (parseFloat(dcs.borderLeftWidth) || 0) + (parseFloat(dcs.borderRightWidth) || 0);
+      var pinned = target + deckPad;
+
+      // caps apply to the pinned box, not the inner target — the deck is what occupies the page,
+      // so clamping the target left the deck deckPad wider than whatever limit was asked for
+      if (CARD_MAX_W) {
+        pinned = Math.min(pinned, CARD_MAX_W);
+      }
+      var room = (document.documentElement.clientWidth || 0) - CARD_FIT_GUTTER * 2;
+      if (room > 0 && pinned > room) {
+        pinned = room;   // narrow screen: wrapping beats pushing the page sideways
+      }
+
+      cardEl.style.boxSizing = 'border-box';
+      cardEl.style.width = pinned + 'px';
+      cardEl.style.minWidth = pinned + 'px';
+      cardEl.style.maxWidth = pinned + 'px';
+      cardEl.style.flex = '0 0 auto';
     }
 
     // push older cards up-and-back; drop the ones past the deck limit
@@ -847,7 +897,19 @@
       setTimeout(startSentence, wait);
     }
 
-    // AI-summary sparkle in place of the checkbox — the notetaker distilled this
+    // AI-summary sparkle in place of the checkbox — the notetaker distilled this.
+    // the artwork is config: the exported file ships the same path twice with different fills
+    // (a black under-layer, then the real colour on top), which is just how the export came
+    // out - one path with the final fill renders identically.
+    var SPARKLE_VIEWBOX = '0 0 25 25';
+    var SPARKLE_FILL    = '#1A1A1A';
+    var SPARKLE_PATH    = 'M12.9756 5.65729L13.9775 8.30342C14.3963 9.41004 15.2452 10.2999 16.3309 ' +
+      '10.7704L18.9269 11.8958C19.4068 12.1041 19.3906 12.7903 18.9014 12.9753L16.2553 13.9772C15.1487 ' +
+      '14.396 14.2588 15.2449 13.7883 16.3306L12.6629 18.9266C12.4546 19.4065 11.7684 19.3903 11.5834 ' +
+      '18.9011L10.5815 16.255C10.1627 15.1484 9.31378 14.2585 8.22812 13.788L5.63212 12.6626C5.15222 ' +
+      '12.4543 5.16839 11.7681 5.65757 11.5831L8.3037 10.5812C9.41032 10.1624 10.3002 9.3135 10.7707 ' +
+      '8.22784L11.8961 5.63184C12.104 5.15193 12.7902 5.1681 12.9756 5.65729Z';
+
     function initSparkle(root, animateIn) {
       var slot = (root || document).querySelector('[data-anim-check]');
       if (!slot) {
@@ -857,17 +919,14 @@
       slot.style.position = 'relative';
 
       var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      // the big star alone. its own box is x 0..18, y 2..20, so the viewBox is set to exactly
-      // that rather than the old 24x24 - the 24-box had room reserved on the right for the small
-      // companion star, and keeping it would leave the remaining star sitting off-centre in the
-      // slot with a gap where the other one used to be.
-      svg.setAttribute('viewBox', '0 2 18 18');
-      svg.setAttribute('fill', '#1a1a1a');
+      svg.setAttribute('viewBox', SPARKLE_VIEWBOX);
+      svg.setAttribute('fill', SPARKLE_FILL);
       svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
 
-      var big = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      big.setAttribute('d', 'M9 2 C9.7 7 13 10.3 18 11 C13 11.7 9.7 15 9 20 C8.3 15 5 11.7 0 11 C5 10.3 8.3 7 9 2 Z');
-      svg.appendChild(big);
+      var star = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      star.setAttribute('d', SPARKLE_PATH);
+      star.setAttribute('fill', SPARKLE_FILL);
+      svg.appendChild(star);
       slot.appendChild(svg);
 
       if (animateIn && typeof svg.animate === 'function') {
