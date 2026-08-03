@@ -190,6 +190,9 @@
   var BAR_MIN    = 3;        // px shortest bar (the tiny end dots)
   var BAR_MAX    = 14;       // px tallest bar — the row locks to this height so the pill never resizes
   var PILL_PAD_Y = 5;        // px bar→edge, top/bottom (on the capsule — the black bg/stroke element)
+  // .flow_pill-dots is injected by this script, so it won't exist in Webflow to style. content-box +
+  // locked height means this adds to the row's total height rather than eating into the bars.
+  var DOTS_PAD_Y = 2;        // px top/bottom on the bar row itself
   var PILL_WAVE_PADX = 16;   // px bar→edge, left/right — ignored when PILL_WAVE_W is set
   // target TOTAL width of the voice-mode capsule. the bar row is a fixed size (count × BAR_W plus the
   // gaps), so the side padding is derived from this instead of hardcoded. 0 = use PILL_WAVE_PADX.
@@ -452,16 +455,12 @@
         // centred "voice mode" waveform row, height locked to BAR_MAX so growing bars never resize it
         // (padding lives on the capsule below). content-box for exact math.
         '.flow_pill-dots{display:none;align-items:center;justify-content:center;box-sizing:content-box;' +
-          'height:' + BAR_MAX + 'px;padding:0;' +
+          'height:' + BAR_MAX + 'px;padding:' + DOTS_PAD_Y + 'px 0;' +
           'gap:' + BAR_GAP + 'px;pointer-events:none;position:relative;z-index:1;}' +
         // voice mode: the pill padding goes on the WRAPPER (the black fill element), so it's the space
         // between the bars and the fill edge. zero the outer capsule so its authored 12px doesn't add.
-        '[data-pill="polishing"].is-in:has(.flow_pill-polish_wrap){padding:0 !important;}' +
+        '[data-pill="polishing"].is-in{padding:0 !important;}' +
         '[data-pill="polishing"].is-in .flow_pill-polish_wrap{padding:' + PILL_PAD_Y + 'px ' + PILL_WAVE_PAD_X + 'px !important;}' +
-        // no wrapper in the markup? then the capsule IS the fill element and carries the padding
-        // itself — without this it kept the zero above and the bars sat flush against the edge.
-        '[data-pill="polishing"].is-in:not(:has(.flow_pill-polish_wrap)){padding:' +
-          PILL_PAD_Y + 'px ' + PILL_WAVE_PAD_X + 'px !important;}' +
         // STAGE 2 (is-in): row appears. its bouncy height GROW is driven by a JS transition (not a
         // keyframe) so a ScrollTrigger re-pin / re-insert can't restart it — keyframes replay on
         // re-insertion, transitions don't. see setPillDone.
