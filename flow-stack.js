@@ -177,6 +177,10 @@
   var PILL_ICON_SIZE = 18;   // px the extra icons scale out to
   var PILL_LERP      = 0.16; // audio-pill handoff: eased follow (trails scroll, settles soft). higher = quicker settle
   var POLISH_PILL_Y  = 25;   // px nudge the polishing pill DOWN onto the audio-pill spot (+down / −up)
+  // an off pill is opacity:0 + scaleX(0) — neither affects layout, so in the authored flow it still
+  // reserves its box and the row shows gaps where the hidden pills sit. stack every pill that shares
+  // a parent into ONE grid cell: no reserved space, and the baton pass happens at a single anchor.
+  var PILL_ANCHOR    = true;
 
   // chapter 3 (Distribute) — the destination cards arc through centre like a hand of cards.
   // pivot is BELOW the card so rotateZ swings them on an arc (＼ ｜ ／). scrubbed by the tab's tp.
@@ -1169,6 +1173,42 @@
         }
       });
 
+      // collapse the pill row onto one anchor (see PILL_ANCHOR). only parents whose element children
+      // are ALL pills get converted — anything else in there would get stacked on top of them.
+      if (PILL_ANCHOR && pillEls.length) {
+        var pillParents = [];
+        pillEls.forEach(function (el) {
+          var pp = el.parentNode;
+          if (pp && pp.nodeType === 1 && pillParents.indexOf(pp) < 0) { pillParents.push(pp); }
+        });
+        var anchored = 0;
+        pillParents.forEach(function (pp) {
+          var kids = Array.prototype.filter.call(pp.childNodes, function (k) { return k.nodeType === 1; });
+          var mine = kids.filter(function (k) { return k.hasAttribute('data-pill'); });
+          if (mine.length < 2) { return; }
+          if (mine.length !== kids.length) {
+            if (DEBUG) { console.warn('[flow-stack] pill anchor skipped — parent holds non-pill children', pp); }
+            return;
+          }
+          guardStyle(pp);
+          // a flex column's align-items is the horizontal axis; in grid that's justify-items
+          var ai = window.getComputedStyle(pp).alignItems;
+          pp.style.display = 'grid';
+          pp.style.gridTemplateColumns = 'auto';
+          pp.style.gridTemplateRows    = 'auto';
+          pp.style.justifyItems = (ai === 'center') ? 'center'
+            : ((ai === 'end' || ai === 'flex-end') ? 'end' : 'start');
+          pp.style.alignItems = 'center';
+          pp.style.gap = '0px';
+          mine.forEach(function (k) { guardStyle(k); k.style.gridArea = '1 / 1'; });
+          anchored++;
+        });
+        if (DEBUG) {
+          console.log('[flow-stack] pill anchor: ' + anchored + '/' + pillParents.length +
+            ' parent(s) stacked, pills=' + pillEls.length);
+        }
+      }
+
       // spinner: drop the 4-point sparkle SVG into any [data-flow="spinner"] that doesn't have one
       // (the CSS spins it). fill uses currentColor so it inherits the spinner's colour.
       Array.prototype.forEach.call(section.querySelectorAll('[' + FLOW + '="spinner"]'), function (sp) {
@@ -1755,7 +1795,13 @@
         // pill: ch1 → latest highlight category; ch2+3 → "polishing" (same pill, stays ON across 2→3;
         // ch3 flips its inner state to the "done" dots via is-done).
         var activePill = null;
-        if (idx === 0) { for (var j = count - 1; j >= 0; j--) { if (words[j].cat) { activePill = words[j].cat; break; } } }
+        // only a category that OWNS a pill counts. a colour-only span still yields a category, and
+        // taking it would switch every pill off — the current one animates away, nothing comes in.
+        if (idx === 0) {
+          for (var j = count - 1; j >= 0; j--) {
+            if (words[j].cat && pillMap[words[j].cat]) { activePill = words[j].cat; break; }
+          }
+        }
         else if (idx >= 1) { activePill = 'polishing'; }
         if (activePill !== pillShown) {
           // baton-pass: outgoing pill collapses on X while the incoming grows out + ripples (CSS)
@@ -1862,6 +1908,10 @@
         }
       }
       function mobileChIndex(ch) { return ch === 'ch2' ? 1 : ch === 'ch3' ? 2 : 0; }
+      function mobileHasPill(pills, cat) {
+        for (var p = 0; p < pills.length; p++) { if (pills[p].getAttribute('data-pill') === cat) { return true; } }
+        return false;
+      }
       function mobileSetPill(pills, cat) {
         for (var p = 0; p < pills.length; p++) { pills[p].classList.toggle('is-on', pills[p].getAttribute('data-pill') === cat); }
       }
@@ -1879,7 +1929,10 @@
             for (i = 0; i < n; i++) { ws[i].style.opacity = i < k ? '1' : '0'; }
             if (pills.length) {                        // pill = category of the latest revealed word
               var cat = null;
-              for (i = k - 1; i >= 0; i--) { var c = ws[i].getAttribute('data-cat'); if (c) { cat = c; break; } }
+              for (i = k - 1; i >= 0; i--) {                 // ignore categories with no pill of their own
+                var c = ws[i].getAttribute('data-cat');
+                if (c && mobileHasPill(pills, c)) { cat = c; break; }
+              }
               mobileSetPill(pills, cat);
             }
           } });
