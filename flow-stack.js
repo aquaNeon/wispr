@@ -1001,6 +1001,7 @@
       }
 
       var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
+      var heightsOK = false, heightsRetryT = 0;   // message-box heights measured to something real
       var cardMqW = 0;   // the 220 wave's own width (see MQ_CARD_W) — the kb marquee stays stage-wide
       var pillRecY = -180;   // px the pill lifts during recording — recomputed from stage height in measureStage
       function measureStage() {
@@ -1060,6 +1061,10 @@
             msgExpandedH = msgGrowEl.offsetHeight;
             msgGrowEl.style.cssText = mv; msgGrowEl.style.overflow = 'hidden';
             if (msgContainEl && mcv != null) { msgContainEl.style.cssText = mcv; }
+            // a measurement taken before layout (hidden wrapper, mid-transition, a frame too early)
+            // comes back 0 — and every height write below would then pin the box to 0px with
+            // overflow:hidden, i.e. the message UI silently disappears. Only trust a real number.
+            heightsOK = msgCollapsedH > 0;
           }
           // screen baseline = chapter-1 state (message box collapsed), so we don't double-count polished
           var mgh = msgGrowEl ? msgGrowEl.style.cssText : null;
@@ -2108,7 +2113,7 @@
         var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
         // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
         // constant (marginTop cancels the extra height) → card holds. box is white → white rises.
-        if (msgGrowEl)    { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
+        if (msgGrowEl && heightsOK) { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
         if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * PLACEHOLDER_OUT))); }
       }
 
@@ -2171,6 +2176,33 @@
           pillTgt = phaseT(p, pBh, pHold);                       // 0 recording → 1 landed (authored spot)
         }
 
+        // A bad height measurement must never be permanent: retry once the card actually has a box.
+        // Until it succeeds the height writes are skipped, so the box keeps its authored size rather
+        // than being pinned to 0 — visible and roughly right beats invisible.
+        if (!heightsOK && msgGrowEl && stage) {
+          var nowH = Date.now();
+          if (nowH - heightsRetryT > 400) {
+            heightsRetryT = nowH;
+            var sr2 = stage.getBoundingClientRect();
+            if (sr2.width > 2 && sr2.height > 2) {
+              measurePositions();
+              if (DEBUG) {
+                console.log('[flow-stack] re-measured message box: collapsed=' + msgCollapsedH +
+                  ' expanded=' + msgExpandedH + ' ok=' + heightsOK);
+              }
+            }
+          }
+        }
+
+        // WATCHDOG: tabFade parks the scene at opacity 0 and hands ownership to the click's fade
+        // chain. If anything breaks that chain — a ScrollTrigger refresh, a programmatic scroll, a
+        // scrollbar drag, any interruption that isn't wheel/touch/key — the flag stays true and the
+        // message UI is left invisible with nothing to paint it back. It can never legitimately be
+        // held longer than the two fades, so past that, take ownership back.
+        if (tabFade && tabFadeT && (Date.now() - tabFadeT) > (TAB_FADE_MS * 2 + 400)) {
+          killTabFade(); tabFade = false; clearSceneTransition();
+        }
+
         // handoff: chapter content is TRIGGERED in (CSS-timed fade), not scrubbed — fires once the
         // card starts riding (pC + MSG_TRIGGER of the ride) so the message fades in clean, no scrub.
         // while a tab CROSSFADE is running, the click owns scene opacity — don't fight it here.
@@ -2227,7 +2259,7 @@
           for (var j2 = 0; j2 < np; j2++) { pwords[j2].style.opacity = '1'; pwords[j2].style.transform = ''; }
           // extend the box DOWN by SLACK_PAD (white below the text), eased in over the lift
           var padLiftT = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
-          if (msgGrowEl)    { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; }
+          if (msgGrowEl && heightsOK) { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; }
           if (placeholderEl){ placeholderEl.style.opacity = '0'; }
         } else {                                                     // recording / chapter 1: raw only
           polishActive = false;
@@ -2323,6 +2355,9 @@
         computeTiming();
         diagMeasured = false;                  // re-measure word positions (wrap may have changed)
         gradReady = false;                     // ...and the per-word gradient offsets with them
+        // a refresh mid-crossfade pulls the geometry out from under the fade chain — release scene
+        // opacity here or it can be left parked at 0
+        if (tabFade || tabFadeCall) { killTabFade(); tabFade = false; clearSceneTransition(); }
         fanPositioned = false;                 // re-place cards on next fan show (layout may have changed)
         applyScroll(st ? st.progress : 0);
         pSmooth = pTarget; painted = -1;      // no scrub sweep from 0 on load/rebuild
@@ -3055,7 +3090,7 @@
 
       // click a tab -> crossfade the card scene to that tab's slice. the lock keeps pass-through
       // tabs from hijacking the active state; tabFade tells sceneUpdate to leave scene opacity to us.
-      var clickLockP = null, clickLockT = 0, tabFade = false, tabFadeCall = null;
+      var clickLockP = null, clickLockT = 0, tabFade = false, tabFadeCall = null, tabFadeT = 0;
       // scene cover(s) whose opacity the crossfade drives (the one wrapper, or the pieces)
       var sceneEls = (screenEl ? [screenEl] : [transcriptEl, composerEl]).filter(Boolean);
       function setSceneOpacity(a, ms) {
@@ -3093,7 +3128,7 @@
           clickLockP = centreP; clickLockT = Date.now();
           setActiveTab(i);                                      // indicator + text animate now (CSS)
           killTabFade();
-          tabFade = true;
+          tabFade = true; tabFadeT = Date.now();                 // stamped so the watchdog can free it
           setSceneOpacity(0, TAB_FADE_MS);                      // fade the current chapter out
           tabFadeCall = gsap.delayedCall(TAB_FADE_MS / 1000, function () {
             window.scrollTo(0, to);                             // jump while hidden — no scrub is seen
