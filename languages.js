@@ -623,10 +623,12 @@
                            // flips the side
   // entry sweep: a block starts this far LEFT of its slot and swings in, reaching the DRIFT_FRAC spot at
   // centre — so the landing position is unchanged, only the travel into it grows.
-  var ENTER_FRAC  = 0.35;  // how far left, as a fraction of column width. 0 = off (old symmetric drift)
+  var ENTER_FRAC  = 0.22;  // how far left, as a fraction of column width. 0 = off (old symmetric drift)
+  var ENTER_Y_VH  = 0.06;  // extra downward offset at entry, in viewports — makes the path diagonal
   var ENTER_CURVE = 2.2;   // >1 holds the offset low in the viewport, so the path swings in late
   var ENTER_FIRST = 0;     // multiplier for block 0 — it's already near centre when the section arrives,
                            // so a full sweep has nowhere to travel from and just pops
+  var CARD_CLEAR  = 24;    // px a block must keep clear of the card's right edge. it may NEVER cross
   var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks
   var POP_SCALE  = 1;      // scale-pop of the card wrap on swap (1 = off; try 1.04)
   var LANG_AUTOPLAY = true;   // cards play on a timer when active instead of scrubbing to scroll
@@ -698,8 +700,8 @@
 
     // smoothed per-block scalars so the drift glides and settles on stop. Active detection stays on the
     // RAW rect so the card swap never lags behind.
-    var driftCur = [], tpCur = [], lastActive = -1;
-    for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; tpCur[bi] = 0; }
+    var driftCur = [], yCur = [], tpCur = [], lastActive = -1;
+    for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; yCur[bi] = 0; tpCur[bi] = 0; }
     var autoTp = 0, autoDone = {};
 
     function update() {
@@ -709,6 +711,14 @@
       var offset = DRIFT_FRAC * colW;
       var enter  = ENTER_FRAC * colW;
       var lerp = (SCRUB_LERP >= 1) ? 1 : (1 - Math.pow(1 - SCRUB_LERP, gsap.ticker.deltaRatio()));
+      // the visible CARD, not its wrap: the wrap is the sticky column and can be a full viewport tall,
+      // which would clamp blocks that are nowhere near the card
+      var cardR = null;
+      var cardBox = cardEls[lastActive >= 0 ? lastActive : 0] || cardWrap;
+      if (cardBox) {
+        var cwr = cardBox.getBoundingClientRect();
+        if (cwr.width && cwr.height) { cardR = cwr; }
+      }
 
       var closest = -1, closestDist = Infinity;
       for (var i = 0; i < blocks.length; i++) {
@@ -718,14 +728,27 @@
 
         // prog 0 = entering the bottom, 0.5 = centred, 1 = gone off the top. the entry term is spent by
         // 0.5, so from centre onward the motion is exactly the old drift.
-        var inT = clamp01(prog / 0.5);
-        var enterI = enter * (i === 0 ? ENTER_FIRST : 1);
-        var xT  = offset * easeTri(prog) - enterI * Math.pow(1 - inT, ENTER_CURVE);
-        driftCur[i] += (xT - driftCur[i]) * lerp;
+        var inT  = clamp01(prog / 0.5);
+        var ramp = Math.pow(1 - inT, ENTER_CURVE);
+        var enterI = (i === 0 ? ENTER_FIRST : 1);
+        var xT  = offset * easeTri(prog) - enter * enterI * ramp;
+        var yT  = ENTER_Y_VH * vh * enterI * ramp;
+        var prevX = driftCur[i];
+        driftCur[i] += (xT - prevX) * lerp;
+        yCur[i]     += (yT - yCur[i]) * lerp;
         tpCur[i]    += (tpT - tpCur[i]) * lerp;
         if (Math.abs(tpT - tpCur[i]) < 0.0002) { tpCur[i] = tpT; }
 
-        blocks[i].style.transform = 'translateX(' + driftCur[i] + 'px)';
+        // hard limit on the PAINTED value, not the target: on a fast scroll the eased value trails the
+        // target, which is how the text got on top of the card. only while level with it, so the
+        // bottom-left entry stays free.
+        if (cardR && r.bottom > cardR.top && r.top < cardR.bottom) {
+          var minX = (cardR.right + CARD_CLEAR) - (r.left - prevX);
+          if (minX > 0) { minX = 0; }                       // never push a block right of its slot
+          if (driftCur[i] < minX) { driftCur[i] = minX; }
+        }
+
+        blocks[i].style.transform = 'translate(' + driftCur[i] + 'px,' + yCur[i] + 'px)';
         // scrubbed cards follow their block's scroll progress, offset by langStart
         if (renderers[i] && !langIsAuto(i)) { renderers[i](langStart(i) + (1 - langStart(i)) * tpCur[i]); }
 
