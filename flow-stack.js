@@ -91,12 +91,12 @@
   // in-card animations play once on tab entry (time-based) instead of scrubbing to scroll; each
   // tab is a snap stop, so landing on it plays its chapter. per-tab durations in ms.
   var AUTOPLAY        = true;
-  var AUTOPLAY_MS     = [9500, 3400, 3000];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
+  var AUTOPLAY_MS     = [9500, 6200, 3000];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
   var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
   var AUTOPLAY_LOOP   = false;  // false = play once and hold the end frame (looping looked weird)
   // MOBILE: each [data-flow-play="chN"] block in the data-stack="mobile" container clones its desktop
   // chapter and plays on scroll-into-view (replays on re-enter). per-chapter play duration in ms.
-  var MOBILE_CH_MS        = [4000, 3000, 3000];
+  var MOBILE_CH_MS        = [4000, 5200, 3000];
   // a card plays when its TOP crosses a line this far up from the bottom of the screen. '-10%' = fires
   // almost as soon as it enters; '-40%' = waits until it's ~40% up the viewport (later). tune to taste.
   var MOBILE_IO_MARGIN    = '-15%';
@@ -128,9 +128,15 @@
   var INDICATOR_MS = 500;         // ms the tab indicator slides/resizes to the active tab
 
   // chapter 2 (polish), in fractions of tab-1's scroll slice (gradient itself loops via CSS):
-  var POLISH_GRAD   = [0.0, 0.38];  // the gradient waves ONTO the text word-by-word over this range
-  var POLISH_RAWOUT = [0.38, 0.66]; // raw transcript waves OUT here — its OWN window, BEFORE the box
-  var POLISH_DROP   = [0.62, 1.0];  // box grow + polished-in — after the raw-out so it never covers the fade
+  // the three windows OVERLAP on purpose: the raw starts dissolving while the gradient is still
+  // travelling, and the box opens before the raw is gone, so it reads as one continuous pass from
+  // the transcript into the UI rather than three separate beats.
+  var POLISH_GRAD   = [0.0, 0.46];  // PHASE 1 (processing): gradient + glare sweep the whole transcript
+  var POLISH_RAWOUT = [0.46, 0.80]; // PHASE 2: only once processing has finished does the text dissolve
+  var POLISH_DROP   = [0.56, 1.0];  // ...and move into the UI — overlaps the dissolve so it's one move
+  // how much faster than the box grow the "Message…" placeholder clears. higher = gone sooner, so the
+  // polished text never lands on top of it. 1 = fades exactly with the box.
+  var PLACEHOLDER_OUT = 6.0;
   var POLISH_BAND   = 0.22;  // width of each word's fade within the wave (bigger = softer wave edge)
   var POLISH_GAP    = 0.12;  // how far the polished-in lags behind the raw-out at the wavefront
   var POLISH_RISE   = 16;    // px the polished text lifts up to sit where the "Message…" placeholder was
@@ -144,6 +150,28 @@
   // wavefront travels line-by-line (by vertical position) with a horizontal tilt so it reads as a
   // diagonal sweep. 0 = flat horizontal lines, higher = more diagonal.
   var GLOW_DIAG     = 0.35;
+  // the wavefront also MOVES the words it passes (a crest riding through the text, like the buttons)
+  // so the pass reads as processing, not just a recolour. crest = a half-sine over WAVE_BAND.
+  // background-clip:text on the transcript can't paint a glyph inside a transformed child — the
+  // transform composites it out of the ancestor's clip and the word renders as nothing. so each word
+  // carries its own copy of the gradient, offset to keep one continuous ramp across the block.
+  // required for WAVE_MOTION; false = container gradient, no crest during processing.
+  var WORD_GRAD     = true;
+  var GRAD_SPAN     = 2.2;    // gradient image width as a multiple of the transcript width
+  var GRAD_SHIFT_MS = 3200;   // ms for one travel of the gradient across the text (the shimmer)
+  var POLISH_GRAD_CSS = 'linear-gradient(100deg,#F0D7FF 0%,#FFA946 23%,#FF6C4C 39%,#FFBCF2 67%,#7232A6 91%)';
+  var WAVE_MOTION   = true;
+  var WAVE_AMP      = 7;     // px a word lifts at the crest
+  var WAVE_SCALE    = 0.05;  // extra scale at the crest (0 = pure lift)
+  var WAVE_ROT      = 0;     // deg tilt at the crest (0 = off — reads busy on long lines)
+  var WAVE_BAND     = 0.18;  // width of the crest as a fraction of the sweep (wider = longer swell)
+  // raw-out: dissolve along the SAME diagonal the gradient travelled instead of wiping bottom→top,
+  // so the text leaves the way it was processed. false = the old bottom→top wipe.
+  var RAW_OUT_WAVE  = true;
+  var RAW_OUT_SOFT  = 30;    // % softness of the dissolve edge (bigger = longer fade band)
+  // polished text rides the same crest as it fades in, so the wave carries through into the UI
+  var POLISH_WAVE   = true;
+  var POLISH_AMP    = 12;    // px the polished words rise from as they fade in
 
   var INTRO_FADE_MS   = 250; // 220 wpm + marquee: timed fade in (at scroll-in) and out (at shrink start)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
@@ -162,10 +190,16 @@
   var BAR_MIN    = 3;        // px shortest bar (the tiny end dots)
   var BAR_MAX    = 14;       // px tallest bar — the row locks to this height so the pill never resizes
   var PILL_PAD_Y = 5;        // px bar→edge, top/bottom (on the capsule — the black bg/stroke element)
-  var PILL_WAVE_PADX = 16;   // px bar→edge, left/right
+  var PILL_WAVE_PADX = 16;   // px bar→edge, left/right — ignored when PILL_WAVE_W is set
+  // target TOTAL width of the voice-mode capsule. the bar row is a fixed size (count × BAR_W plus the
+  // gaps), so the side padding is derived from this instead of hardcoded. 0 = use PILL_WAVE_PADX.
+  var PILL_WAVE_W = 72;
   var PILL_OUT_MS = 240;     // ms the spinner+label take to fade/shrink out before the waveform comes in
   var BULLET_MS  = 300;      // ms the bullets wave in + row grows BEFORE they grow out to the audio heights
   var BAR_SHAPE  = [0.16, 0.42, 0.7, 0.92, 1, 0.88, 0.66, 0.46, 0.28, 0.14];   // 10 bars
+  // bar row is fixed: n bars + (n-1) gaps. side padding is whatever's left of PILL_WAVE_W.
+  var BARS_W        = BAR_SHAPE.length * BAR_W + (BAR_SHAPE.length - 1) * BAR_GAP;
+  var PILL_WAVE_PAD_X = PILL_WAVE_W ? Math.max(0, (PILL_WAVE_W - BARS_W) / 2) : PILL_WAVE_PADX;
 
   // audio pill: authored at its LANDED spot; recording pose is a transform offset (lifts it up)
   var PILL_REC_SCALE = 1.8;  // recording size relative to the landed size (>1 = bigger at start)
@@ -190,6 +224,13 @@
   var FAN_PIVOT = '50% 100%';  // transform-origin at the card's bottom-middle → swings on that hinge
   var FAN_FADE  = 0.6;         // card-units past ±1 over which an off card fades fully out
   var FAN_CENTER_NUDGE = 0;    // px fine-tune for the centred slack note (— = up, + = down)
+  // the fan cards are centred on their VISIBLE box, not the [data-dest] wrapper — the wrapper can
+  // carry padding/invisible rows the eye doesn't read, which is what left claude + gmail sitting low.
+  // '' = centre the wrapper itself (old behaviour).
+  var FAN_CENTER_BY   = '[data-flow="msg-grow"]';
+  // px fine-tune for the swung-in cards only (— = up, + = down). dialled in against the live page:
+  // the msg-grow box measures taller than the white surface reads, so geometric centre sits low.
+  var FAN_CARD_NUDGE  = -30;
   var FAN_LIFT_END = 0.15;     // fraction of ch3 spent lifting the note up to centre before swinging
   // ch3 rhythm: each card gets a PARKED beat (centred, logo full) then a fast eased swing to the
   // next. FAN_HOLD = fraction of ch3's swing range spent parked vs moving. 0 = old linear scrub,
@@ -206,6 +247,10 @@
   var LOGO_ROT     = 90;       // deg a logo rotates in as it centres (same direction as the swing; flip to reverse)
   var LOGO_FADE    = 1;        // card-units over which a logo fades + rotates in/out around centre
   var LOGO_SCALE   = 0.6;      // scale of a logo when off-centre (pops up to 1 as it centres)
+  // authored logo svgs come in at different sizes — pin the ones that need it, by data-dest.
+  // anything not listed keeps whatever Webflow gave it.
+  var LOGO_SIZE    = { gmail: 34 };
+  var LOGO_TOP     = 48;       // px between the card's TOP edge and the logo row. 0 = leave authored
 
   var CARD_TARGET  = 0.5;    // viewport fraction the card centres on during the ride
   var CARD_W       = 400;    // px final card width after the shrink (clamped to stage)
@@ -350,6 +395,11 @@
         '[data-tab-indicator]{transition:transform ' + INDICATOR_MS + 'ms cubic-bezier(.4,0,.2,1),' +
           'height ' + INDICATOR_MS + 'ms cubic-bezier(.4,0,.2,1);}' +
         '.flow_w{transition:opacity .12s linear;}' +
+        // the crest transforms each word, so they need a block box. inline-block keeps the wrap
+        // (whitespace between words stays a text node) but makes transform/scale apply.
+        ((WAVE_MOTION || POLISH_WAVE)
+          ? '.flow_w,.flow_pw{display:inline-block;vertical-align:baseline;will-change:transform;}'
+          : '') +
         // pills: grow out on X (playful overshoot), then the label ripples in per-character.
         // baton-pass — the outgoing collapses while the next grows at the shared anchor.
         '[data-pill]{opacity:0;transform:scaleX(0);transform-origin:center;' +
@@ -406,8 +456,12 @@
           'gap:' + BAR_GAP + 'px;pointer-events:none;position:relative;z-index:1;}' +
         // voice mode: the pill padding goes on the WRAPPER (the black fill element), so it's the space
         // between the bars and the fill edge. zero the outer capsule so its authored 12px doesn't add.
-        '[data-pill="polishing"].is-in{padding:0 !important;}' +
-        '[data-pill="polishing"].is-in .flow_pill-polish_wrap{padding:' + PILL_PAD_Y + 'px ' + PILL_WAVE_PADX + 'px !important;}' +
+        '[data-pill="polishing"].is-in:has(.flow_pill-polish_wrap){padding:0 !important;}' +
+        '[data-pill="polishing"].is-in .flow_pill-polish_wrap{padding:' + PILL_PAD_Y + 'px ' + PILL_WAVE_PAD_X + 'px !important;}' +
+        // no wrapper in the markup? then the capsule IS the fill element and carries the padding
+        // itself — without this it kept the zero above and the bars sat flush against the edge.
+        '[data-pill="polishing"].is-in:not(:has(.flow_pill-polish_wrap)){padding:' +
+          PILL_PAD_Y + 'px ' + PILL_WAVE_PAD_X + 'px !important;}' +
         // STAGE 2 (is-in): row appears. its bouncy height GROW is driven by a JS transition (not a
         // keyframe) so a ScrollTrigger re-pin / re-insert can't restart it — keyframes replay on
         // re-insertion, transitions don't. see setPillDone.
@@ -437,10 +491,12 @@
         '[data-flow="pill-audio"]{transition:opacity .3s ease;}' +
         // chapter 2: the whole transcript recolours to a looping gradient while "polishing".
         // background-clip:text on the container + transparent glyphs = one gradient over all text.
-        '[data-type="raw"].is-polishing{background-image:linear-gradient(100deg,' +
-          '#F0D7FF 0%,#FFA946 23%,#FF6C4C 39%,#FFBCF2 67%,#7232A6 91%);background-size:220% 100%;' +
+        '[data-type="raw"].is-polishing{background-image:' + POLISH_GRAD_CSS + ';background-size:220% 100%;' +
           '-webkit-background-clip:text;background-clip:text;' +
           'animation:flowPolish 3.2s ease-in-out infinite alternate;}' +
+        // WORD_GRAD: the container hands the paint job to the individual words (see gradPaint) —
+        // a transformed word composites out of the container's clip and would render as nothing.
+        '[data-type="raw"].is-polishing.is-wordgrad{background-image:none;animation:none;}' +
         // per-word colour is driven in JS (the eased wavefront), but each word's colour→gradient
         // flip TWEENS via this transition, so it fades in on trigger instead of popping / scrubbing
         '[data-type="raw"].is-polishing .flow_w{transition:color ' + GRAD_WORD_MS + 'ms ease;}' +
@@ -1122,23 +1178,135 @@
         el.style.backfaceVisibility = 'hidden';
         el.style.opacity = '0';                 // hidden until chapter 3 (avoid a pre-fan flash)
       });
-      destLogos.forEach(function (el) { guardStyle(el); el.style.transformOrigin = '50% 50%'; el.style.opacity = '0'; });
+      destLogos.forEach(function (el) {
+        guardStyle(el); el.style.transformOrigin = '50% 50%'; el.style.opacity = '0';
+        var lk = (el.getAttribute('data-dest') || '').trim().toLowerCase();
+        if (LOGO_SIZE[lk]) { el.style.width = LOGO_SIZE[lk] + 'px'; el.style.height = 'auto'; }
+      });
       // place the absolute cards over the live note; each card's lift centres its OWN box in the
       // frame (regardless of height → no downward drift).
+      // placed by RECT, not offsetTop: the extra cards live in fanLayer (which this script makes
+      // absolute), so they don't share the composer's offsetParent — feeding them the composer's
+      // offsetTop dropped them below it. measuring both against the screen removes the guesswork.
       function positionFanCards() {
         if (!composerEl) { return; }
         var scr = screenEl || composerEl.offsetParent;
-        var scH = scr ? scr.clientHeight : 0;
-        var t = composerEl.offsetTop, l = composerEl.offsetLeft, w = composerEl.offsetWidth;
+        var sr  = scr ? scr.getBoundingClientRect() : { top: 0, left: 0, height: 0 };
+        var cr  = composerEl.getBoundingClientRect();
+        var scH = sr.height || (scr ? scr.clientHeight : 0);
         // slack: centre by TEXT height only (SLACK_PAD grows the box DOWN, doesn't lift it)
-        composerEl._fanCY = Math.round(scH / 2 - (t + composerEl.offsetHeight / 2));
+        composerEl._fanCY = Math.round(scH / 2 - ((cr.top - sr.top) + cr.height / 2));
         for (var i = 0; i < destExtra.length; i++) {
           var el = destExtra[i];
-          el.style.top   = t + 'px';
-          el.style.left  = l + 'px';
-          el.style.width = w + 'px';
-          el._fanCY = Math.round(scH / 2 - (t + el.offsetHeight / 2));
+          var prevT = el.style.transform;
+          el.style.transform = 'none';                 // measure the untransformed box
+          el.style.width = cr.width + 'px';
+          var er   = el.getBoundingClientRect();
+          var curT = parseFloat(el.style.top)  || 0;
+          var curL = parseFloat(el.style.left) || 0;
+          el.style.top  = (curT + (cr.top  - er.top))  + 'px';   // nudge onto the composer, whatever the anchor
+          el.style.left = (curL + (cr.left - er.left)) + 'px';
+          // centre the box you can SEE. measured after the nudge, so it accounts for the visible box
+          // sitting at an offset inside its wrapper.
+          el.style.transform = prevT;
+          var bx = (FAN_CENTER_BY && el.querySelector(FAN_CENTER_BY)) || el;
+          var br = bx.getBoundingClientRect();
+          fanMeasure(el, sr, scH);        // the box can still settle taller — watchFanBox re-derives
+          watchFanBox(el, bx);
+          if (DEBUG) {
+            console.log('[fan] ' + (el.getAttribute('data-dest') || '?') +
+              ' wrapper=' + Math.round(er.height) + 'h box=' + Math.round(br.height) + 'h' +
+              ' boxTopInScreen=' + Math.round(br.top - sr.top) +
+              ' centreTarget=' + Math.round(scH / 2) + ' cy=' + el._fanCY +
+              ' boxIsWrapper=' + (bx === el));
+          }
         }
+        if (DEBUG) {
+          console.log('[fan] screen=' + Math.round(sr.height) + 'h (' + (screenEl ? 'screenEl' : 'offsetParent') +
+            ') composer=' + Math.round(cr.height) + 'h topInScreen=' + Math.round(cr.top - sr.top) +
+            ' cy=' + composerEl._fanCY);
+        }
+        placeLogoRow();
+        // live probe: what the boxes ACTUALLY occupy on screen right now, transforms and all.
+        // run window.fanBoxes() from the console while parked on a card.
+        if (DEBUG) {
+          // live dial: fanNudge(-12) etc. re-derives the lift from the CURRENT box height and
+          // repaints, so the offset can be eyeballed instead of guessed. report the number that lands.
+          window.fanNudge = function (px) {
+            FAN_CARD_NUDGE = px;
+            var s = fanFrame(); if (!s) { return; }
+            for (var i = 0; i < destExtra.length; i++) { fanMeasure(destExtra[i], s, s.height); }
+            fanRender(fanFCur, fanLiftCur, fanShownState);
+            console.log('[fan] FAN_CARD_NUDGE = ' + px + 'px (same baseline as page load)');
+          };
+          window.fanBoxes = function () {
+            var s = (screenEl || composerEl.offsetParent).getBoundingClientRect();
+            [composerEl].concat(destExtra).forEach(function (el) {
+              var b = ((FAN_CENTER_BY && el.querySelector(FAN_CENTER_BY)) || el).getBoundingClientRect();
+              console.log('[fanBox] ' + (el.getAttribute('data-dest') || 'slack') +
+                ' top=' + Math.round(b.top - s.top) + ' bottom=' + Math.round(s.bottom - b.bottom) +
+                ' h=' + Math.round(b.height) + ' centre=' + Math.round(b.top - s.top + b.height / 2) +
+                ' (frame centre ' + Math.round(s.height / 2) + ')' +
+                ' cy=' + el._fanCY + ' transform=' + (el.style.transform || 'none'));
+            });
+          };
+        }
+      }
+      // the lift is measured once, lazily — but the box it's measured from can still change height
+      // (font swap, late layout). watch it and re-derive the lift from the cached frame geometry, so
+      // a card that settles taller re-centres instead of sitting low.
+      // ONE baseline for the lift, used by every path (first placement, resize, live dial). the card
+      // carries a transform while parked, so it's neutralised before measuring — otherwise the same
+      // formula lands somewhere different depending on when it runs.
+      function fanFrame() {
+        var scr = screenEl || (composerEl && composerEl.offsetParent);
+        return scr ? scr.getBoundingClientRect() : null;
+      }
+      function fanMeasure(el, sr, scH) {
+        var prev = el.style.transform;
+        el.style.transform = 'none';
+        var bx = (FAN_CENTER_BY && el.querySelector(FAN_CENTER_BY)) || el;
+        var b  = bx.getBoundingClientRect();
+        el._fanBoxTop = b.top - sr.top;
+        el._fanScH    = scH;
+        el._fanCY     = Math.round(scH / 2 - (el._fanBoxTop + b.height / 2)) + FAN_CARD_NUDGE;
+        el.style.transform = prev;
+        return el._fanCY;
+      }
+      var fanRO = null;
+      function watchFanBox(card3, box) {
+        if (typeof ResizeObserver !== 'function' || box._fanWatched) { return; }
+        box._fanWatched = true;
+        box._fanOwner = card3;
+        if (!fanRO) {
+          fanRO = new ResizeObserver(function (entries) {
+            for (var i = 0; i < entries.length; i++) {
+              var b = entries[i].target, owner = b._fanOwner;
+              if (!owner || owner._fanScH == null) { continue; }
+              var sr = fanFrame(); if (!sr) { continue; }
+              var was = owner._fanCY;
+              var next = fanMeasure(owner, sr, sr.height || owner._fanScH);   // same baseline as everywhere
+              if (next !== was) {
+                if (DEBUG) {
+                  console.log('[fan] ' + (owner.getAttribute('data-dest') || '?') +
+                    ' box settled — cy ' + was + ' → ' + next);
+                }
+                fanRender(fanFCur, fanLiftCur, fanShownState);   // repaint at the corrected lift
+              }
+            }
+          });
+          teardown.push(function () { fanRO.disconnect(); fanRO = null; });
+        }
+        fanRO.observe(box);
+      }
+      // logo row sits LOGO_TOP px below the card's top edge. measured and corrected rather than set,
+      // so the card's own padding doesn't add on top of it.
+      function placeLogoRow() {
+        if (!destWrap || !LOGO_TOP || !card) { return; }
+        var cr = card.getBoundingClientRect(), wr = destWrap.getBoundingClientRect();
+        if (!cr.height || !wr.height) { return; }
+        var m = parseFloat(window.getComputedStyle(destWrap).marginTop) || 0;
+        destWrap.style.marginTop = (m + (LOGO_TOP - (wr.top - cr.top))) + 'px';
       }
       var pillEls      = Array.prototype.slice.call(section.querySelectorAll('[data-pill]'));
       var pillMap = {};
@@ -1355,6 +1523,8 @@
       // (line-by-line) with a horizontal tilt (GLOW_DIAG) so the sweep runs diagonally across the
       // block. measured lazily once the card has landed (real wrap), re-measured on refresh.
       var diagMeasured = false;
+      // per-word gradient state: offsets are layout-dependent, so they re-measure whenever the diag does
+      var wordEls = [], gradW = 0, gradReady = false;
       function measureWordDiag() {
         if (!transcriptEl || !words.length) { return; }
         var base = transcriptEl.getBoundingClientRect();
@@ -1539,7 +1709,9 @@
       var wordsShown = -1, pillShown = 0, polishColored = false;
       function resetPolishColor() {                              // clear the gradient per-word colours (once)
         if (!polishColored) { return; }
-        for (var i = 0; i < words.length; i++) { words[i].el.style.color = ''; words[i].el.style.textShadow = ''; }
+        for (var i = 0; i < words.length; i++) {
+          words[i].el.style.color = ''; words[i].el.style.textShadow = ''; words[i].el.style.transform = '';
+        }
         polishColored = false;
       }
 
@@ -1625,12 +1797,85 @@
         fanShownState = true;
       }
 
+      // ---- per-word gradient paint (see WORD_GRAD) ----
+      // each word gets the same gradient image, sized to the whole block and shifted back by the
+      // word's own offset, so the ramp is continuous across words. the shimmer that used to be a CSS
+      // keyframe on the container is now a per-frame background-position slide (we already render
+      // every frame here, and keyframes can't take a per-word offset).
+      function gradMeasure(list, container) {
+        if (!container || !list.length) { return 0; }
+        var cr = container.getBoundingClientRect();
+        for (var i = 0; i < list.length; i++) {
+          list[i]._gx = list[i].getBoundingClientRect().left - cr.left;
+        }
+        return cr.width || 1;
+      }
+      function gradPaint(list) {
+        for (var i = 0; i < list.length; i++) {
+          var s = list[i].style;
+          s.backgroundImage  = POLISH_GRAD_CSS;
+          s.backgroundRepeat = 'no-repeat';
+          s.setProperty('-webkit-background-clip', 'text');
+          s.backgroundClip = 'text';
+        }
+      }
+      function gradShift(list, w) {
+        if (!w || !list.length) { return; }
+        var span  = w * GRAD_SPAN;
+        var t     = (gsap.ticker.time * 1000 / GRAD_SHIFT_MS) % 2;      // 0..2, folded = ping-pong
+        var slide = (t > 1 ? 2 - t : t) * (span - w);                   // matches the old alternate keyframe
+        var sz    = span.toFixed(1) + 'px 100%';
+        for (var i = 0; i < list.length; i++) {
+          list[i].style.backgroundSize = sz;
+          list[i].style.backgroundPosition = (-(list[i]._gx || 0) - slide).toFixed(1) + 'px 0';
+        }
+      }
+
+      // crest riding the wavefront: 0 at rest, 1 at the peak, back to 0 once the front has passed.
+      // front and ph are both in sweep space, so the same call drives raw words and polished words.
+      function crestAt(front, ph) {
+        var d = front - ph;
+        if (d <= 0 || d >= WAVE_BAND) { return 0; }
+        return Math.sin(Math.PI * (d / WAVE_BAND));
+      }
+      function crestCSS(w, extraY) {
+        var y = (extraY || 0) - WAVE_AMP * w;
+        var t = '';
+        if (y) { t += 'translateY(' + y.toFixed(2) + 'px)'; }
+        if (WAVE_SCALE && w) { t += ' scale(' + (1 + WAVE_SCALE * w).toFixed(4) + ')'; }
+        if (WAVE_ROT && w)   { t += ' rotate(' + (WAVE_ROT * w).toFixed(2) + 'deg)'; }
+        return t;
+      }
+      // the raw-out dissolve runs down the SAME diagonal the gradient travelled. 180deg = straight
+      // down; tilting toward 135deg (down-right) by GLOW_DIAG matches the wavefront's own tilt.
+      var RAW_OUT_ANGLE = (180 - 45 * GLOW_DIAG).toFixed(1) + 'deg';
+      function rawOutMask(wipe) {
+        if (!RAW_OUT_WAVE) {                                   // legacy bottom→top wipe
+          var soft = 16, stop = wipe * (100 + soft);
+          return 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
+            '%, #000 ' + stop.toFixed(1) + '%)';
+        }
+        // travel from before the top-left corner to past the bottom-right so both ends clear fully
+        var s = wipe * (100 + RAW_OUT_SOFT * 2) - RAW_OUT_SOFT;
+        return 'linear-gradient(' + RAW_OUT_ANGLE + ', transparent ' + s.toFixed(1) +
+          '%, #000 ' + (s + RAW_OUT_SOFT).toFixed(1) + '%)';
+      }
+
       // ---- chapter 2 (polish) render, driven by an eased tp (see polishTick) ----
       // gradient waves onto the raw text, raw wipes out bottom→top, polished staggers in as the
       // message box grows. all a pure function of tp so it can be lerped exactly like the fan.
       function renderPolish(tp) {
         var n = words.length, np = pwords.length;
         if (GLOW_EDGE && !diagMeasured) { measureWordDiag(); diagMeasured = true; }
+        if (WORD_GRAD) {
+          if (!gradReady) {
+            if (!wordEls.length) { for (var wi = 0; wi < n; wi++) { wordEls.push(words[wi].el); } }
+            gradW = gradMeasure(wordEls, transcriptEl);
+            gradPaint(wordEls);
+            gradReady = true;
+          }
+          gradShift(wordEls, gradW);
+        }
         // gradient-in front: each word switches into the gradient (colour → transparent) as it passes
         var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
         // glow front overshoots past 1 + band so the light band fully sweeps OFF the last words
@@ -1647,26 +1892,33 @@
               ? ('0 0 ' + (GLOW_MAX * g).toFixed(1) + 'px rgba(' + GLOW_COLOR + ',' + (0.9 * g).toFixed(2) + ')')
               : '';
           }
+          if (WAVE_MOTION) {                                            // the crest lifts each word as it passes
+            var cw = crestAt(Fglow, ph);
+            words[i].el.style.transform = cw > 0.002 ? crestCSS(cw, 0) : '';
+          }
         }
-        // raw-out: a soft mask wipes the whole transcript BOTTOM→TOP (needs a wrapper mask — per-word
-        // opacity can't fade the gradient painted at the container via background-clip:text).
+        // raw-out: a soft mask dissolves the transcript along the wavefront's diagonal (needs a
+        // wrapper mask — per-word opacity can't fade the gradient painted at the container via
+        // background-clip:text, so the fade has to happen one level up).
         if (rawWrap) {
-          var wipe = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
-          var soft = 16, stop = wipe * (100 + soft);
-          var m = 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
-            '%, #000 ' + stop.toFixed(1) + '%)';
+          var m = rawOutMask(smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1])));
           rawWrap.style.webkitMaskImage = m;
           rawWrap.style.maskImage = m;
         }
         for (var j = 0; j < np; j++) {
-          pwords[j].style.opacity = String(smooth((F - (np > 1 ? j / (np - 1) : 0) - POLISH_GAP) / POLISH_BAND));
+          var pph = np > 1 ? j / (np - 1) : 0;
+          var o = smooth((F - pph - POLISH_GAP) / POLISH_BAND);
+          pwords[j].style.opacity = String(o);
+          if (POLISH_WAVE) {   // same crest, carried into the UI: rise into place, swell as it lands
+            pwords[j].style.transform = crestCSS(crestAt(F, pph) * 0.6, POLISH_AMP * (1 - o));
+          }
         }
         var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
         var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
         // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
         // constant (marginTop cancels the extra height) → card holds. box is white → white rises.
         if (msgGrowEl)    { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
-        if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * 2.4))); }
+        if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * PLACEHOLDER_OUT))); }
       }
 
       // ease the ch2 render toward the scrubbed tp; while inactive, track silently so re-entry is clean
@@ -1768,7 +2020,11 @@
         // in as the message box grows ----
         var np = pwords.length;
         if (idx === 1) {
-          if (transcriptEl) { transcriptEl.classList.add('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
+          if (transcriptEl) {
+            transcriptEl.classList.add('is-polishing');
+            if (WORD_GRAD) { transcriptEl.classList.add('is-wordgrad'); }   // words own the paint
+            transcriptEl.style.transform = ''; transcriptEl.style.opacity = '';
+          }
           // hand the scrubbed tp to the eased ticker (polishTick → renderPolish); no direct draw here
           polishTgt = tp; polishActive = true;
           wordsShown = -1; polishColored = true;                    // force ch1 re-reveal + colour reset later
@@ -1777,7 +2033,7 @@
           if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = '0'; }
           if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
           resetPolishColor();
-          for (var j2 = 0; j2 < np; j2++) { pwords[j2].style.opacity = '1'; }
+          for (var j2 = 0; j2 < np; j2++) { pwords[j2].style.opacity = '1'; pwords[j2].style.transform = ''; }
           // extend the box DOWN by SLACK_PAD (white below the text), eased in over the lift
           var padLiftT = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
           if (msgGrowEl)    { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; }
@@ -1787,7 +2043,7 @@
           if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
           if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
           resetPolishColor();
-          for (var j3 = 0; j3 < np; j3++) { pwords[j3].style.opacity = '0'; }
+          for (var j3 = 0; j3 < np; j3++) { pwords[j3].style.opacity = '0'; pwords[j3].style.transform = ''; }
           if (msgGrowEl)    { msgGrowEl.style.height = msgCollapsedH ? (msgCollapsedH + 'px') : ''; msgGrowEl.style.marginTop = '0px'; }
           if (placeholderEl){ placeholderEl.style.opacity = ''; }
         }
@@ -1872,6 +2128,7 @@
         measurePositions();
         computeTiming();
         diagMeasured = false;                  // re-measure word positions (wrap may have changed)
+        gradReady = false;                     // ...and the per-word gradient offsets with them
         fanPositioned = false;                 // re-place cards on next fan show (layout may have changed)
         applyScroll(st ? st.progress : 0);
         pSmooth = pTarget; painted = -1;      // no scrub sweep from 0 on load/rebuild
@@ -2074,6 +2331,16 @@
       }
       function mobileCh2Render(ctx, tp) {
         var rw = ctx.rawWords, pw = ctx.pwords, nR = rw.length, nP = pw.length, i;
+        if (WORD_GRAD && nR) {
+          if (!ctx.gradReady) {
+            ctx.gradEls = Array.prototype.slice.call(rw);
+            ctx.gradW = gradMeasure(ctx.gradEls, ctx.rawTr);
+            gradPaint(ctx.gradEls);
+            if (ctx.rawTr) { ctx.rawTr.classList.add('is-wordgrad'); }
+            ctx.gradReady = true;
+          }
+          gradShift(ctx.gradEls, ctx.gradW);
+        }
         var Fg = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * 1.08;
         var Fglow = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * (1 + GLOW_BAND + 0.05);
         for (i = 0; i < nR; i++) {
@@ -2085,12 +2352,14 @@
               ? ('0 0 ' + (GLOW_MAX * g).toFixed(1) + 'px rgba(' + GLOW_COLOR + ',' + (0.9 * g).toFixed(2) + ')')
               : '';
           }
+          if (WAVE_MOTION) {                                          // crest lifts each word as it passes
+            var cw = crestAt(Fglow, ph);
+            rw[i].style.transform = cw > 0.002 ? crestCSS(cw, 0) : '';
+          }
         }
         var wipe = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
-        if (ctx.rawWrap) {                                            // raw waves OUT bottom→top
-          var soft = 16, stop = wipe * (100 + soft);
-          var m = 'linear-gradient(to top, transparent ' + Math.max(0, stop - soft).toFixed(1) +
-            '%, #000 ' + stop.toFixed(1) + '%)';
+        if (ctx.rawWrap) {                                            // raw dissolves down the diagonal
+          var m = rawOutMask(wipe);
           ctx.rawWrap.style.webkitMaskImage = m;
           ctx.rawWrap.style.maskImage = m;
         }
@@ -2099,8 +2368,13 @@
         // grow UPWARD: negative marginTop cancels the extra height, so the icons below stay put
         if (ctx.msgGrow && ctx.measured) { ctx.msgGrow.style.height = (ctx.collapsedH + gpx) + 'px'; ctx.msgGrow.style.marginTop = (-gpx) + 'px'; }
         var F = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
-        for (i = 0; i < nP; i++) { pw[i].style.opacity = String(smooth((F - (nP > 1 ? i / (nP - 1) : 0) - POLISH_GAP) / POLISH_BAND)); }
-        if (ctx.placeholder) { ctx.placeholder.style.opacity = String(1 - smooth(Math.min(1, grow * 2.4))); }
+        for (i = 0; i < nP; i++) {
+          var pph = nP > 1 ? i / (nP - 1) : 0;
+          var o = smooth((F - pph - POLISH_GAP) / POLISH_BAND);
+          pw[i].style.opacity = String(o);
+          if (POLISH_WAVE) { pw[i].style.transform = crestCSS(crestAt(F, pph) * 0.6, POLISH_AMP * (1 - o)); }
+        }
+        if (ctx.placeholder) { ctx.placeholder.style.opacity = String(1 - smooth(Math.min(1, grow * PLACEHOLDER_OUT))); }
         var pillOn = tp >= MOBILE_PILL_AT;                       // audio pill out, polishing pill in
         if (ctx.polishPill) { ctx.polishPill.classList.toggle('is-on', pillOn); }
         if (ctx.pillAudio) { ctx.pillAudio.style.opacity = pillOn ? '0' : '1'; }
@@ -2111,10 +2385,11 @@
         var i;
         for (i = 0; i < ctx.rawWords.length; i++) {   // raw fully shown (wrapWords left them at 0)
           ctx.rawWords[i].style.color = ''; ctx.rawWords[i].style.opacity = '1'; ctx.rawWords[i].style.textShadow = '';
+          ctx.rawWords[i].style.transform = '';
         }
         if (ctx.rawTr) { ctx.rawTr.style.opacity = '1'; }
         if (ctx.rawWrap) { ctx.rawWrap.style.webkitMaskImage = ''; ctx.rawWrap.style.maskImage = ''; }
-        for (i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '0'; }
+        for (i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '0'; ctx.pwords[i].style.transform = ''; }
         if (ctx.measured && ctx.msgGrow) { ctx.msgGrow.style.height = ctx.collapsedH + 'px'; ctx.msgGrow.style.marginTop = '0px'; }
         if (ctx.placeholder) { ctx.placeholder.style.opacity = '1'; }
         if (ctx.polishPill) { ctx.polishPill.classList.remove('is-on', 'is-done', 'is-in', 'is-wave'); }
@@ -2134,6 +2409,7 @@
       // math as the desktop fan (fanRender/fanStep), scoped to one block and driven by time ----
       function mobileCh3Prep(host) {
         var ctx = host._ch3 = {}, slice = Array.prototype.slice;
+        ctx.host = host;                       // the block's own card — anchors the logo-row gap
         ctx.screen = host.querySelector('[' + FLOW + '="screen"]');
         ctx.live   = host.querySelector('[' + FLOW + '="composer"]');      // card 0 = the live note (slack)
         ctx.wrap   = host.querySelector('.flow_icons-destination');
@@ -2161,7 +2437,11 @@
           el.style.pointerEvents = 'none';
           el.style.opacity = '0';
         });
-        ctx.logos.forEach(function (el) { guardStyle(el); el.style.transformOrigin = '50% 50%'; el.style.opacity = '0'; });
+        ctx.logos.forEach(function (el) {
+          guardStyle(el); el.style.transformOrigin = '50% 50%'; el.style.opacity = '0';
+          var lk = (el.getAttribute('data-dest') || '').trim().toLowerCase();
+          if (LOGO_SIZE[lk]) { el.style.width = LOGO_SIZE[lk] + 'px'; el.style.height = 'auto'; }
+        });
         if (ctx.wrap) { guardStyle(ctx.wrap); }
         if (ctx.live) { guardStyle(ctx.live); }
         // ch3 opens on the FINISHED message: raw gone, polished full, box already open
@@ -2182,21 +2462,45 @@
       function mobileCh3Position(ctx) {
         if (!ctx.live) { return; }
         var scr = ctx.screen || ctx.live.offsetParent;
-        var scH = scr ? scr.clientHeight : 0;
-        var t = ctx.live.offsetTop, l = ctx.live.offsetLeft, w = ctx.live.offsetWidth;
-        ctx.live._fanCY = Math.round(scH / 2 - (t + ctx.live.offsetHeight / 2));
+        var sr  = scr ? scr.getBoundingClientRect() : { top: 0, left: 0, height: 0 };
+        var cr  = ctx.live.getBoundingClientRect();
+        var scH = sr.height || (scr ? scr.clientHeight : 0);
+        ctx.live._fanCY = Math.round(scH / 2 - ((cr.top - sr.top) + cr.height / 2));
         for (var i = 0; i < ctx.cards.length; i++) {
           var el = ctx.cards[i];
-          el.style.top = t + 'px'; el.style.left = l + 'px'; el.style.width = w + 'px';
+          var prevT = el.style.transform;
+          el.style.transform = 'none';                 // measure the untransformed box (see positionFanCards)
+          el.style.width = cr.width + 'px';
           // clamp AFTER the width lands (wrap changes the text height) — these cards carry their own
           // msg-grow with no [data-type="polished"], so nothing else tightens them
           mobileFitBox(el.querySelector('[' + FLOW + '="msg-grow"]'), true);
-          el._fanCY = Math.round(scH / 2 - (t + el.offsetHeight / 2));
+          var er   = el.getBoundingClientRect();
+          var curT = parseFloat(el.style.top)  || 0;
+          var curL = parseFloat(el.style.left) || 0;
+          el.style.top  = (curT + (cr.top  - er.top))  + 'px';
+          el.style.left = (curL + (cr.left - er.left)) + 'px';
+          var bx = (FAN_CENTER_BY && el.querySelector(FAN_CENTER_BY)) || el;   // centre the visible box
+          var br = bx.getBoundingClientRect();
+          el._fanCY = Math.round(scH / 2 - ((br.top - sr.top) + br.height / 2)) + FAN_CARD_NUDGE;
+          el.style.transform = prevT;
+          if (DEBUG) {
+            console.log('[fan/mobile] ' + (el.getAttribute('data-dest') || '?') +
+              ' box=' + Math.round(br.height) + 'h boxTopInScreen=' + Math.round(br.top - sr.top) +
+              ' centreTarget=' + Math.round(scH / 2) + ' cy=' + el._fanCY + ' boxIsWrapper=' + (bx === el));
+          }
+        }
+        // logo row gap, measured against this block's own card
+        if (ctx.wrap && LOGO_TOP && ctx.host) {
+          var hr = ctx.host.getBoundingClientRect(), wr = ctx.wrap.getBoundingClientRect();
+          if (hr.height && wr.height) {
+            var m = parseFloat(window.getComputedStyle(ctx.wrap).marginTop) || 0;
+            ctx.wrap.style.marginTop = (m + (LOGO_TOP - (wr.top - hr.top))) + 'px';
+          }
         }
       }
       function mobileCh3Static(ctx) {          // the message state ch3 inherits from ch2's end
         if (ctx.rawTr) { ctx.rawTr.classList.remove('is-polishing'); ctx.rawTr.style.opacity = '0'; }
-        for (var i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '1'; }
+        for (var i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '1'; ctx.pwords[i].style.transform = ''; }
         if (ctx.msgGrow) {
           // same as ch2's end state — clamp to the text (auto keeps the invisible rows + <br> padding)
           if (!mobileFitBox(ctx.msgGrow, true)) { ctx.msgGrow.style.height = 'auto'; ctx.msgGrow.style.overflow = 'visible'; }
