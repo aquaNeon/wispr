@@ -139,8 +139,8 @@
   // travelling, and the box opens before the raw is gone, so it reads as one continuous pass from
   // the transcript into the UI rather than three separate beats.
   var POLISH_GRAD   = [0.0, 0.46];  // PHASE 1 (processing): gradient + glare sweep the whole transcript
-  var POLISH_RAWOUT = [0.46, 0.80]; // PHASE 2: only once processing has finished does the text dissolve
-  var POLISH_DROP   = [0.56, 1.0];  // ...and move into the UI — overlaps the dissolve so it's one move
+  var POLISH_RAWOUT = [0.46, 0.55]; // PHASE 2: only once processing has finished does the text dissolve
+  var POLISH_DROP   = [0.52, 0.66]; // ...and move into the UI — overlaps the dissolve so it's one move
   // how much faster than the box grow the "Message…" placeholder clears. higher = gone sooner, so the
   // polished text never lands on top of it. 1 = fades exactly with the box.
   var PLACEHOLDER_OUT = 6.0;
@@ -179,6 +179,33 @@
   // polished text rides the same crest as it fades in, so the wave carries through into the UI
   var POLISH_WAVE   = true;
   var POLISH_AMP    = 12;    // px the polished words rise from as they fade in
+
+  // ---- ch2 "paste": the transcript is PUSHED INTO the composer, not faded away ----
+  // the dissolve alone reads as the text evaporating. here it travels DOWN into the box while it
+  // goes, the box takes the hit with a squash-and-settle, and the polished text snaps in behind -
+  // so the beat reads as paste, the way notetaker.js throws its task card sideways into the deck
+  // rather than cross-fading it.
+  // every value below is a pure function of tp, like the rest of renderPolish: a triggered wobble
+  // would fight the scrub and leave the box mid-wiggle whenever you stopped scrolling.
+  var PASTE_MODE        = true;   // false = the old dissolve-and-fade
+  var RAW_PUSH_Y        = 90;     // px the raw transcript travels down as it dissolves
+  var RAW_PUSH_SCALE    = 1;      // 1 = no shrink; the text keeps its size the whole way down
+  // dissolve speed vs travel. this was 1.7, which faded the text out by 65% of the push - the
+  // movement then happened on something invisible and the whole beat read as the old fade. just
+  // over 1 keeps the text legible for most of the travel and only clears it at the very end.
+  var RAW_FADE_FAST     = 1.12;
+  var BOX_GROW_FAST     = 2.6;    // >1 front-loads the box grow so it opens fast and settles late
+  // the wobble is on the WHOLE CARD, not the message box. scaling the box only ever moves its top
+  // edge - it grows upward from a pinned base - so it read as the lid flapping rather than as the
+  // card taking a hit. the card is positioned by left/top/width/height and nothing else writes its
+  // transform, so the wobble composes cleanly on top.
+  var CARD_WIGGLE       = [0.53, 0.72];  // tp window of the impact wobble
+  var CARD_WIGGLE_Y     = 14;     // px the card kicks vertically at the peak
+  var CARD_WIGGLE_X     = 0;      // px sideways. 0 = pure vertical
+  var CARD_WIGGLE_ROT   = 0.6;    // deg of tilt at the peak. 0 = pure translation
+  var CARD_WIGGLE_CYCLES = 2.2;   // oscillations before it settles
+  var POLISH_FAST       = 1.7;    // >1 finishes the polished fill early in its window, so the text
+                                  // is IN before the box stops wobbling
 
   var INTRO_FADE_MS   = 250; // 220 wpm + marquee: timed fade in (at scroll-in) and out (at shrink start)
   var MSG_FADE_MS     = 450; // timed fade-IN of the message/composer content — TRIGGERED, not scrubbed
@@ -266,7 +293,9 @@
   var FAN_LERP     = 0.12;
   // ch2 (message box open): eased follow for the polished-text wave-in, raw-text wipe-out and box
   // grow — the render chases the scrubbed tp instead of tracking raw scroll 1:1. same as FAN_LERP.
-  var POLISH_LERP  = 0.12;
+  // per-frame ease toward the scrubbed tp. 0.12 took ~18 frames to cover a jump, which read as
+  // lag on top of the windows above - the paste beats are short now and cannot afford it.
+  var POLISH_LERP  = 0.32;
   var SLACK_PAD    = 48;       // px white space below the slack text in ch3 (eases in after the type-in)
   var LOGO_ROT     = 90;       // deg a logo rotates in as it centres (same direction as the swing; flip to reverse)
   var LOGO_FADE    = 1;        // card-units over which a logo fades + rotates in/out around centre
@@ -2060,6 +2089,16 @@
       // ---- chapter 2 (polish) render, driven by an eased tp (see polishTick) ----
       // gradient waves onto the raw text, raw wipes out bottom→top, polished staggers in as the
       // message box grows. all a pure function of tp so it can be lerped exactly like the fan.
+      // damped oscillation over the wiggle window, as a function of tp. squared decay so the first
+      // swing is the one you read and the rest settle out fast.
+      function wiggleAt(tp) {
+        if (!PASTE_MODE) { return 0; }
+        var t = phaseT(tp, CARD_WIGGLE[0], CARD_WIGGLE[1]);
+        if (t <= 0 || t >= 1) { return 0; }
+        var decay = (1 - t) * (1 - t);
+        return Math.sin(t * Math.PI * 2 * CARD_WIGGLE_CYCLES) * decay;
+      }
+
       function renderPolish(tp) {
         var n = words.length, np = pwords.length;
         if (GLOW_EDGE && !diagMeasured) { measureWordDiag(); diagMeasured = true; }
@@ -2077,7 +2116,8 @@
         // glow front overshoots past 1 + band so the light band fully sweeps OFF the last words
         var Fglow = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * (1 + GLOW_BAND + 0.05);
         // polished-in front: polished staggers in behind the box grow (later window)
-        var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) * (1 + POLISH_GAP + POLISH_BAND);
+        var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) *
+                 (PASTE_MODE ? POLISH_FAST : 1) * (1 + POLISH_GAP + POLISH_BAND);
         for (var i = 0; i < n; i++) {
           var ph = (words[i].diag != null) ? words[i].diag : (n > 1 ? i / (n - 1) : 0);
           words[i].el.style.color = (Fg > ph) ? 'transparent' : '';     // gradient waves on (diagonal)
@@ -2097,9 +2137,22 @@
         // wrapper mask — per-word opacity can't fade the gradient painted at the container via
         // background-clip:text, so the fade has to happen one level up).
         if (rawWrap) {
-          var m = rawOutMask(smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1])));
+          var rawT = smooth(phaseT(tp, POLISH_RAWOUT[0], POLISH_RAWOUT[1]));
+          // the dissolve runs AHEAD of the travel: the text has to be gone by the time it reaches
+          // the box, or it visibly slides over the composer instead of disappearing into it
+          var m = rawOutMask(PASTE_MODE ? Math.min(1, rawT * RAW_FADE_FAST) : rawT);
           rawWrap.style.webkitMaskImage = m;
           rawWrap.style.maskImage = m;
+          if (PASTE_MODE) {
+            // safe to transform the WRAPPER: WORD_GRAD gives every word its own gradient, so
+            // there is no container-level background-clip:text here for a transform to break
+            rawWrap.style.transformOrigin = '50% 100%';
+            rawWrap.style.transform = rawT > 0.0005
+              ? ('translateY(' + (RAW_PUSH_Y * rawT).toFixed(2) + 'px)' +
+                 (RAW_PUSH_SCALE === 1 ? '' :
+                   ' scale(' + (1 - (1 - RAW_PUSH_SCALE) * rawT).toFixed(4) + ')'))
+              : '';
+          }
         }
         for (var j = 0; j < np; j++) {
           var pph = np > 1 ? j / (np - 1) : 0;
@@ -2110,17 +2163,31 @@
           }
         }
         var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
+        if (PASTE_MODE && BOX_GROW_FAST > 0) { grow = Math.pow(grow, 1 / BOX_GROW_FAST); }
         var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
         // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
         // constant (marginTop cancels the extra height) → card holds. box is white → white rises.
-        if (msgGrowEl && heightsOK) { msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px'; msgGrowEl.style.marginTop = (-gpx) + 'px'; }
+        if (msgGrowEl && heightsOK) {
+          msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px';
+          msgGrowEl.style.marginTop = (-gpx) + 'px';
+        }
+
+        // the impact, carried by the whole card so nothing shears against anything else inside it.
+        // NOT written to card.style.transform: GSAP owns that matrix for the card ride, and a
+        // direct write clobbers the ride's y every frame (and an empty one strands the card off
+        // screen entirely). the offset is published here and folded into the ride's own gsap.set.
+        cardWiggle = PASTE_MODE ? wiggleAt(tp) : 0;
         if (placeholderEl){ placeholderEl.style.opacity = String(1 - smooth(Math.min(1, grow * PLACEHOLDER_OUT))); }
       }
 
       // ease the ch2 render toward the scrubbed tp; while inactive, track silently so re-entry is clean
       var polishCur = 0, polishTgt = 0, polishActive = false;
+      var cardWiggle = 0;   // ch2 paste impact, applied by the card ride's gsap.set
+
       function polishTick() {
-        if (!polishActive) { polishCur = polishTgt; return; }
+        // leaving chapter 2 stops renderPolish, so the offset has to be cleared here or the card
+        // stays parked at whatever the wobble held when the chapter handed over
+        if (!polishActive) { polishCur = polishTgt; cardWiggle = 0; return; }
         var k = POLISH_LERP >= 1 ? 1 : 1 - Math.pow(1 - POLISH_LERP, gsap.ticker.deltaRatio());
         polishCur += (polishTgt - polishCur) * k;
         if (Math.abs(polishTgt - polishCur) < 0.0004) { polishCur = polishTgt; }
@@ -2254,7 +2321,7 @@
         } else if (idx >= 2) {                                       // chapter 3: polished only
           polishActive = false;
           if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = '0'; }
-          if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
+          if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; rawWrap.style.transform = ''; }
           resetPolishColor();
           for (var j2 = 0; j2 < np; j2++) { pwords[j2].style.opacity = '1'; pwords[j2].style.transform = ''; }
           // extend the box DOWN by SLACK_PAD (white below the text), eased in over the lift
@@ -2264,7 +2331,7 @@
         } else {                                                     // recording / chapter 1: raw only
           polishActive = false;
           if (transcriptEl) { transcriptEl.classList.remove('is-polishing'); transcriptEl.style.transform = ''; transcriptEl.style.opacity = ''; }
-          if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; }
+          if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; rawWrap.style.transform = ''; }
           resetPolishColor();
           for (var j3 = 0; j3 < np; j3++) { pwords[j3].style.opacity = '0'; pwords[j3].style.transform = ''; }
           if (msgGrowEl)    { msgGrowEl.style.height = msgCollapsedH ? (msgCollapsedH + 'px') : ''; msgGrowEl.style.marginTop = '0px'; }
@@ -2322,7 +2389,13 @@
           // mid-ride the card sags CARD_DIP below centre, easing back to dead centre at landing
           var rideT = (pHold > pC) ? Math.max(0, Math.min(1, (p - pC) / (pHold - pC))) : 1;
           var dip   = CARD_DIP * Math.sin(Math.PI * rideT);
-          gsap.set(card, { y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) + dip });
+          // the chapter-2 paste impact rides along here rather than on its own transform, so the
+          // ride and the wobble stay in one matrix that GSAP owns end to end
+          gsap.set(card, {
+            y: S - Math.min(cardRiseDist, Math.max(0, S - sCardStart)) + dip + CARD_WIGGLE_Y * cardWiggle,
+            x: CARD_WIGGLE_X * cardWiggle,
+            rotation: CARD_WIGGLE_ROT * cardWiggle
+          });
         }
 
         if (canLeave && topCover) {
@@ -2617,7 +2690,7 @@
           ctx.rawWords[i].style.transform = '';
         }
         if (ctx.rawTr) { ctx.rawTr.style.opacity = '1'; }
-        if (ctx.rawWrap) { ctx.rawWrap.style.webkitMaskImage = ''; ctx.rawWrap.style.maskImage = ''; }
+        if (ctx.rawWrap) { ctx.rawWrap.style.webkitMaskImage = ''; ctx.rawWrap.style.maskImage = ''; ctx.rawWrap.style.transform = ''; }
         for (i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '0'; ctx.pwords[i].style.transform = ''; }
         if (ctx.measured && ctx.msgGrow) { ctx.msgGrow.style.height = ctx.collapsedH + 'px'; ctx.msgGrow.style.marginTop = '0px'; }
         if (ctx.placeholder) { ctx.placeholder.style.opacity = '1'; }
