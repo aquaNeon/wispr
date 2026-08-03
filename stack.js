@@ -71,18 +71,28 @@
 (function () {
 
   // ---- config ----
-  var STEP_VH       = 0.7;
+  var STEP_VH       = 0.45;    // scroll length per row before the gather (was 0.7)
   var SNAP          = false;   // magnetic scroll-to-nearest-step
   var SNAP_DUR      = 0.3;
 
-  var POP_BATCH     = 1;       // one bubble at a time - reads as a conversation, not a burst
-  var POP_STAGGER   = 0.05;
+  // rows popped per scroll step. 0 = ALL of them on one step, which is what the section wants
+  // now: one scroll brings the whole scatter in, the next gathers it into the card. order is
+  // still honoured inside the step - POP_STAGGER is what spaces them, so it has to be large
+  // enough to read as a sequence rather than a single burst.
+  var POP_BATCH     = 0;
+  var POP_STAGGER   = 0.1;
   var POP_DUR       = 0.34;
   var POP_BUNCH     = 0.55;    // <1 pulls pops earlier & tighter
   var POP_LEAD      = 0.06;    // scroll lead so the first batch animates in (not pre-popped)
   var POP_SCALE_X   = 0.35;
   var POP_SCALE_Y   = 0.85;
   var POP_EASE      = 'back.out(2)';
+  // a row pops to whatever opacity it was authored with in the Designer, not to a hardcoded 1 -
+  // so a row set to 40% there scatters in dimmed and reads as chatter the notetaker heard but did
+  // not act on. it comes up to GATHER_OPACITY only as it stacks into the card, which is the
+  // moment it becomes part of the summary. false = every row pops to full, as before.
+  var DIM_FROM_CSS   = true;
+  var GATHER_OPACITY = 1;
   var FIST          = 1;       // 1 = pop in place at the authored spot; lower = bunched, spreads on scroll
 
   var DETECT_SEL       = '.meeting_item_animate';
@@ -135,7 +145,12 @@
   var POP_PAR_DEPTH   = [1, 0.6, 1.35];   // cycles over the images; overridden by data-pop-depth
   var POP_PAR_SMOOTH  = 0.1;   // per-frame ease toward the scroll position; lower = more drag
 
-  var CH1_AT          = 0.45;  // point in the pG->pHold travel that fires it (0 = at pG, 1 = landing)
+  // point in the pG->pHold travel that fires the row exit (0 = at pG, 1 = the landing). the rows
+  // should clear just BEFORE the card is placed into the tabs section, so this sits late in the
+  // travel - but not at 1: the exit runs on its own clock for CH1_ROW_DUR + stagger x rows
+  // (~0.75s at six rows), and firing it at the landing would leave rows still flying out after
+  // the card has already arrived.
+  var CH1_AT          = 0.8;
   var CH1_ROW_Y       = -120;  // px each row travels; negative = up, positive = down
   var CH1_ROW_DUR     = 0.45;  // seconds per row
   var CH1_ROW_STAGGER = 0.06;  // seconds between rows (top row leaves first)
@@ -302,6 +317,14 @@
         };
       });
 
+      // READ BEFORE WRITE: the next line sets every row to 0, and once that inline style is on
+      // the element its authored opacity is gone for good. captured here, while the computed
+      // value is still whatever Webflow styled it as.
+      items.forEach(function (it) {
+        var o = DIM_FROM_CSS ? parseFloat(window.getComputedStyle(it).opacity) : 1;
+        it._restOpacity = (isNaN(o) || o <= 0) ? 1 : o;
+      });
+
       items.forEach(function (it) { guardStyle(it); });
       gsap.set(items, { opacity: 0 });
 
@@ -387,17 +410,29 @@
       if (head) { gsap.set(head, { opacity: 0 }); }
       if (headIcons.length) { gsap.set(headIcons, { opacity: 0 }); }
 
-      var batchCount = Math.ceil(items.length / POP_BATCH);
+      // the opacity a row rests at once popped, before it is gathered
+      function popOpacity(i, el) { return el._restOpacity; }
+      function isDim(el) { return el._restOpacity < GATHER_OPACITY; }
+      if (DEBUG) {
+        console.log('[stack] rows dimmed by their own CSS:', items.filter(isDim).length,
+                    'of', items.length, '| values:', items.map(function (it) { return it._restOpacity; }));
+      }
+
+      // one place resolves the batch size, so POP_BATCH = 0 cannot divide by zero anywhere
+      var perBatch   = POP_BATCH > 0 ? POP_BATCH : items.length;
+      var batchCount = Math.ceil(items.length / perBatch);
       var popTls = [];
       var b;
       for (b = 0; b < batchCount; b++) {
         (function (batch) {
-          var members     = items.filter(function (it, i) { return Math.floor(i / POP_BATCH) === batch; });
-          var memberIdx   = items.map(function (it, i) { return i; }).filter(function (i) { return Math.floor(i / POP_BATCH) === batch; });
+          var members     = items.filter(function (it, i) { return Math.floor(i / perBatch) === batch; });
+          var memberIdx   = items.map(function (it, i) { return i; }).filter(function (i) { return Math.floor(i / perBatch) === batch; });
           var batchChecks = memberIdx.map(function (i) { return checks[i]; }).filter(Boolean);
 
           var tl = gsap.timeline({ paused: true });
-          tl.to(members, { opacity: 1, scaleX: 1, scaleY: 1, duration: POP_DUR, ease: POP_EASE, stagger: POP_STAGGER }, 0);
+          // a function value, not a number: one tween covers the batch but each row resolves its
+          // own target, so a dimmed row and a solid one can pop together
+          tl.to(members, { opacity: popOpacity, scaleX: 1, scaleY: 1, duration: POP_DUR, ease: POP_EASE, stagger: POP_STAGGER }, 0);
           if (batchChecks.length) {
             tl.to(batchChecks, { scale: 1, opacity: 1, duration: CHECK_DUR, ease: CHECK_EASE, stagger: POP_STAGGER }, CHECK_DELAY);
           }
@@ -407,11 +442,16 @@
 
       // ---- detected words: the gradient goes on each LETTER, not the word — background-clip:text
       // fights a transform on the same element in Blink/WebKit ----
+      // each word remembers WHICH row in the batch it belongs to. with one row per batch that was
+      // implicit - the scroll step spaced them - but a batch holding every row fires them all at
+      // one delay, so every gradient lights at once and the walk down the list becomes a flash.
+      // the slot is what lets the word wait for its own row to pop.
       var detectByBatch = [];
       for (b = 0; b < batchCount; b++) {
-        detectByBatch.push(items.filter(function (it, i) { return Math.floor(i / POP_BATCH) === b; })
-          .reduce(function (acc, it) {
-            return acc.concat(Array.prototype.slice.call(it.querySelectorAll(DETECT_SEL)));
+        detectByBatch.push(items.filter(function (it, i) { return Math.floor(i / perBatch) === b; })
+          .reduce(function (acc, it, slot) {
+            return acc.concat(Array.prototype.slice.call(it.querySelectorAll(DETECT_SEL))
+              .map(function (el) { return { el: el, slot: slot }; }));
           }, []));
       }
       var detectCalls = [];
@@ -468,8 +508,11 @@
       }
 
       function playDetect(batch) {
-        (detectByBatch[batch] || []).forEach(function (el) {
-          detectCalls.push(gsap.delayedCall(DETECT_AT, function () {
+        (detectByBatch[batch] || []).forEach(function (d) {
+          var el = d.el;
+          // DETECT_AT is measured from the row's OWN pop, so the same offset the pop tween
+          // staggers by has to be added here or the word lights before its row arrives
+          detectCalls.push(gsap.delayedCall(DETECT_AT + d.slot * POP_STAGGER, function () {
             paintDetect(el, true);
             rippleWord(el);
             detectCalls.push(gsap.delayedCall((DETECT_FADE + DETECT_HOLD) / 1000, function () {
@@ -483,8 +526,8 @@
         // every pending call, not just this batch's: one would fire onto an already-reversed bubble
         for (var i = 0; i < detectCalls.length; i++) { detectCalls[i].kill(); }
         detectCalls.length = 0;
-        (detectByBatch[batch] || []).forEach(function (el) {
-          if (el._letters) { paintDetect(el, false); }
+        (detectByBatch[batch] || []).forEach(function (d) {
+          if (d.el._letters) { paintDetect(d.el, false); }
         });
       }
 
@@ -514,6 +557,11 @@
           x: 0, y: 0, duration: GATHER_DUR, ease: GATHER_EASE,
           onStart: function () { it.style.zIndex = 100 + slot; }
         };
+        // a dimmed row comes up to full as it lands - the gather is the moment it stops being
+        // background chatter and becomes a line in the summary. rows that were never dimmed are
+        // left out of this entirely rather than tweened 1 -> 1, so the gather does not take
+        // ownership of an opacity the pop already owns.
+        if (isDim(it)) { tween.opacity = GATHER_OPACITY; }
         if (landedBg) { tween.backgroundColor = landedBg; }
         if (STACK_ITEM_RADIUS) {
           tween.borderTopLeftRadius = tween.borderTopRightRadius =
@@ -611,12 +659,14 @@
         computeTiming();
         if (!gatherOn) {
           items.forEach(function (it, i) {
-            var played = popPlayed[Math.floor(i / POP_BATCH)];
+            var played = popPlayed[Math.floor(i / perBatch)];
             gsap.set(it, {
               x: geo[i].dx, y: geo[i].dy,
               scaleX: played ? 1 : POP_SCALE_X,
               scaleY: played ? 1 : POP_SCALE_Y,
-              opacity: played ? 1 : 0
+              // a popped-but-not-yet-gathered dim row belongs at DIM_OPACITY, not 1 - resizing
+              // mid-scatter used to restore every row to full and lose the dimming
+              opacity: played ? popOpacity(i, it) : 0
             });
           });
           gatherTl.invalidate();
