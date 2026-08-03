@@ -62,6 +62,8 @@
   var VOCAB_WORD = 'Wispr Flow';   // the word typed into the input (JS owns it)
   var TOG_OFF    = '#d8d6cc';      // toggle track colour OFF
   var TOG_ON     = '#1a1a1a';      // toggle track colour ON
+  var C1_SCROLL_EXTRA = 20;        // px the inner track lifts BEYOND the form's own overflow, so the
+                                   // toggle + Add button sit clear of the bottom edge
 
   // ---- card 2 (snippets) ----
   var SNIP_RISE = 46;              // px the pills sit above/below the line while outside it
@@ -415,7 +417,10 @@
       formEl.style.pointerEvents = shown ? '' : 'none';
     }
     function setTrack(scrolled) {
-      if (trackEl && maxScroll > 0) { trackEl.style.transform = 'translateY(' + (scrolled ? -maxScroll : 0) + 'px)'; }
+      // maxScroll only covers the form's own overflow — C1_SCROLL_EXTRA pushes past it so the toggle
+      // row and the Add button clear the bottom edge properly
+      var lift = maxScroll + C1_SCROLL_EXTRA;
+      if (trackEl && lift > 0) { trackEl.style.transform = 'translateY(' + (scrolled ? -lift : 0) + 'px)'; }
     }
     function setToggle(on) {
       if (!togSpell) { return; }
