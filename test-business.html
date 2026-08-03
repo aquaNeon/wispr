@@ -84,10 +84,21 @@
 
   .biz-animation_meeting-recorder-wrap { position: absolute; left: 44%; top: 68%; z-index: 6; }
   .biz-animation_meeting-recorder { display: flex; align-items: center; gap: 10px; background: #111;
-    border-radius: 999px; padding: 8px 14px; }
+    border-radius: 999px; padding: 8px 14px; color: #FFFFEB; }
+  /* deliberately NO width/height on .biz-animation_wave.is-meeting - the Webflow svg is
+     width="100%" with no height, and the script has to survive that on its own */
   .biz-animation_meeting-recorder-stop { width: 14px; height: 14px; border-radius: 3px; background: #62c554; }
 
   #probe { position: fixed; left: 10px; bottom: 10px; font: 12px monospace; opacity: .7; }
+
+  /* stand-in for the Webflow tablet-and-down rules: the composer goes narrow and the panel
+     shrinks. the point of the test is that the script's stacks stay centred against this. */
+  @media (max-width: 991px) {
+    .biz-animation_wrap { width: 94vw; aspect-ratio: 3/5; }
+    .biz-animation_chat { width: min(300px, 84vw); }
+    .biz-animation_panel { position: static; width: 88%; height: auto; margin: 8% auto 0; }
+    .biz-animation_nav-wrap { bottom: 4%; }
+  }
 </style>
 </head>
 <body>
@@ -165,14 +176,15 @@
           <span class="biz-animation_recorder-dot"></span><span class="biz-animation_recorder-dot"></span>
           <span class="biz-animation_recorder-dot"></span>
         </div>
-        <div class="biz-animation_wave">
-          <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-          <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-          <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-          <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-          <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-          <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-        </div>
+        <!-- PATH bars, the way Figma exports a rounded capsule: no width/height/rx to animate.
+             the script rebuilds each one as a rect from its bounding box. -->
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 29" fill="none" class="biz-animation_wave is-paths">
+          <path d="M0 13.25C0 12.0074 1.00736 11 2.25 11C3.49264 11 4.5 12.0074 4.5 13.25V15.25C4.5 16.4926 3.49264 17.5 2.25 17.5C1.00736 17.5 0 16.4926 0 15.25V13.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+          <path d="M8.5 8.25C8.5 7.00736 9.50736 6 10.75 6C11.9926 6 13 7.00736 13 8.25V20.25C13 21.4926 11.9926 22.5 10.75 22.5C9.50736 22.5 8.5 21.4926 8.5 20.25V8.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+          <path d="M17 2.25C17 1.00736 18.0074 0 19.25 0C20.4926 0 21.5 1.00736 21.5 2.25V26.25C21.5 27.4926 20.4926 28.5 19.25 28.5C18.0074 28.5 17 27.4926 17 26.25V2.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+          <path d="M25.5 10.25C25.5 9.00736 26.5074 8 27.75 8C28.9926 8 30 9.00736 30 10.25V18.25C30 19.4926 28.9926 20.5 27.75 20.5C26.5074 20.5 25.5 19.4926 25.5 18.25V10.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+        </svg>
+
       </div>
     </div>
   </div>
@@ -257,12 +269,9 @@
 
   <div class="biz-animation_meeting-recorder-wrap">
     <div class="biz-animation_meeting-recorder">
-      <div class="biz-animation_wave is-meeting">
-        <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-        <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-        <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span><span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-        <span class="biz-animation_wave-bar"><svg width="5" height="11" viewBox="0 0 5 11" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="4.5" height="10.5" rx="2.25" fill="#FFFFEB"/></svg></span>
-      </div>
+      <!-- the user's live Webflow markup: ONE compound path holding all five bars, and no
+           element carrying biz-animation_wave-bar at all. -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 48 48" fill="none" class="biz-animation_wave is-meeting"><path d="M17 35.2C15.8954 35.2 15 34.3046 15 33.2L15 16.8C15 15.6954 15.8954 14.8 17 14.8C18.1046 14.8 19 15.6954 19 16.8L19 33.2C19 34.3046 18.1046 35.2 17 35.2ZM25 42C23.8954 42 23 41.1046 23 40L23 10C23 8.89543 23.8954 8 25 8C26.1046 8 27 8.89543 27 10L27 40C27 41.1046 26.1046 42 25 42ZM9 28.4C7.89543 28.4 7 27.5046 7 26.4L7 23.6C7 22.4954 7.89543 21.6 9 21.6C10.1046 21.6 11 22.4954 11 23.6L11 26.4C11 27.5046 10.1046 28.4 9 28.4ZM33 35.2C31.8954 35.2 31 34.3046 31 33.2L31 16.8C31 15.6954 31.8954 14.8 33 14.8C34.1046 14.8 35 15.6954 35 16.8V33.2C35 34.3046 34.1046 35.2 33 35.2ZM41 28.4C39.8954 28.4 39 27.5046 39 26.4V23.6C39 22.4954 39.8954 21.6 41 21.6C42.1046 21.6 43 22.4954 43 23.6V26.4C43 27.5046 42.1046 28.4 41 28.4Z" fill="currentColor"></path></svg>
       <div class="biz-animation_meeting-recorder-stop"></div>
     </div>
   </div>
