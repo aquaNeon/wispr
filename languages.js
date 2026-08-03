@@ -85,8 +85,15 @@
   var C1_BEATS = [0.1, 0.55, 0.85];            // chips · form plays · done(+new word) · animate out
   var C2_LIFT  = 0.30;                         // card 2: trigger lifts out, slot makes room, URL below
   var C2_RISE  = 0.58;                         // card 2: URL rises into the slot
+  var C2_OUT   = 0.82;                         // card 2: the whole row — side text and URL — fades out
+                                               // where it stands, then the card restarts from empty
+  var C2_FADE_MS = 420;                        // that fade
   var ACTIVE_CLASS = 'is-active';              // marks the active tone button (card 3)
-  var WAVE_STAGGER = 45;                       // card 3: ms delay per word
+  var WAVE_STAGGER = 45;                       // card 3: ms delay per word, incoming message only
+  var TONE_OUT_MS  = 150;                      // card 3: the old message clears in one go, no wave —
+                                               // staggering it too is what made the two texts overlap
+  var TONE_IN_LAG  = 60;                       // card 3: gap after it's gone before the new one starts
+  var TONE_IN_MS   = 320;                      // card 3: per-word fade of the incoming message
   var EASE     = 'cubic-bezier(.4,0,.2,1)';
   var BACK     = 'cubic-bezier(.34,1.56,.64,1)';
 
@@ -551,6 +558,29 @@
       el.style.transition = 'opacity ' + TRIG_MS + 'ms ease, transform ' + TRIG_MS + 'ms ' + EASE;
     });
 
+    // the whole row fades at the end — side text included, not just the pill. NOT root: the desktop
+    // stack owns root's opacity for the card crossfade, and the two would fight.
+    var fadeEl = lineEl || slot;
+    if (fadeEl) { fadeEl.style.transition = 'opacity ' + C2_FADE_MS + 'ms ease'; }
+
+    // coming back from the fade, the pills have to be put back WITHOUT animating — otherwise the
+    // trigger visibly slides down and the slot visibly narrows while the row is fading back in
+    var trigTrans = trig ? trig.style.transition : '';
+    var expTrans  = exp  ? exp.style.transition  : '';
+    var slotTrans = slot ? slot.style.transition : '';
+    function resetInstant() {
+      if (trig) { trig.style.transition = 'none'; }
+      if (exp)  { exp.style.transition  = 'none'; }
+      if (slot) { slot.style.transition = 'none'; }
+      if (trig) { trig.style.transform = 'translate(-50%,-50%) translateY(0px)'; trig.style.opacity = '1'; }
+      if (exp)  { exp.style.transform = 'translate(-50%,-50%) translateY(' + SNIP_RISE + 'px)'; exp.style.opacity = '0'; }
+      if (slot && trigW) { slot.style.width = trigW + 'px'; }
+      if (slot) { void slot.offsetWidth; }                       // flush, then hand the transitions back
+      if (trig) { trig.style.transition = trigTrans; }
+      if (exp)  { exp.style.transition  = expTrans; }
+      if (slot) { slot.style.transition = slotTrans; }
+    }
+
     // each pill's natural width — the slot sizes to the active one, which drives the reflow
     var trigW = 0, expW = 0, slotH = 0, lastBeat = -1;
     function measure() {
@@ -574,16 +604,24 @@
     }
     measure();
 
-    // beat 0 = rest · 1 = trigger out, room made, URL waiting below · 2 = URL risen into the slot
+    // beat 0 = rest · 1 = trigger out, room made, URL waiting below · 2 = URL risen into the slot ·
+    // 3 = everything fades out where it stands, so the loop restarts from empty rather than cutting
     function render(tp) {
-      var beat = beatOf(tp, [C2_LIFT, C2_RISE]);
+      var beat = beatOf(tp, [C2_LIFT, C2_RISE, C2_OUT]);
+      var wasBeat = lastBeat;
       lastBeat = beat;
+      // beat 3 fades the ROW — the pills hold their pose underneath it, so nothing moves while it goes
+      if (fadeEl) { fadeEl.style.opacity = (beat === 3) ? '0' : '1'; }
+      if (beat === 0 && wasBeat === 3) { resetInstant(); }        // restart: pose back, invisibly
+      if (beat === 3) { return; }                                 // leave everything as the fade found it
+
+      var urlIn = (beat === 2);
       if (trig) {
         trig.style.transform = 'translate(-50%,-50%) translateY(' + (beat === 0 ? 0 : -SNIP_RISE) + 'px)';
-        trig.style.opacity = (beat >= 2) ? '0' : '1';
+        trig.style.opacity = urlIn ? '0' : '1';
       }
       if (exp) {
-        exp.style.transform = 'translate(-50%,-50%) translateY(' + (beat >= 2 ? 0 : SNIP_RISE) + 'px)';
+        exp.style.transform = 'translate(-50%,-50%) translateY(' + (urlIn ? 0 : SNIP_RISE) + 'px)';
         exp.style.opacity = (beat >= 1) ? '1' : '0';
       }
       // the slot grows at beat 1, BEFORE the URL rises, so the URL lands straight instead of from the right
@@ -651,13 +689,25 @@
       var active = Math.max(0, Math.min(N - 1, Math.floor(Math.max(0, Math.min(1, tp)) * N)));
 
       if (authored) {
+        // the messages share one grid cell, so an outgoing word and an incoming word occupy the same
+        // spot. staggering BOTH left the two texts legible on top of each other — the old one clears
+        // fast and all at once, and only then does the new one wave in.
+        var lag = (lastActive === -1) ? 0 : (TONE_OUT_MS + TONE_IN_LAG);
         for (var t = 0; t < N; t++) {
           var spans = msgSpans[t];
           if (!spans) { continue; }
           var on = (t === active);
           for (var w = 0; w < spans.length; w++) {
-            spans[w].style.opacity = on ? '1' : '0';
-            spans[w].style.transform = on ? 'translateY(0px)' : 'translateY(8px)';
+            var sp = spans[w];
+            if (on) {
+              sp.style.transitionDuration = TONE_IN_MS + 'ms, ' + TONE_IN_MS + 'ms';
+              sp.style.transitionDelay = (lag + w * WAVE_STAGGER) + 'ms';
+            } else {
+              sp.style.transitionDuration = TONE_OUT_MS + 'ms, ' + TONE_OUT_MS + 'ms';
+              sp.style.transitionDelay = '0ms';                  // no wave on the way out
+            }
+            sp.style.opacity = on ? '1' : '0';
+            sp.style.transform = on ? 'translateY(0px)' : 'translateY(8px)';
           }
         }
       } else if (single) {
