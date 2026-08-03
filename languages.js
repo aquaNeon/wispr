@@ -621,6 +621,12 @@
                            // to give each card a longer reign at centre
   var DRIFT_FRAC = 0.2;    // sideways drift at centre, as a fraction of column width. 0 = off, negative
                            // flips the side
+  // entry sweep: a block starts this far LEFT of its slot and swings in, reaching the DRIFT_FRAC spot at
+  // centre — so the landing position is unchanged, only the travel into it grows.
+  var ENTER_FRAC  = 0.35;  // how far left, as a fraction of column width. 0 = off (old symmetric drift)
+  var ENTER_CURVE = 2.2;   // >1 holds the offset low in the viewport, so the path swings in late
+  var ENTER_FIRST = 0;     // multiplier for block 0 — it's already near centre when the section arrives,
+                           // so a full sweep has nowhere to travel from and just pops
   var DIM_ALPHA  = 0.35;   // opacity of the non-active text blocks
   var POP_SCALE  = 1;      // scale-pop of the card wrap on swap (1 = off; try 1.04)
   var LANG_AUTOPLAY = true;   // cards play on a timer when active instead of scrubbing to scroll
@@ -699,7 +705,9 @@
     function update() {
       if (!blocks.length) { if (renderers[0]) { renderers[0](0); } return; }
       var vh = window.innerHeight, cY = vh / 2;
-      var offset = DRIFT_FRAC * (textWrap.clientWidth || 0);
+      var colW   = textWrap.clientWidth || 0;
+      var offset = DRIFT_FRAC * colW;
+      var enter  = ENTER_FRAC * colW;
       var lerp = (SCRUB_LERP >= 1) ? 1 : (1 - Math.pow(1 - SCRUB_LERP, gsap.ticker.deltaRatio()));
 
       var closest = -1, closestDist = Infinity;
@@ -708,7 +716,12 @@
         var prog = clamp01((vh - r.top) / (vh + r.height));            // 0 entering the bottom, 1 exiting the top
         var tpT  = r.height ? clamp01((cY - r.top) / r.height) : 0;    // 0 at the block's top, 1 at its bottom
 
-        driftCur[i] += (offset * easeTri(prog) - driftCur[i]) * lerp;
+        // prog 0 = entering the bottom, 0.5 = centred, 1 = gone off the top. the entry term is spent by
+        // 0.5, so from centre onward the motion is exactly the old drift.
+        var inT = clamp01(prog / 0.5);
+        var enterI = enter * (i === 0 ? ENTER_FIRST : 1);
+        var xT  = offset * easeTri(prog) - enterI * Math.pow(1 - inT, ENTER_CURVE);
+        driftCur[i] += (xT - driftCur[i]) * lerp;
         tpCur[i]    += (tpT - tpCur[i]) * lerp;
         if (Math.abs(tpT - tpCur[i]) < 0.0002) { tpCur[i] = tpT; }
 
