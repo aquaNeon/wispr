@@ -77,6 +77,16 @@
     var RIPPLE_LETTER_MS = 500; // per-letter up-and-back duration
     var RIPPLE_EASE = 'linear'; // matches their ease: 'none'
 
+    // the deck is sized to the LONGEST task it will ever show, not to whichever one happens to
+    // be on screen: the cards are absolutely positioned at left:0/right:0, so they all share the
+    // wrap's width, and a wrap sized by the grid breaks the long tasks onto a second line. every
+    // task is measured through the same per-letter rendering the real card uses, and the widest
+    // wins — so the deck never reflows between cards and no task ever wraps.
+    var CARD_FIT_TEXT = true;
+    var CARD_FIT_PAD = 0; // px of slack on top of the widest measured task
+    var CARD_MAX_W = 0; // px hard cap. 0 = only the viewport gutter below applies
+    var CARD_FIT_GUTTER = 24; // px kept clear each side, so a long task can't cause page scroll
+
     var CARD_RADIUS = ''; // action card corner radius ('' = leave Webflow's value)
     var CARD_BORDER = '2px solid var(--border-color--border-secondary)'; // '' = leave Webflow's border
 
@@ -318,6 +328,73 @@
       if (CARD_RADIUS) {
         node.style.setProperty('border-radius', CARD_RADIUS, 'important');
       }
+    }
+
+    // widen the deck to the longest task in the script.
+    // measured inside cardEl rather than in a detached probe: the card's font-size, weight and
+    // letter-spacing are all inherited, and a clone parked on document.body would be measured
+    // against the body's typography instead of the card's.
+    function fitCardWidth() {
+      if (!CARD_FIT_TEXT || !cardEl || !innerTemplate) {
+        return;
+      }
+      var probe = innerTemplate.cloneNode(true);
+      probe.style.cssText += ';position:absolute;left:-9999px;top:0;right:auto;width:auto;' + 'visibility:hidden;pointer-events:none;white-space:nowrap;';
+      cardEl.appendChild(probe);
+
+      var sentEl = probe.querySelector('[' + ATTR + '="' + A_CARD_SENT + '"]');
+      var nameWrap = probe.querySelector('[' + ATTR + '="' + A_CARD_NAME + '"]');
+      var nameText = nameWrap ? nameWrap.querySelector('*') || nameWrap : null;
+      if (sentEl) {
+        sentEl.style.whiteSpace = 'nowrap';
+      }
+      if (nameWrap) {
+        nameWrap.style.whiteSpace = 'nowrap';
+        nameWrap.style.flexShrink = '0';
+      }
+
+      // every task that can reach the card, plus the one it shows before the first task fires
+      var jobs = [];
+      var i;
+      for (i = 0; i < CONTENT.length; i++) {
+        if (CONTENT[i].task) {
+          jobs.push({ name: CONTENT[i].owner || CONTENT[i].name, task: CONTENT[i].task });
+        }
+      }
+      jobs.push({ name: CARD_DEFAULT.name, task: CARD_DEFAULT.task });
+
+      var max = 0,
+        widest = '';
+      for (i = 0; i < jobs.length; i++) {
+        if (nameText) {
+          nameText.textContent = jobs[i].name;
+        }
+        // the same per-letter build the live card uses: inline-block letters measure a little
+        // wider than a plain text node, and measuring the plain string would undershoot
+        if (sentEl) {
+          setTextLetters(sentEl, jobs[i].task);
+        }
+        if (probe.offsetWidth > max) {
+          max = probe.offsetWidth;
+          widest = jobs[i].name + ' / ' + jobs[i].task;
+        }
+      }
+      cardEl.removeChild(probe);
+      if (!max) {
+        return;
+      }
+
+      var target = max + CARD_FIT_PAD;
+      if (CARD_MAX_W) {
+        target = Math.min(target, CARD_MAX_W);
+      }
+      var room = (document.documentElement.clientWidth || 0) - CARD_FIT_GUTTER * 2;
+      if (room > 0 && target > room) {
+        target = room; // narrow screen: wrapping is better than pushing the page sideways
+      }
+      // min-width, not width: the deck is a grid item, and a set width would be overridden by
+      // the track while a min-width makes the track itself grow
+      cardEl.style.minWidth = target + 'px';
     }
 
     // push older cards up-and-back; drop the ones past the deck limit
@@ -780,16 +857,17 @@
       slot.style.position = 'relative';
 
       var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('viewBox', '0 0 24 24');
+      // the big star alone. its own box is x 0..18, y 2..20, so the viewBox is set to exactly
+      // that rather than the old 24x24 - the 24-box had room reserved on the right for the small
+      // companion star, and keeping it would leave the remaining star sitting off-centre in the
+      // slot with a gap where the other one used to be.
+      svg.setAttribute('viewBox', '0 2 18 18');
       svg.setAttribute('fill', '#1a1a1a');
       svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
 
       var big = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       big.setAttribute('d', 'M9 2 C9.7 7 13 10.3 18 11 C13 11.7 9.7 15 9 20 C8.3 15 5 11.7 0 11 C5 10.3 8.3 7 9 2 Z');
-      var small = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      small.setAttribute('d', 'M18.5 12.5 C18.9 15 20.2 16.3 22.7 16.7 C20.2 17.1 18.9 18.4 18.5 20.9 C18.1 18.4 16.8 17.1 14.3 16.7 C16.8 16.3 18.1 15 18.5 12.5 Z');
       svg.appendChild(big);
-      svg.appendChild(small);
       slot.appendChild(svg);
 
       if (animateIn && typeof svg.animate === 'function') {
@@ -882,10 +960,10 @@
 
         // the wrap becomes the deck: bottom-anchored, cards absolutely stacked
         cardEl.style.position = 'relative';
-        cardInnerH = origInner.offsetHeight;
-        if (cardInnerH > 0) {
-          cardEl.style.height = cardInnerH + 'px';
-        }
+        // width before height: the height depends on how many lines the task takes, and that
+        // depends on the width. measured the other way round the deck reserves room for a
+        // wrapped line that the widened card no longer needs.
+        fitCardWidth();
         styleCardNode(origInner);
         origInner.style.zIndex = '50';
         origInner._tilt = (Math.random() * 2 - 1) * CARD_TILT_MAX;
@@ -912,6 +990,14 @@
             dNt.style.color = dCol;
           }
           dNw.style.whiteSpace = 'nowrap';
+        }
+
+        // height last: it is only true once the card carries its real text at its real width.
+        // this used to be read before CARD_DEFAULT was written, so the deck was sized to
+        // whatever placeholder the Designer happened to hold.
+        cardInnerH = origInner.offsetHeight;
+        if (cardInnerH > 0) {
+          cardEl.style.height = cardInnerH + 'px';
         }
 
         cardStack.push(origInner);
@@ -1002,10 +1088,50 @@
       startSentence();
     }
 
+    function refitCard() {
+      if (!cardEl) {
+        return;
+      }
+      cardEl.style.minWidth = ''; // drop the old fit before measuring, or it floors the new one
+      fitCardWidth();
+      var front = cardStack[0];
+      if (!front) {
+        return;
+      }
+      cardInnerH = front.offsetHeight;
+      if (cardInnerH > 0) {
+        cardEl.style.height = cardInnerH + 'px';
+        if (rowHeightPx > 0) {
+          cardEl.style.transform = 'translateY(' + (cardInnerH - rowHeightPx) / 2 + 'px)';
+        }
+      }
+    }
+
+    // the card is sized by measuring text, so it is only correct for the font that was actually
+    // loaded when it was measured. webfonts land after this script runs, and letter-spacing is
+    // applied on top of whatever advance widths the font has - so a deck fitted against the
+    // fallback face is the wrong width for the real one, and the longest task wraps after all.
+    if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+      document.fonts.ready.then(function () {
+        refitCard();
+      });
+    }
+
+    var lastFitW = 0;
+    var fitT = null;
     window.addEventListener('resize', function () {
       if (scroller && container) {
         scroller.style.alignItems = window.getComputedStyle(container).alignItems || 'stretch';
       }
+      // WIDTH only: a phone fires resize continuously as the URL bar collapses, and that is a
+      // height change. re-fitting on it would re-measure the whole script every scroll frame.
+      var w = document.documentElement.clientWidth;
+      if (w === lastFitW) {
+        return;
+      }
+      lastFitW = w;
+      clearTimeout(fitT);
+      fitT = setTimeout(refitCard, 200);
     });
 
     if (document.readyState === 'loading') {

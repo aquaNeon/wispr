@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>notetaker.js test</title>
+<style>
+  /* Stand-in for the Webflow styles: only enough to exercise the contract in the header of
+     notetaker.js — [data-transcript=wrap|track|name|sentence|card|card-name|card-sentence],
+     .hero_select_inner, .hero_record_name, [data-anim-check]. */
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, sans-serif; background: #0d0d0d; color: #f4f4e8; padding: 40px; }
+
+  .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: end;
+           max-width: 1100px; margin: 0 auto; }
+
+  [data-transcript="wrap"] { overflow: hidden; }
+  [data-transcript="track"] { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  [data-transcript="name"] { border-radius: 999px; padding: 3px 10px; font-size: 12px;
+                             display: inline-flex; }
+  .hero_record_name { color: #1a1a1a; }
+  [data-transcript="sentence"] { font-size: 15px; }
+
+  /* the deck wrap. deliberately given NO width of its own — in Webflow it is a grid item, so
+     its width comes from the track, which is what makes long tasks wrap. */
+  [data-transcript="card"] { }
+  .hero_select_inner { display: flex; align-items: center; gap: 10px; background: #FFFDF9;
+    color: #1a1a1a; border-radius: 14px; padding: 12px 14px; }
+  [data-anim-check] { width: 18px; height: 18px; flex: 0 0 auto; border: 1px solid #bbb;
+    border-radius: 4px; }
+  [data-transcript="card-name"] { border-radius: 999px; padding: 3px 10px; font-size: 12px;
+    display: inline-flex; }
+  [data-transcript="card-sentence"] { font-size: 15px; color: #1a1a1a; }
+
+  #probe { position: fixed; left: 10px; bottom: 10px; font: 12px monospace; opacity: .75;
+    background: #000a; padding: 6px 8px; border-radius: 6px; white-space: pre; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div data-transcript="wrap">
+    <div data-transcript="track" data-wf--drop-hero-stranscript--variant="pulse">
+      <div data-transcript="name" style="background:#7F1C34"><span class="hero_record_name" style="color:#FFFDF9">Jay</span></div>
+      <div data-transcript="sentence">Screen's up. Everyone see the roadmap?</div>
+    </div>
+    <div data-transcript="track" data-wf--drop-hero-stranscript--variant="signal">
+      <div data-transcript="name" style="background:#FFBCF2"><span class="hero_record_name">Siobhan</span></div>
+      <div data-transcript="sentence">Yep. Lelia, send the brief to Ngozi?</div>
+    </div>
+    <div data-transcript="track" data-wf--drop-hero-stranscript--variant="dawn">
+      <div data-transcript="name" style="background:#FFA946"><span class="hero_record_name">Lelia</span></div>
+      <div data-transcript="sentence">For sure, this afternoon.</div>
+    </div>
+    <div data-transcript="track" data-wf--drop-hero-stranscript--variant="fathom">
+      <div data-transcript="name" style="background:#034F46"><span class="hero_record_name" style="color:#FFFDF9">Deshawn</span></div>
+      <div data-transcript="sentence">Did the Okta SSO ship?</div>
+    </div>
+  </div>
+
+  <div data-transcript="card">
+    <div class="hero_select_inner">
+      <div data-anim-check></div>
+      <div data-transcript="card-name"><span>Jay</span></div>
+      <div data-transcript="card-sentence">Watch the SLA</div>
+    </div>
+  </div>
+</div>
+
+<div id="probe">booting…</div>
+
+<script src="./notetaker.js"></script>
+<script>
+  // probe: the two things this round changed — sparkle path count, and whether any task wraps
+  setTimeout(function () {
+    var p = document.getElementById('probe');
+    var deck = document.querySelector('[data-transcript="card"]');
+    var svg = document.querySelector('[data-anim-check] svg');
+    var sent = document.querySelector('[data-transcript="card-sentence"]');
+    var lineH = sent ? parseFloat(getComputedStyle(sent).lineHeight) || 20 : 20;
+    p.textContent =
+      'sparkle paths: ' + (svg ? svg.querySelectorAll('path').length : 'no svg') +
+      '\nviewBox: ' + (svg ? svg.getAttribute('viewBox') : '-') +
+      '\ndeck min-width: ' + deck.style.minWidth +
+      '\ncard-sentence h: ' + (sent ? Math.round(sent.offsetHeight) : '-') + ' (1 line = ' + Math.round(lineH) + ')';
+  }, 600);
+</script>
+</body>
+</html>
