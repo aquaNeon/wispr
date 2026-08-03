@@ -265,6 +265,20 @@
   var MQ_TOP       = 0.48;   // fraction of card height both marquees are pinned to
   var MQ_NUDGE_KB   = 0;     // px fine-tune, kb marquee only (+ down / − up)
   var MQ_NUDGE_CARD = -35;   // px fine-tune, flow marquee only (+ down / − up)
+  // the 220 wave is CENTRED in its card the whole way through. false = the old behaviour, where it
+  // tracked the card's left edge during the reveal and only eased to centred over the shrink.
+  var MQ_CARD_CENTER = true;
+  // width of the 220 wave as a fraction of the STAGE (not the card). the svg scales by its width
+  // ratio, so this shrinks the curve and its text together. anything below 1 also shrinks the svg's
+  // height, which clips the text against the card during the shrink — leave at 1 unless that's fixed.
+  var MQ_CARD_W    = 1;
+  // how much of the viewBox width the 220 CURVE spans, centred — reshapes the path, not the svg.
+  // x only, so the wave keeps its height and gets a touch steeper. 1 = the authored full-width curve.
+  var MQ_PATH_W    = 0.85;
+  // ...then run the text on STRAIGHT tails out from both ends of that curve, so the wave keeps its
+  // shape but the line carries on level to the edges instead of ending with the curve.
+  var MQ_PATH_TAILS = true;
+  var MQ_PATH_OVER  = 0;     // viewBox units the tails run PAST each edge (0 = stop at the edge)
   var CARD_DIP     = 70;     // px the card sags below centre mid-ride (0 at start and landing)
   var RADIUS_FULL  = 40;     // px card radius before/at full bleed (matches the Webflow class)
   var RADIUS_END   = 16;     // px card radius after the shrink
@@ -273,7 +287,9 @@
   // smoothly to 0 width (no thin sliver of spilling text), and the flow card's "220 wpm" only
   // shows once the card is at least this wide (so the label never spills a too-narrow card).
   var CARD_MIN_W   = 0.20;
-  var SPLIT_START  = 0.36;   // kb (left) column width at reveal start: land on the comparison, not kb full-width. 1.0 = old
+  // kb (left) column width at reveal start, as a fraction of the stage. lower = the 45 card is
+  // already further into its collapse when the section scrolls in. 1.0 = kb full-width (original)
+  var SPLIT_START  = 0.28;
   // final close-up: near the end of the grow, a TIMED (not scrubbed) tween pulls the last of the
   // split to 0 — kb slides out + the flow card fills — so it always completes and you can never
   // stop-scroll on a half-open sliver. hysteresis (AT vs OFF) stops chatter at the seam.
@@ -555,6 +571,42 @@
       // each marquee starts fully off-screen right, streams in leftward with scroll, then loops.
       // the authored x attr (e.g. -4000) sets the LOOP PERIOD — how far the text travels
       // before repeating; match it roughly to the length of one repetition of the string.
+      // narrow the WAVE ITSELF, not its box: scale the curve's x coords about the viewBox centre so
+      // it spans MQ_PATH_W of the width, centred. the svg keeps its width/height/aspect, so nothing
+      // shifts or clips. text that runs past the (now shorter) path simply isn't drawn — which is
+      // what keeps it off the green instead of overhanging the card.
+      // every command here takes coordinate PAIRS (M/L/C/S/Q/T), so numbers alternate x,y. A/H/V
+      // would break that assumption, so those bail out.
+      function narrowPath(pathEl, vbw, k) {
+        if (!pathEl || !k || k >= 1) { return; }
+        var d0 = pathEl._d0 || (pathEl._d0 = pathEl.getAttribute('d') || '');
+        if (!d0) { return; }
+        if (/[aAhHvV]/.test(d0)) {
+          console.warn('[flow-stack] MQ_PATH_W: path uses A/H/V commands — left alone', pathEl);
+          return;
+        }
+        var cx = vbw / 2, n = -1;
+        var d1 = d0.replace(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi, function (num) {
+          n++;
+          if (n % 2) { return num; }                                  // odd index = y, untouched
+          return String(Math.round((cx + (parseFloat(num) - cx) * k) * 1000) / 1000);
+        });
+        // straight tails: the curve leaves both ends horizontally (its end control points share the
+        // endpoint's y), so a plain L out to the edge joins seamlessly and the text just keeps
+        // running level instead of stopping where the wave does.
+        if (MQ_PATH_TAILS) {
+          var head = /^\s*M\s*(-?[\d.]+)[\s,]+(-?[\d.]+)/.exec(d1);
+          var nums = d1.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
+          if (head && nums && nums.length >= 2) {
+            var y0 = head[2], yN = nums[nums.length - 1];
+            d1 = 'M' + (-MQ_PATH_OVER) + ' ' + y0 + ' L' + head[1] + ' ' + y0 +
+                 d1.slice(head[0].length) +
+                 ' L' + (vbw + MQ_PATH_OVER) + ' ' + yN;
+          }
+        }
+        pathEl.setAttribute('d', d1);
+        teardown.push(function () { pathEl.setAttribute('d', d0); });
+      }
       var marquees = [];
       Array.prototype.forEach.call(section.querySelectorAll('[' + FLOW + '="marquee"]'), function (wrapEl) {
         var textEl = wrapEl.querySelector('text');
@@ -566,6 +618,7 @@
         // kb marquee starts FILLED from the div's left edge (text spans the whole card at p=0); the
         // flow wave still streams in from off-screen right.
         var isKb   = !!(kb && kb.contains(wrapEl));
+        if (!isKb) { narrowPath(wrapEl.querySelector('path'), vbw, MQ_PATH_W); }   // the 220 wave only
         var startX = (isKb || MQ_FLOW_FILL) ? 0 : (vbw + MQ_PAD);
         marquees.push({
           text: textEl, svg: svgEl, period: period, start: startX, isKb: isKb,
@@ -915,6 +968,7 @@
       }
 
       var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
+      var cardMqW = 0;   // the 220 wave's own width (see MQ_CARD_W) — the kb marquee stays stage-wide
       var pillRecY = -180;   // px the pill lifts during recording — recomputed from stage height in measureStage
       function measureStage() {
         // natural sizes while measuring, so a mid-morph refresh can't feed back
@@ -932,16 +986,18 @@
         padT = parseFloat(cs.paddingTop)  || 0;
         stageW = (stage.clientWidth  - padL - (parseFloat(cs.paddingRight)  || 0)) || 1;
         stageH = (stage.clientHeight - padT - (parseFloat(cs.paddingBottom) || 0)) || 1;
+        cardMqW = stageW * MQ_CARD_W;
         if (kbMq)   { kbMq.style.width   = stageW + 'px'; }
-        if (cardMq) { cardMq.style.width = stageW + 'px'; }
+        if (cardMq) { cardMq.style.width = cardMqW + 'px'; }
         // size each svg to its viewBox aspect at the stage width: scale is then exactly the
         // width ratio (no meet/slice bands), so text always spans the full width. also
         // re-measure text lengths (webfonts change them) for the loop clamp below.
         for (var mi = 0; mi < marquees.length; mi++) {
           var mm = marquees[mi];
           if (mm.svg) {
-            mm.svg.style.width    = stageW + 'px';
-            mm.svg.style.height   = (stageW * mm.vbh / mm.vbw) + 'px';
+            var mw = mm.isKb ? stageW : cardMqW;
+            mm.svg.style.width    = mw + 'px';
+            mm.svg.style.height   = (mw * mm.vbh / mm.vbw) + 'px';
             mm.svg.style.overflow = 'visible';   // wave crests may ride above the viewBox
           }
           try { mm.len = mm.text.getComputedTextLength ? mm.text.getComputedTextLength() : 0; } catch (e) { mm.len = 0; }
@@ -1057,8 +1113,8 @@
         // lands (pBh→pC) — so the wave's bump ends up over the pill. ca: 0 = left-aligned, 1 = centred.
         // (at full bleed cardW == stageW, so both give left = 0 — the handoff is seamless.)
         if (cardMq) {
-          var ca = phaseT(p, pBh, pC);
-          cardMq.style.left = (ca * (cardW - stageW) / 2) + 'px';
+          var ca = MQ_CARD_CENTER ? 1 : phaseT(p, pBh, pC);
+          cardMq.style.left = (ca * (cardW - cardMqW) / 2) + 'px';   // centre the wave's OWN width
         }
         card.style.left       = left + 'px';
         card.style.top        = (padT + (stageH - cardH) / 2) + 'px';
