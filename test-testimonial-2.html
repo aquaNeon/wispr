@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>testimonial-2 deck — pinned variant</title>
+<style>
+  /* Stub of the Webflow styles that matter: card widths. No sticky here — the script pins. */
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d0d0f; color: #fff; font: 16px/1.4 -apple-system, Segoe UI, sans-serif; }
+  .lead, .after { height: 90vh; display: flex; align-items: center; justify-content: center; opacity: .4; }
+  h2 { text-align: center; margin: 0; padding: 6rem 1rem 2rem; font-size: 3rem; }
+
+  .testi_card { border-radius: 24px; padding: 32px; background: #1b1b20; display: block; }
+  .testi_card.landscape { width: 44rem; height: 22rem; background: #123a2b; }
+  .testi_card.square    { width: 26rem; height: 26rem; background: #1e2233; }
+  .testi_quote-v2 { font-size: 1.25rem; margin: 0 0 16px; }
+  .testi_card-author { opacity: .7; font-size: .9rem; }
+
+  #hud { position: fixed; z-index: 999; left: 12px; bottom: 12px; background: #000c; padding: 10px 12px;
+         font: 12px/1.5 ui-monospace, monospace; border-radius: 8px; white-space: pre; }
+  #hud button { font: inherit; margin: 4px 4px 0 0; padding: 3px 8px; background: #222; color: #fff;
+                border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+  #hud button.on { background: #2f7; color: #000; }
+</style>
+</head>
+<body>
+
+<div class="lead">scroll ↓</div>
+
+<section data-center-mobile="40" data-slider="wrap" data-corners="80" class="section_new-testi">
+  <h2>From the first people to use it.</h2>
+  <div data-slider="track" class="testi_content-wrap">
+    <div data-slider="card" class="testi_card landscape">
+      <p class="testi_quote-v2">“People go from quite skeptical to instantly obsessed with Wispr.”</p>
+      <div class="testi_card-author">Reid Hoffman</div>
+    </div>
+    <div data-slider="card" class="testi_card square">
+      <p class="testi_quote-v2">“Replaces Apple's voice transcription with a model that's scary good.”</p>
+      <div class="testi_card-author">Wall Street Journal</div>
+    </div>
+    <div data-slider="card" class="testi_card square">
+      <p class="testi_quote-v2">“It's far superior to other voice dictation.”</p>
+      <div class="testi_card-author">Tim Ferriss</div>
+    </div>
+    <div data-slider="card" class="testi_card landscape">
+      <p class="testi_quote-v2">“Flow quickly became an essential part of how I work.”</p>
+      <div class="testi_card-author">Steven Bartlett</div>
+    </div>
+    <div data-slider="card" class="testi_card square">
+      <p class="testi_quote-v2">“...changed the way I write emails, messages, and even this article.”</p>
+      <div class="testi_card-author">Android Police</div>
+    </div>
+    <div data-slider="card" class="testi_card landscape">
+      <p class="testi_quote-v2">“I'm at least 2-3x faster with Wispr Flow.”</p>
+      <div class="testi_card-author">Rahul Vohra</div>
+    </div>
+  </div>
+</section>
+
+<div class="after">after the deck</div>
+
+<div id="hud"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script src="./testimonial-2.js?v=1"></script>
+<script>
+  var wrap = document.querySelector('[data-slider="wrap"]');
+  var hud  = document.getElementById('hud');
+  var out  = document.createElement('div');
+  var bar  = document.createElement('div');
+  hud.appendChild(out); hud.appendChild(bar);
+
+  function row(label, values, attrName) {
+    var line = document.createElement('div');
+    line.textContent = label + ' ';
+    values.forEach(function (v) {
+      var b = document.createElement('button');
+      b.textContent = v;
+      b.onclick = function () {
+        wrap.setAttribute(attrName, v);
+        wrap.__testiRebuild();
+        Array.prototype.forEach.call(line.querySelectorAll('button'), function (c) {
+          c.className = c.textContent === String(v) ? 'on' : '';
+        });
+      };
+      line.appendChild(b);
+    });
+    bar.appendChild(line);
+  }
+  row('spacing ', ['pitch', 'gap', 'scale', 'off'], 'data-spacing');
+  row('deck zoom', [0, 0.55, 0.8, 1], 'data-deck-grow');
+
+  function tick() {
+    var info = wrap.__testiInfo || {};
+    var sc = info.scale || 1;
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('[data-slider="card"]'))
+      .map(function (c) { return { c: c._x || 0, w: (c.offsetWidth || 0) * sc * (c._f || 1) }; })
+      .sort(function (a, b) { return a.c - b.c; });
+    var gaps = [];
+    for (var i = 1; i < boxes.length; i++) {
+      gaps.push(Math.round((boxes[i].c - boxes[i].w / 2) - (boxes[i - 1].c + boxes[i - 1].w / 2)));
+    }
+    out.textContent = 'mode ' + (info.mode || '?') + '   gap ' + (info.gapPx || '?') + 'px' +
+                      '   medW ' + (info.medW || '?') + '   scale ' + sc.toFixed(2) +
+                      '   pin dist ' + (info.dist || '?') +
+                      '\nvw ' + window.innerWidth + '  drawn widths ' + boxes.map(function (b) { return Math.round(b.w); }).join(',') +
+                      '\ngaps ' + gaps.join('  ') +
+                      '\nsection h ' + Math.round(wrap.offsetHeight) + '  doc h ' + document.documentElement.scrollHeight;
+    requestAnimationFrame(tick);
+  }
+  tick();
+  window.addEventListener('error', function (e) { out.textContent = 'ERROR: ' + e.message; });
+</script>
+</body>
+</html>
