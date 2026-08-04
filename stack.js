@@ -79,6 +79,16 @@
   // now: one scroll brings the whole scatter in, the next gathers it into the card. order is
   // still honoured inside the step - POP_STAGGER is what spaces them, so it has to be large
   // enough to read as a sequence rather than a single burst.
+  // fire the first batch BEFORE the section pins, while it is still travelling up the
+  // viewport - the rows pop in and then ride up with the page, filling what is otherwise
+  // dead scroll. only the pop moves: the gather has to stay inside the pin because it holds
+  // the scroll while it plays. with POP_BATCH = 0 there is one batch, so this covers every
+  // row; with a positive POP_BATCH it covers the first batch and the pin drives the rest.
+  var PRE_POP       = true;
+  // ScrollTrigger start for the pre-roll. lower = later: 'top 90%' fires as the section's top
+  // crosses 90% down the viewport (barely on screen), 'top 10%' waits until it is nearly at
+  // the top, leaving only a little space before the pin takes over.
+  var PRE_POP_START = 'top 10%';
   var POP_BATCH     = 0;
   var POP_STAGGER   = 0.1;
   var POP_DUR       = 0.34;
@@ -192,7 +202,15 @@
   var GREEN_HOLD_VH  = 0.25;
   var TAB_STEP_VH    = 1.0;    // scroll length per tab while sticky
   var END_HOLD_VH    = 0.35;   // short hold on the last tab before release
-  var BG_SMOOTH      = 0.12;   // ease of the bg-line paint toward scroll
+  var BG_SMOOTH      = 0.12;   // ease of the bg-line paint toward scroll (scrub mode only)
+  // the chapter bg lines can either follow the scroll (scrubbed, the original) or draw
+  // themselves once per tab: each tab's line paints its full length when that tab becomes
+  // active, so they arrive one by one as you move through the chapters rather than being
+  // wound in and out by the scroll position.
+  var BG_DRAW_ON_TAB = true;
+  var BG_DRAW_MS     = 900;    // ms for a line to draw its full length
+  var BG_DRAW_OUT_MS = 400;    // ms for the outgoing tab's line to retract
+  var BG_DRAW_EASE   = 'power2.inOut';
 
   var GREEN_RADIUS   = '80px'; // max corner radius; auto-tags the green panel for corners.js. '' = off
 
@@ -202,6 +220,14 @@
   var LIGHT_Z        = 990;    // above section content, below the nav (999)
   var LIGHT_TEXT     = '#1A1A1A';
   var LIGHT_RING     = 2;      // px of outer ring that hides the dark card edge against the cream
+  // colour of that ring AND of the border the plate copies off the card. kept separate from
+  // LIGHT_CARD_BG, which is the plate's FILL: the fill has to match the chapter panels it sits
+  // behind, while the edge has to match the page around it, and those are not the same cream.
+  // '' = fall back to LIGHT_CARD_BG, which is what it used to do.
+  var PLATE_EDGE     = '#FFFFEB';
+  // what the edge becomes once the plate has taken the paint over at pHold - by then the
+  // green panel it was masking is gone. 'transparent' = no outline on the chapter cards.
+  var PLATE_EDGE_AFTER = 'transparent';
   var NAME_TAG_SEL   = '.meeting_name-tag';
   var NAME_TAG_LIGHT = {
     dawn: '#7232A6'
@@ -639,9 +665,13 @@
         return smooth(ap / gatherThresh);
       }
 
+      // batches the pre-roll owns. the pinned progress is 0 at the pin, which is BELOW every pop
+      // threshold - so without this the pin would immediately reverse whatever the pre-roll played.
+      var preOwned = (PRE_POP && popTls.length) ? 1 : 0;
+
       function update(p) {
         var i;
-        for (i = 0; i < popTls.length; i++) {
+        for (i = preOwned; i < popTls.length; i++) {
           if (p >= popThresh[i] && !popPlayed[i])      { popTls[i].play();    popPlayed[i] = true;  playDetect(i); }
           else if (p < popThresh[i] && popPlayed[i])   { popTls[i].reverse(); popPlayed[i] = false; resetDetect(i); }
         }
@@ -747,7 +777,24 @@
           p._len = len;
         });
       });
+      // draw ONE tab's line to full length, retract every other. timed, not scrubbed - so the line
+      // always plays its whole animation regardless of how fast the tab was reached.
+      function drawBgTab(n) {
+        var N = bgSvgs.length; if (!N) { return; }
+        for (var i = 0; i < N; i++) {
+          var want = (i === n) ? 0 : 1;                       // 0 = fully drawn, 1 = fully retracted
+          var ms   = (i === n) ? BG_DRAW_MS : BG_DRAW_OUT_MS;
+          Array.prototype.forEach.call(bgSvgs[i].querySelectorAll('path'), function (pth) {
+            gsap.to(pth, {
+              strokeDashoffset: want * pth._len,
+              duration: ms / 1000, ease: BG_DRAW_EASE, overwrite: true
+            });
+          });
+        }
+      }
+
       function drawBg(tp) {
+        if (BG_DRAW_ON_TAB) { return; }   // per-tab draw owns the paths; scrubbing would fight it
         var N = bgSvgs.length; if (!N) { return; }
         for (var i = 0; i < N; i++) {
           var local = (tp - i / N) * N;
@@ -806,6 +853,8 @@
 
       // ---- chapter plate: never-fading surface under the panels + the per-chapter photos ----
       var plate = null, plateRadius = window.getComputedStyle(card).borderRadius;
+      var plateEdge = PLATE_EDGE || LIGHT_CARD_BG;
+      var plateEdgeSides = [];   // only the sides the card actually draws a border on
       var bgList = [], bgByTab = {}, bgShown = -1, bgMeltTween = null, meltGL = null;
 
       if (DEBUG) { window.stackBoxes = function () {
@@ -844,10 +893,11 @@
               cardCS['border' + side + 'Style'] !== 'none') {
             plate.style['border' + side + 'Width'] = cardCS['border' + side + 'Width'];
             plate.style['border' + side + 'Style'] = cardCS['border' + side + 'Style'];
-            plate.style['border' + side + 'Color'] = LIGHT_REVEAL ? LIGHT_CARD_BG : origBorder;
+            plate.style['border' + side + 'Color'] = LIGHT_REVEAL ? plateEdge : origBorder;
+            plateEdgeSides.push(side);
           }
         });
-        if (LIGHT_REVEAL) { plate.style.boxShadow = '0 0 0 ' + LIGHT_RING + 'px ' + LIGHT_CARD_BG; }
+        if (LIGHT_REVEAL) { plate.style.boxShadow = '0 0 0 ' + LIGHT_RING + 'px ' + plateEdge; }
         else if (origShadow && origShadow !== 'none') { plate.style.boxShadow = origShadow; }
         animStage.insertBefore(plate, animStage.firstChild);
         teardown.push(function () { if (plate.parentNode) { plate.parentNode.removeChild(plate); } });
@@ -1036,6 +1086,7 @@
         ch2Leftovers(n);
         setChapterBg(n);
         moveIndicator(n);
+        if (BG_DRAW_ON_TAB) { drawBgTab(n); }
       }
 
       var cardRiseDist = 0, sCenter = 0, sCardStart = 0;
@@ -1114,8 +1165,8 @@
         });
         Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_item_text, [data-stack="card-head"]'), function (el) { el.style.color = LIGHT_TEXT; });
         Array.prototype.forEach.call(cardClone.querySelectorAll('.meeting_check, [data-stack="check"]'), function (el) { el.style.borderColor = LIGHT_TEXT; });
-        cardClone.style.borderColor = LIGHT_CARD_BG;
-        cardClone.style.boxShadow   = '0 0 0 ' + LIGHT_RING + 'px ' + LIGHT_CARD_BG;
+        cardClone.style.borderColor = plateEdge;
+        cardClone.style.boxShadow   = '0 0 0 ' + LIGHT_RING + 'px ' + plateEdge;
         card.appendChild(cardClone);
         teardown.push(function () { if (cardClone.parentNode) { cardClone.parentNode.removeChild(cardClone); } });
         recolorNameTags(cardClone);
@@ -1267,6 +1318,14 @@
 
       // hand the card's paint to the plate at pHold, where the two are coincident. instant on
       // purpose: crossfading two identical opaque layers dips to ~75% and shows the page through.
+      function setPlateEdge(col) {
+        if (!plate) { return; }
+        for (var i = 0; i < plateEdgeSides.length; i++) {
+          plate.style['border' + plateEdgeSides[i] + 'Color'] = col;
+        }
+        if (LIGHT_REVEAL) { plate.style.boxShadow = '0 0 0 ' + LIGHT_RING + 'px ' + col; }
+      }
+
       var cardSwapped = false;
       function cardSwap(p) {
         if (!CARD_OUT) { return; }
@@ -1278,7 +1337,14 @@
         var vis = want ? 'hidden' : '';
         for (var r = 0; r < exitRows.length; r++)      { exitRows[r].style.visibility = vis; }
         for (var c = 0; c < exitCloneRows.length; c++) { exitCloneRows[c].style.visibility = vis; }
-        if (plate)     { gsap.set(plate,     { opacity: want ? 1 : 0 }); }
+        if (plate) {
+          gsap.set(plate, { opacity: want ? 1 : 0 });
+          // the ring and the copied border only ever existed to hide the dark card edge
+          // against the green panel behind it. past pHold that panel has gone and the plate
+          // sits on the page itself, so the edge has nothing left to mask and just reads as
+          // a hairline outline on the chapter cards. reversible: scrubbing back restores it.
+          setPlateEdge(want ? PLATE_EDGE_AFTER : plateEdge);
+        }
         if (cardClone) { gsap.set(cardClone, { opacity: want ? 0 : 1 }); }
         if (want) {
           gsap.set(card, { backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', boxShadow: 'none' });
@@ -1376,6 +1442,26 @@
         }
       }
 
+      // ---- pre-roll: the first batch pops before the pin ----
+      // a separate, UNPINNED trigger. it cannot be folded into the pinned one: that trigger starts
+      // at 'top top', so its progress does not exist until the section is already pinned.
+      if (preOwned) {
+        var preTl = popTls[0];
+        ScrollTrigger.create({
+          trigger: section,
+          start: PRE_POP_START,
+          end: 'top top',
+          onEnter: function () {
+            if (popPlayed[0]) { return; }
+            popPlayed[0] = true; preTl.play(); playDetect(0);
+          },
+          onLeaveBack: function () {
+            if (!popPlayed[0]) { return; }
+            popPlayed[0] = false; preTl.reverse(); resetDetect(0);
+          }
+        });
+      }
+
       var st = ScrollTrigger.create({
         trigger: section, start: 'top top',
         end: function () { return '+=' + (window.innerHeight * totalVH); },
@@ -1445,8 +1531,11 @@
           drawBg(bgCurrentP);
         } catch (e) {  }
       };
-      gsap.ticker.add(bgTicker);
-      teardown.push(function () { gsap.ticker.remove(bgTicker); });
+      // no point running a per-frame painter that returns immediately
+      if (!BG_DRAW_ON_TAB) {
+        gsap.ticker.add(bgTicker);
+        teardown.push(function () { gsap.ticker.remove(bgTicker); });
+      }
 
       tabItems.forEach(function (item, i) {
         guardStyle(item);
