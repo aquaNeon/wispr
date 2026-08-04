@@ -321,7 +321,7 @@
   // per-frame ease toward the scrubbed tp. 0.12 took ~18 frames to cover a jump, which read as
   // lag on top of the windows above - the paste beats are short now and cannot afford it.
   var POLISH_LERP  = 0.32;
-  var SLACK_PAD    = 48;       // px white space below the slack text in ch3 (eases in after the type-in)
+  var SLACK_PAD    = 12;       // px white space below the slack text in ch3 (eases in after the type-in)
   var LOGO_ROT     = 90;       // deg a logo rotates in as it centres (same direction as the swing; flip to reverse)
   var LOGO_FADE    = 1;        // card-units over which a logo fades + rotates in/out around centre
   var LOGO_SCALE   = 0.6;      // scale of a logo when off-centre (pops up to 1 as it centres)
@@ -818,23 +818,26 @@
       (function collectAudio() {
         // data-anim="audio" is the intended hook, but it isn't always present in the published
         // DOM — fall back to the Webflow class so the bars animate either way.
-        var host = section.querySelector(AUDIO_SEL) || document.querySelector(AUDIO_SEL) ||
-                   section.querySelector('.flow_svg-inner') || document.querySelector('.flow_svg-inner');
-        if (!host) { if (DEBUG) { console.warn('[flow-stack] no audio svg found'); } return; }
-        var svg  = (host.tagName && host.tagName.toLowerCase() === 'svg') ? host : host.querySelector('svg');
-        var vbh  = (svg && svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height) || 33;
-        Array.prototype.forEach.call(host.querySelectorAll('rect'), function (r) {
-          var y = parseFloat(r.getAttribute('y')) || 0;
-          var h = parseFloat(r.getAttribute('height')) || parseFloat(window.getComputedStyle(r).height) || 0;
-          audioBars.push({
-            el: r, cy: y + h / 2, vbh: vbh,
-            ceil: AUDIO_MIN + (AUDIO_MAX - AUDIO_MIN) * (0.82 + 0.18 * Math.random()), // per-bar max
-            // two detuned frequencies + random phase per bar → bars move independently, no clean wave
-            f1: 0.8 + Math.random() * 1.5, f2: 2.0 + Math.random() * 3.0,
-            ph1: Math.random() * 6.2832, ph2: Math.random() * 6.2832
+        var hosts = section.querySelectorAll(AUDIO_SEL);
+        if (!hosts.length) { hosts = document.querySelectorAll(AUDIO_SEL); }
+        if (!hosts.length) { hosts = section.querySelectorAll('.flow_svg-inner'); }
+        if (!hosts.length) { hosts = document.querySelectorAll('.flow_svg-inner'); }
+        if (!hosts.length) { if (DEBUG) { console.warn('[flow-stack] no audio svg found'); } return; }
+        Array.prototype.forEach.call(hosts, function (host) {
+          var svg  = (host.tagName && host.tagName.toLowerCase() === 'svg') ? host : host.querySelector('svg');
+          var vbh  = (svg && svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height) || 33;
+          Array.prototype.forEach.call(host.querySelectorAll('rect'), function (r) {
+            var y = parseFloat(r.getAttribute('y')) || 0;
+            var h = parseFloat(r.getAttribute('height')) || parseFloat(window.getComputedStyle(r).height) || 0;
+            audioBars.push({
+              el: r, cy: y + h / 2, vbh: vbh,
+              ceil: AUDIO_MIN + (AUDIO_MAX - AUDIO_MIN) * (0.82 + 0.18 * Math.random()),
+              f1: 0.8 + Math.random() * 1.5, f2: 2.0 + Math.random() * 3.0,
+              ph1: Math.random() * 6.2832, ph2: Math.random() * 6.2832
+            });
           });
         });
-        if (DEBUG) { console.log('[flow-stack] audio bars:', audioBars.length, 'vbh', vbh); }
+        if (DEBUG) { console.log('[flow-stack] audio bars:', audioBars.length, 'from', hosts.length, 'svg(s)'); }
       }());
 
       var envPh1 = Math.random() * 6.2832, envPh2 = Math.random() * 6.2832;   // per-load syllable phase
@@ -3174,8 +3177,11 @@
         fitMarqueeText();
         if (typeof window.requestAnimationFrame === 'function') { window.requestAnimationFrame(fitMarqueeText); }
         var tick = function () {                       // marquee runs on mqClock (MQ_AUTOPLAY)
-          mqClock += gsap.ticker.deltaRatio() / 60;
+          var dr = gsap.ticker.deltaRatio();
+          mqClock    += dr / 60;
+          audioClock += dr / 60;
           updateMarquees(0);
+          if (AUDIO_SPEED > 0) { updateAudio(0); }
         };
         gsap.ticker.add(tick);
         teardown.push(function () { gsap.ticker.remove(tick); });
