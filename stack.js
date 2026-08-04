@@ -155,6 +155,14 @@
   // over this table, and LANDED_ROWS = null hands the whole thing back to the Designer.
   // NOTE: keys are data-stack-order values, NOT positions. if a row's order value is not 1-5 the
   // text lands on the wrong row - check with the one-liner in the console before trusting it.
+  // landed name colour, by name. keyed this way rather than per row so adding a row with an
+  // existing speaker picks the colour up automatically; a row's own data-stack-landed-color
+  // still wins over it.
+  var LANDED_NAME_COLORS = {
+    Hayle:  '#FFA946',
+    Zharia: '#7F1C34'
+  };
+
   var LANDED_ROWS = {
     1: { name: 'Hayle',  text: 'Where are we with the a16z conversation?' },
     2: { name: 'Mikel',  text: "Term sheet's in, Priya sent it over last night." },
@@ -204,10 +212,10 @@
   // travel - but not at 1: the exit runs on its own clock for CH1_ROW_DUR + stagger x rows
   // (~0.75s at six rows), and firing it at the landing would leave rows still flying out after
   // the card has already arrived.
-  var CH1_AT          = 0.9;   // late in the ride: the rows clear just before the card lands
+  var CH1_AT          = 0.95;  // as late as the ride allows: rows clear just before the landing
   var CH1_ROW_Y       = -120;  // px each row travels; negative = up, positive = down
-  var CH1_ROW_DUR     = 0.36;  // seconds per row
-  var CH1_ROW_STAGGER = 0.05;  // seconds between rows (top row leaves first)
+  var CH1_ROW_DUR     = 0.3;   // seconds per row
+  var CH1_ROW_STAGGER = 0.04;  // seconds between rows (top row leaves first)
   var CH1_ROW_EASE    = 'power2.in';
   var CH1_ROW_FADE    = 0.55;  // fade as a fraction of the travel. <1 = gone before it clears the card
   var CH1_IMG_OUT     = false; // false = the pop images stay in view through chapter 1
@@ -419,7 +427,8 @@
           if (!spec) { return; }
           if (spec.text  && !it.getAttribute(LANDED_ATTR))       { it.setAttribute(LANDED_ATTR, spec.text); }
           if (spec.name  && !it.getAttribute(LANDED_NAME_ATTR))  { it.setAttribute(LANDED_NAME_ATTR, spec.name); }
-          if (spec.color && !it.getAttribute(LANDED_COLOR_ATTR)) { it.setAttribute(LANDED_COLOR_ATTR, spec.color); }
+          var col = spec.color || (spec.name && LANDED_NAME_COLORS[spec.name]);
+          if (col && !it.getAttribute(LANDED_COLOR_ATTR)) { it.setAttribute(LANDED_COLOR_ATTR, col); }
         });
         if (DEBUG) {
           console.log('[stack] landed rows:', items.map(function (it) {
@@ -453,7 +462,9 @@
       // value is still whatever Webflow styled it as.
       items.forEach(function (it) {
         var o = DIM_FROM_CSS ? parseFloat(window.getComputedStyle(it).opacity) : 1;
-        it._restOpacity = (isNaN(o) || o <= 0) ? 1 : o;
+        // 0 is a legitimate authored value, not "unset": a row set to 0 stays out of the scatter
+        // entirely and only appears as it flies into the card. only NaN falls back to full.
+        it._restOpacity = isNaN(o) ? 1 : Math.max(0, Math.min(1, o));
       });
 
       items.forEach(function (it) { guardStyle(it); });
@@ -890,6 +901,7 @@
       }
 
       function refresh() {
+        if (AUDIO_BARS && !audioBars.length) { buildAudio(); }   // hosts may be measurable now
         if (isDesktop) { section.style.height = 'calc(100vh + 2px)'; }
         else if (canLeave) { greenPanel.style.height = window.innerHeight + 'px'; }
         if (cardClone) { cardClone.style.display = 'none'; }
@@ -1408,16 +1420,20 @@
 
       // ---- audio pill: generate the bars and pulse them like a live waveform ----
       var audioBars = [];
-      (function buildAudio() {
+      // named + re-runnable, not a one-shot IIFE: a host inside a display:none ancestor measures
+      // as 0x0 and is skipped, which is exactly what the hidden desktop/mobile wrapper does to the
+      // audio pill during a build. refresh() calls this again while nothing has been found.
+      function buildAudio() {
         if (!AUDIO_BARS) { return; }
+        var skipped = 0;
         Array.prototype.forEach.call(section.querySelectorAll(AUDIO_SEL), function (host) {
           var svg  = (host.tagName && host.tagName.toLowerCase() === 'svg') ? host : host.querySelector('svg');
           if (!svg) { return; }
           var src = svg.querySelector('path');
           if (!src) { return; }
           var bb;
-          try { bb = src.getBBox(); } catch (e) { return; }
-          if (!bb || !bb.width || !bb.height) { return; }
+          try { bb = src.getBBox(); } catch (e) { skipped++; return; }
+          if (!bb || !bb.width || !bb.height) { skipped++; return; }
           var fill = window.getComputedStyle(src).fill;
           src.style.display = 'none';
           teardown.push(function () { src.style.display = ''; });
@@ -1442,8 +1458,12 @@
             });
           }
         });
-        if (DEBUG) { console.log('[stack] audio bars:', audioBars.length); }
-      }());
+        if (DEBUG) {
+          console.log('[stack] audio bars:', audioBars.length,
+                      skipped ? '(' + skipped + ' host(s) not measurable yet)' : '');
+        }
+      }
+      buildAudio();
 
       var envPh1 = Math.random() * 6.2832, envPh2 = Math.random() * 6.2832;
       var audioClock = 0, audioP = 0;
@@ -1469,7 +1489,7 @@
           b.el.setAttribute('y', String(b.cy - h / 2));
         }
       }
-      if (audioBars.length && AUDIO_SPEED) {
+      if (AUDIO_SPEED) {
         var audioTicker = function () {
           audioClock += gsap.ticker.deltaRatio() / 60;
           updateAudio(audioP);
