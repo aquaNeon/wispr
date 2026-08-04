@@ -52,7 +52,8 @@
   // fix the language wrap to its widest content so it stops resizing per word
   var LABEL_FIXED_W = true;
   var LABEL_W_PAD   = 0;    // px added to the measured widest width
-  var LANG_PATH_FONT = '14px';   // switcher curved-text size ('' = leave to CSS)
+  var LANG_PATH_FONT = '36px';   // switcher curved-text size ('' = leave to CSS)
+  var LANG_PATH_HARD = true;
 
   // ---- cards (desktop stacking) ----
   var CARD_FADE_MS = 220;   // crossfade between cards (ms)
@@ -100,7 +101,7 @@
   // ---- playback (both modes) ----
   // per-card duration (ms); card 1 longest, see C1_BEATS. with EDGE_LEAD the switcher covers one full
   // pass of the list, so seconds-per-language = this / SEGS.length — 8000/4 = 2s each.
-  var LANG_AUTOPLAY_MS = [8000, 9000, 4500, 5000];
+  var LANG_AUTOPLAY_MS = [16000, 9000, 4500, 5000];
   var LANG_START       = { 0: 0.3 };   // per-card starting progress (switcher enters 30% in)
 
   // ---- MOBILE (≤ MOBILE_BP) ----
@@ -754,22 +755,24 @@
   var LEAD_TOP_VH    = 0.15;  // blank scroll before the first block
   var LEAD_BOTTOM_VH = 0.1;   // blank scroll after the last. lower = section ends earlier with the last
                               // text still visible → next section peeks in
-  var START_LIFT_VH  = 0.83;
+  var START_LIFT_VH  = 0.55;
   var GAP_VH     = 0;      // extra gap between blocks, in viewports. 0 = tight Webflow stacking. raise it
                            // to give each card a longer reign at centre
-  var GAP_PX     = 40;     // fixed px gap between blocks — takes precedence over GAP_VH. 0 = use GAP_VH
-  var LAST_STICK = true;
+  var GAP_PX     = 24;     // fixed px gap between blocks — takes precedence over GAP_VH. 0 = use GAP_VH
+  var LAST_STICK  = true;
+  var FIRST_STICK = true;
   var DRIFT_FRAC = 0.12;   // sideways drift at centre, as a fraction of column width. 0 = off, negative
                            // flips the side. this pushes the block AWAY from the card at centre, so it's
                            // the main control on how big that gap reads
   // entry sweep: a block starts this far LEFT of its slot and swings in, reaching the DRIFT_FRAC spot at
   // centre — so the landing position is unchanged, only the travel into it grows.
-  var ENTER_FRAC  = 0.10;  // how far left, as a fraction of column width. 0 = off (old symmetric drift)
+  var ENTER_FRAC  = 0.16;  // how far left, as a fraction of column width. 0 = off (old symmetric drift)
   var ENTER_Y_VH  = 0.06;  // extra downward offset at entry, in viewports — makes the path diagonal
   var ENTER_CURVE = 2.2;   // >1 holds the offset low in the viewport, so the path swings in late
   var ENTER_FIRST = 0;     // multiplier for block 0 — it's already near centre when the section arrives,
                            // so a full sweep has nowhere to travel from and just pops
-  var ENTER_LAST  = 0;
+  var ENTER_LAST  = 0.6;
+  var DRIFT_RIGID = true;
   var FIRST_X_HOLD = true;
   var LAST_X_HOLD  = true;
   var CARD_CLEAR  = 12;    // px a block must keep clear of the card's right edge. it may NEVER cross —
@@ -779,7 +782,7 @@
   // two are level at the moment it fires — not at the viewport centre, which can be somewhere else.
   var ACTIVE_LINE_CARD = true;
   var ACTIVE_DELAY_VH  = 0.08;  // viewports LATER than that line. bigger = the block rises further first
-  var POP_SCALE  = 1;      // scale-pop of the card wrap on swap (1 = off; try 1.04)
+  var POP_SCALE  = 1.04;      // scale-pop of the card wrap on swap (1 = off; try 1.04)
   var LANG_AUTOPLAY = true;   // cards play on a timer when active instead of scrubbing to scroll
   var LANG_REPLAY   = true;   // replay from the start whenever a block becomes active again
   var LANG_LOOP     = true;   // active card loops while active
@@ -797,7 +800,7 @@
   function initDesktop(section, cardEls) {
     var cards = [], renderers = {};
     for (var ci = 0; ci < cardEls.length; ci++) {
-      var built = buildCard(ci, cardEls[ci]);
+      var built = buildCard(ci, cardEls[ci], { hardFont: LANG_PATH_HARD });
       if (built) { cards[ci] = built; renderers[ci] = built.render; }
     }
 
@@ -888,7 +891,7 @@
         var inT  = clamp01(prog / 0.5);
         var ramp = Math.pow(1 - inT, ENTER_CURVE);
         var enterI = (i === 0) ? ENTER_FIRST : ((i === blocks.length - 1) ? ENTER_LAST : 1);
-        var xE = easeTri(prog);
+        var xE = DRIFT_RIGID ? 1 : easeTri(prog);
         if (FIRST_X_HOLD && i === 0 && prog < 0.5) { xE = 1; }
         if (LAST_X_HOLD && i === blocks.length - 1 && prog > 0.5) { xE = 1; }
         var xT  = offset * xE - enter * enterI * ramp;
@@ -909,10 +912,10 @@
         }
 
         var yOut = yCur[i];
-        if (LAST_STICK && cardR && i === blocks.length - 1) {
+        if (cardR && (LAST_STICK && i === blocks.length - 1 || FIRST_STICK && i === 0)) {
           var natural = (r.top - (yApplied[i] || 0)) + r.height / 2;
           var hold = (cardR.top + cardR.height / 2) - natural;
-          if (hold > 0) { yOut = yCur[i] + hold; }
+          if (i === 0 ? hold < 0 : hold > 0) { yOut = yCur[i] + hold; }
         }
         yApplied[i] = yOut;
         blocks[i].style.transform = 'translate(' + driftCur[i] + 'px,' + yOut + 'px)';
