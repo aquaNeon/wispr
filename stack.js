@@ -28,6 +28,10 @@
     var k  = 1 - Math.pow(1 - SMOOTH, dt);
     for (var i = 0; i < els.length; i++) {
       var s = els[i];
+      // re-read the attribute every pass: scan() caches it once, so a value written later - a
+      // breakpoint change, a rebuild - would never reach the running loop otherwise
+      var live = parseFloat(s.el.getAttribute(ATTR));
+      if (isFinite(live) && live > 0) { s.max = live; }
       var r = s.el.getBoundingClientRect();
       if (!r.width && !r.height) { continue; }
       var tT = Math.max(0, Math.min(s.max, r.top));
@@ -106,7 +110,13 @@
   var FIST          = 1;       // 1 = pop in place at the authored spot; lower = bunched, spreads on scroll
 
   var DETECT_SEL       = '.meeting_item_animate';
-  var DETECT_GRAD      = 'linear-gradient(100deg,#F0D7FF 0%,#FFA946 23%,#FF6C4C 39%,#FFBCF2 67%,#7232A6 91%)';
+  // the detected word is lit by a GLARE, not a rainbow: a neutral ramp with a hot band through the
+  // middle, so it reads as light passing over the text rather than the text changing colour. the
+  // ends sit under the row's own cream so the word dims into its neighbours instead of ending on a
+  // hard edge. same painting and same ripple as before - only the ramp changed.
+  var DETECT_GRAD      = 'linear-gradient(100deg,#8E948C 0%,#C9CEC4 26%,#FFFFFF 48%,#EFF2EA 62%,#9AA096 100%)';
+  var DETECT_GLOW      = 6;    // px of soft white bloom while the glare is on. 0 = flat
+  var DETECT_GLOW_A    = 0.45; // its alpha at full
   var DETECT_AT        = 0.22;  // seconds after the bubble starts popping
   var DETECT_FADE      = 350;   // ms: own colour -> gradient
   var DETECT_HOLD      = 1100;  // ms the gradient sits before releasing
@@ -188,10 +198,10 @@
   // travel - but not at 1: the exit runs on its own clock for CH1_ROW_DUR + stagger x rows
   // (~0.75s at six rows), and firing it at the landing would leave rows still flying out after
   // the card has already arrived.
-  var CH1_AT          = 0.8;
+  var CH1_AT          = 0.9;   // late in the ride: the rows clear just before the card lands
   var CH1_ROW_Y       = -120;  // px each row travels; negative = up, positive = down
-  var CH1_ROW_DUR     = 0.45;  // seconds per row
-  var CH1_ROW_STAGGER = 0.06;  // seconds between rows (top row leaves first)
+  var CH1_ROW_DUR     = 0.36;  // seconds per row
+  var CH1_ROW_STAGGER = 0.05;  // seconds between rows (top row leaves first)
   var CH1_ROW_EASE    = 'power2.in';
   var CH1_ROW_FADE    = 0.55;  // fade as a fraction of the travel. <1 = gone before it clears the card
   var CH1_IMG_OUT     = false; // false = the pop images stay in view through chapter 1
@@ -245,6 +255,15 @@
   var BG_DRAW_EASE   = 'power2.inOut';
 
   var GREEN_RADIUS   = '80px'; // max corner radius; auto-tags the green panel for corners.js. '' = off
+  // responsive radius, ordered HIGH to LOW - the first entry whose min is <= the viewport wins.
+  // a hardcoded table rather than reading --_spacing---section-radius--large: the variable lookup
+  // was tried first and did not resolve reliably, so the table is the source of truth and the
+  // variable is only consulted when the table is empty.
+  var GREEN_RADIUS_VAR = '--_spacing---section-radius--large';
+  var GREEN_RADIUS_BP = [
+    { min: 768, px: 80 },
+    { min: 0,   rem: 2.5 }
+  ];
 
   var LIGHT_REVEAL   = true;
   var LIGHT_CARD_BG  = '#E4E4D0';
@@ -282,6 +301,36 @@
 
   // ---- helpers ----
   function sel(root, name) { return root.querySelectorAll('[' + ATTR + '="' + name + '"]'); }
+
+  // px for the green panel's corner radius at the current viewport. rem entries are multiplied by
+  // the root font size READ AT THAT MOMENT, so it follows a user's text scaling too.
+  function resolveRadius(el) {
+    var fallback = parseFloat(GREEN_RADIUS) || 80;
+    if (GREEN_RADIUS_BP && GREEN_RADIUS_BP.length) {
+      var w = window.innerWidth;
+      var rootPx = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+      for (var b = 0; b < GREEN_RADIUS_BP.length; b++) {
+        if (w >= GREEN_RADIUS_BP[b].min) {
+          var v = GREEN_RADIUS_BP[b];
+          return Math.round(v.rem != null ? v.rem * rootPx : v.px);
+        }
+      }
+    }
+    if (!GREEN_RADIUS_VAR || !el) { return fallback; }
+    var raw = '';
+    try { raw = window.getComputedStyle(el).getPropertyValue(GREEN_RADIUS_VAR).trim(); } catch (e) {}
+    if (!raw) {
+      try { raw = window.getComputedStyle(document.documentElement).getPropertyValue(GREEN_RADIUS_VAR).trim(); } catch (e2) {}
+    }
+    var n = parseFloat(raw);
+    if (!isFinite(n) || n <= 0) { return fallback; }
+    if (/rem\s*$/.test(raw)) {
+      n *= parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+    } else if (/em\s*$/.test(raw)) {
+      n *= parseFloat(window.getComputedStyle(el).fontSize) || 16;
+    }
+    return Math.round(n);
+  }
   function one(root, name) { return root.querySelector('[' + ATTR + '="' + name + '"]'); }
   function smooth(t) { return t < 0 ? 0 : (t > 1 ? 1 : t * t * (3 - 2 * t)); }
 
@@ -564,7 +613,16 @@
             s.style.setProperty('-webkit-background-clip', 'text');
             s.style.backgroundClip = 'text';
           }
-          s.style.transition = 'color ' + (on ? DETECT_FADE : DETECT_BACK) + 'ms ease';
+          // the bloom rides the same fade as the colour, so the word lights and settles as one move.
+          // text-shadow paints from the GLYPH, not the background, so it survives
+          // background-clip:text - a box-shadow here would draw a rectangle instead.
+          s.style.transition = 'color ' + (on ? DETECT_FADE : DETECT_BACK) + 'ms ease' +
+            (DETECT_GLOW ? ', text-shadow ' + (on ? DETECT_FADE : DETECT_BACK) + 'ms ease' : '');
+          if (DETECT_GLOW) {
+            s.style.textShadow = on
+              ? ('0 0 ' + DETECT_GLOW + 'px rgba(255,255,255,' + DETECT_GLOW_A + ')')
+              : '';
+          }
           s.style.color = on ? 'transparent' : (el._color || '');
         }
       }
@@ -853,8 +911,22 @@
       }
       var canLeave = greenPanel !== card;
       guardStyle(greenPanel);
-      if (canLeave && GREEN_RADIUS && !greenPanel.hasAttribute('data-corners')) {
-        greenPanel.setAttribute('data-corners', String(parseFloat(GREEN_RADIUS) || 80));
+      // no hasAttribute guard: it wrote the value once on the first build, so every later build -
+      // including the desktop<->mobile matchMedia rebuild - skipped this block entirely and the
+      // panel kept whatever radius the first build happened to resolve.
+      if (canLeave && (GREEN_RADIUS || (GREEN_RADIUS_BP && GREEN_RADIUS_BP.length))) {
+        var setGreenRadius = function () {
+          var v = String(resolveRadius(greenPanel));
+          if (greenPanel.getAttribute('data-corners') !== v) {
+            greenPanel.setAttribute('data-corners', v);
+            if (DEBUG) { console.log('[stack] green radius ' + v + 'px at ' + window.innerWidth + 'px'); }
+          }
+        };
+        setGreenRadius();
+        // matchMedia only rebuilds at 992, and this breakpoint is 767 - so the rebuild alone would
+        // never notice a crossing. the listener is what actually makes it responsive.
+        window.addEventListener('resize', setGreenRadius);
+        teardown.push(function () { window.removeEventListener('resize', setGreenRadius); });
         if (window.Corners) { window.Corners.scan(); }
       }
 

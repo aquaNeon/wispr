@@ -1,0 +1,109 @@
+/* glare.css — the "detected word" treatment from stack.js, as pure CSS.
+ *
+ * Same idea: a neutral ramp with a hot band sweeps across the word, the word goes from its own
+ * colour into the glare and back, and a soft white bloom rides the same fade. No JS, no spans.
+ *
+ * Usage:  <span class="glare">a16z</span>
+ * Tune everything through the custom properties on .glare.
+ *
+ * The one thing to know: background-clip:text paints the gradient INTO the glyphs, which means the
+ * text must be transparent for it to show. So the word's own colour and the glare are the same
+ * property fighting for the same pixels — the keyframes hand `color` back and forth rather than
+ * cross-fading two layers.
+ */
+
+.glare {
+  /* --- tune here --- */
+  --glare-color: #FFFFEB;   /* the word's own colour, between passes */
+  --glare-ramp: linear-gradient(100deg,
+      #8E948C 0%,
+      #C9CEC4 26%,
+      #FFFFFF 48%,
+      #EFF2EA 62%,
+      #9AA096 100%);
+  --glare-cycle: 3s;        /* whole loop: glare, hold, return, pause */
+  --glare-bloom: 6px;       /* soft white halo while lit. 0 = flat */
+  --glare-bloom-a: 0.45;
+  --glare-spread: 220%;     /* how wide the ramp is vs the word. bigger = slower, softer band */
+
+  color: var(--glare-color);
+  background-image: var(--glare-ramp);
+  background-size: var(--glare-spread) 100%;
+  background-repeat: no-repeat;
+  background-position: 140% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+
+  /* the gradient is clipped to the glyphs, so an inline box is enough - no layout change */
+  display: inline;
+  animation: glare-pass var(--glare-cycle) ease-in-out infinite;
+}
+
+/* one pass: the word releases its own colour, the band travels through it, the colour comes back.
+   the percentages are the stack.js timings scaled to the cycle - ~12% fade in, ~38% lit,
+   ~20% fade out, the rest at rest. */
+@keyframes glare-pass {
+  0% {
+    color: var(--glare-color);
+    background-position: 140% 0;
+    text-shadow: 0 0 0 rgba(255, 255, 255, 0);
+  }
+  12% {
+    color: transparent;
+    text-shadow: 0 0 var(--glare-bloom) rgba(255, 255, 255, var(--glare-bloom-a));
+  }
+  62% {
+    color: transparent;
+    text-shadow: 0 0 var(--glare-bloom) rgba(255, 255, 255, var(--glare-bloom-a));
+  }
+  82% {
+    color: var(--glare-color);
+    background-position: -40% 0;
+    text-shadow: 0 0 0 rgba(255, 255, 255, 0);
+  }
+  100% {
+    color: var(--glare-color);
+    background-position: -40% 0;
+    text-shadow: 0 0 0 rgba(255, 255, 255, 0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   OPTIONAL: the per-letter ripple, if the embed can wrap letters in spans.
+   <span class="glare glare--letters"><i>a</i><i>1</i><i>6</i><i>z</i></span>
+   Without spans the word still glares, it just does not undulate.
+   --------------------------------------------------------------------------- */
+
+.glare--letters > i {
+  display: inline-block;
+  font-style: normal;                      /* <i> only because it is short - no italics wanted */
+  animation: glare-lift var(--glare-cycle) ease-in-out infinite;
+  animation-delay: inherit;
+}
+
+/* each letter rides up and settles once per cycle, staggered left to right. nth-child rather than
+   a variable so it works in an embed with no JS to number them. */
+.glare--letters > i:nth-child(1)  { animation-delay: 0ms; }
+.glare--letters > i:nth-child(2)  { animation-delay: 45ms; }
+.glare--letters > i:nth-child(3)  { animation-delay: 90ms; }
+.glare--letters > i:nth-child(4)  { animation-delay: 135ms; }
+.glare--letters > i:nth-child(5)  { animation-delay: 180ms; }
+.glare--letters > i:nth-child(6)  { animation-delay: 225ms; }
+.glare--letters > i:nth-child(7)  { animation-delay: 270ms; }
+.glare--letters > i:nth-child(8)  { animation-delay: 315ms; }
+.glare--letters > i:nth-child(9)  { animation-delay: 360ms; }
+.glare--letters > i:nth-child(10) { animation-delay: 405ms; }
+.glare--letters > i:nth-child(11) { animation-delay: 450ms; }
+.glare--letters > i:nth-child(12) { animation-delay: 495ms; }
+
+@keyframes glare-lift {
+  0%, 8%   { transform: translateY(0) rotate(0deg); }
+  20%      { transform: translateY(-20%) rotate(-5deg); }
+  34%, 100%{ transform: translateY(0) rotate(0deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glare,
+  .glare--letters > i { animation: none; }
+  .glare { color: var(--glare-color); }
+}
