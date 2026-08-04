@@ -92,10 +92,11 @@
   // ScrollTrigger start for the pre-roll. lower = later: 'top 90%' fires as the section's top
   // crosses 90% down the viewport (barely on screen), 'top 10%' waits until it is nearly at
   // the top, leaving only a little space before the pin takes over.
-  var PRE_POP_START = 'top 10%';
+  var PRE_POP_START = 'top 60%';
   var POP_BATCH     = 0;
-  var POP_STAGGER   = 0.1;
-  var POP_DUR       = 0.34;
+  var POP_STAGGER   = 0.28;
+  var POP_HEAD      = 3;
+  var POP_DUR       = 0.5;
   var POP_BUNCH     = 0.55;    // <1 pulls pops earlier & tighter
   var POP_LEAD      = 0.06;    // scroll lead so the first batch animates in (not pre-popped)
   var POP_SCALE_X   = 0.35;
@@ -227,6 +228,7 @@
   var CH1_IMG_EASE    = 'back.in(1.6)';
 
   var CARD_OUT      = true;
+  var MOBILE_KEEP_CARD = true;
 
   var CH2_OUT         = true;
   var CH2_OUT_DUR     = 0.45;
@@ -254,6 +256,7 @@
 
   var HOLD_STEPS    = 0;
 
+  var CARD_DROP_PX   = 48;
   var CARD_TARGET    = 0.5;    // viewport fraction the card centres on
   var GREEN_HOLD_VH  = 0.25;
   var TAB_STEP_VH    = 1.0;    // scroll length per tab while sticky
@@ -534,7 +537,7 @@
         var spot = [], cx = 0, cy = 0, s;
         for (s = 0; s < items.length; s++) {
           geo[s].dx = (mi.left + frac[s].fx * mi.width)  - nat[s].left;
-          geo[s].dy = (mi.top  + frac[s].fy * mi.height) - nat[s].top;
+          geo[s].dy = (mi.top  + frac[s].fy * mi.height) - nat[s].top - CARD_DROP_PX;
           var scX = nat[s].left + geo[s].dx + nat[s].width  / 2;
           var scY = nat[s].top  + geo[s].dy + nat[s].height / 2;
           spot.push({ x: scX, y: scY });
@@ -582,9 +585,12 @@
           var tl = gsap.timeline({ paused: true });
           // a function value, not a number: one tween covers the batch but each row resolves its
           // own target, so a dimmed row and a solid one can pop together
-          tl.to(members, { opacity: popOpacity, scaleX: 1, scaleY: 1, duration: POP_DUR, ease: POP_EASE, stagger: POP_STAGGER }, 0);
+          var popStag = (POP_HEAD > 0)
+            ? function (i) { return i < POP_HEAD ? 0 : (i - POP_HEAD + 1) * POP_STAGGER; }
+            : POP_STAGGER;
+          tl.to(members, { opacity: popOpacity, scaleX: 1, scaleY: 1, duration: POP_DUR, ease: POP_EASE, stagger: popStag }, 0);
           if (batchChecks.length) {
-            tl.to(batchChecks, { scale: 1, opacity: 1, duration: CHECK_DUR, ease: CHECK_EASE, stagger: POP_STAGGER }, CHECK_DELAY);
+            tl.to(batchChecks, { scale: 1, opacity: 1, duration: CHECK_DUR, ease: CHECK_EASE, stagger: popStag }, CHECK_DELAY);
           }
           popTls.push(tl);
         }(b));
@@ -1573,6 +1579,7 @@
       var cardSwapped = false;
       function cardSwap(p) {
         if (!CARD_OUT) { return; }
+        if (!isDesktop && MOBILE_KEEP_CARD) { return; }
         var want = (p >= pHold);
         if (want === cardSwapped) { return; }
         cardSwapped = want;
@@ -1600,6 +1607,7 @@
 
       var exitPlayed = false;
       function ch1Exit(p) {
+        if (!isDesktop && MOBILE_KEEP_CARD) { return; }
         var at   = pG + (pHold - pG) * CH1_AT;
         var want = p >= at;
         if (want === exitPlayed) { return; }
@@ -1635,7 +1643,7 @@
           var lp = (p <= pG) ? 0 : (p >= pHold ? 1 : ((pHold > pG) ? (p - pG) / (pHold - pG) : 1));
           gsap.set(card, {
             x: landDX * lp,
-            y: (S - Math.min(cardRiseDist, Math.max(0, S - sCardStart))) + landDY * lp
+            y: (S - Math.min(cardRiseDist, Math.max(0, S - sCardStart))) + landDY * lp + CARD_DROP_PX
           });
         }
         popParallax(p);
