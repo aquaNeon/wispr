@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>testimonials deck — spacing test</title>
+<style>
+  /* Stub of the Webflow styles that matter for the deck: card widths + the sticky stage.
+     Real widths come from the Webflow project; these are close enough to judge spacing. */
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d0d0f; color: #fff; font: 16px/1.4 -apple-system, Segoe UI, sans-serif; }
+  .lead, .after { height: 90vh; display: flex; align-items: center; justify-content: center; opacity: .4; }
+
+  .testiv2_height { position: relative; }
+  .testiv2_wrap   { position: sticky; top: 0; height: 100vh; overflow: hidden; }
+
+  .testi_card { border-radius: 24px; padding: 32px; background: #1b1b20; overflow: hidden; display: block; }
+  .testi_card.landscape { width: 44rem; height: 22rem; background: #123a2b; }
+  .testi_card.square    { width: 26rem; height: 26rem; background: #1e2233; }
+  .testi_quote-v2 { font-size: 1.25rem; margin: 0 0 16px; }
+  .testi_card-author { opacity: .7; font-size: .9rem; }
+
+  /* HUD: measured edge gaps between neighbouring cards at the current viewport */
+  #hud { position: fixed; z-index: 999; left: 12px; bottom: 12px; background: #000c; padding: 10px 12px;
+         font: 12px/1.5 ui-monospace, monospace; border-radius: 8px; white-space: pre; }
+  #hud button { font: inherit; margin: 4px 4px 0 0; padding: 3px 8px; background: #222; color: #fff;
+                border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+  #hud button.on { background: #2f7; color: #000; }
+</style>
+</head>
+<body>
+
+<div class="lead">scroll ↓</div>
+
+<section data-center-mobile="40" data-slider="wrap" class="section_new-testi">
+  <div class="testiv2_height">
+    <div class="testiv2_wrap">
+      <div class="testiv2_card">
+        <a href="#" class="testi_card landscape">
+          <p class="testi_quote-v2">How Gusto scaled a brand voice tool from Marketing to a 1,200-person support team</p>
+          <div class="testi_card-author">Gusto · case study</div>
+        </a>
+      </div>
+      <div class="testiv2_card">
+        <div class="testi_card square">
+          <p class="testi_quote-v2">“If you find it tiring to write long emails… this app is a Godsend.”</p>
+          <div class="testi_card-author">Slash Gear</div>
+        </div>
+      </div>
+      <div class="testiv2_card">
+        <div class="testi_card square">
+          <p class="testi_quote-v2">“I feel like I have no time to type anymore.”</p>
+          <div class="testi_card-author">Elena Verna · Lovable</div>
+        </div>
+      </div>
+      <div class="testiv2_card">
+        <div class="testi_card square">
+          <p class="testi_quote-v2">“Wispr Flow just gets it right.”</p>
+          <div class="testi_card-author">Fast Company</div>
+        </div>
+      </div>
+      <div class="testiv2_card">
+        <a href="#" class="testi_card landscape">
+          <p class="testi_quote-v2">“Wispr Flow is a top 3 favorite AI tool for me.”</p>
+          <div class="testi_card-author">Clay · case study</div>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="after">after the deck</div>
+
+<div id="hud"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script src="./testimonials.js?v=9"></script>
+<script>
+  // Live edge gaps between horizontally-adjacent cards — should stay ~equal at every scroll
+  // position, and hold their ratio to the card widths when the window is resized.
+  var wrap = document.querySelector('.testiv2_height');
+  var hud  = document.getElementById('hud');
+  var out  = document.createElement('div');
+  var bar  = document.createElement('div');
+  hud.appendChild(out); hud.appendChild(bar);
+
+  function row(label, values, attrName) {
+    var line = document.createElement('div');
+    line.textContent = label + ' ';
+    values.forEach(function (v) {
+      var b = document.createElement('button');
+      b.textContent = v;
+      b.onclick = function () {
+        wrap.closest('section').setAttribute(attrName, v);
+        wrap.__testiRebuild();
+        Array.prototype.forEach.call(line.querySelectorAll('button'), function (c) {
+          c.className = c.textContent === String(v) ? 'on' : '';
+        });
+      };
+      line.appendChild(b);
+    });
+    bar.appendChild(line);
+  }
+  row('spacing ', ['gap', 'scale', 'pitch', 'off'], 'data-spacing');
+  row('deck zoom', [0, 0.35, 0.55, 0.8, 1], 'data-deck-grow');
+
+  // Perceived gap = distance between the cards' mid-height edges. A rotated card's client rect is
+  // its projected trapezoid bbox (way wider), so measure from the script's own screen centre (_x)
+  // and drawn scale (_f) instead.
+  function tick() {
+    var sc = (wrap.__testiInfo || {}).scale || 1;
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('.testiv2_card'))
+      .map(function (c) { return { c: c._x || 0, w: (c.offsetWidth || 0) * sc * (c._f || 1) }; })
+      .sort(function (a, b) { return a.c - b.c; });
+    var gaps = [];
+    for (var i = 1; i < boxes.length; i++) {
+      gaps.push(Math.round((boxes[i].c - boxes[i].w / 2) - (boxes[i - 1].c + boxes[i - 1].w / 2)));
+    }
+    var info = wrap.__testiInfo || {};
+    out.textContent = 'mode ' + (info.mode || '?') + '   target gap ' + (info.gapPx || '?') + 'px' +
+                      '   medW ' + (info.medW || '?') + '   scale ' + (info.scale || 1).toFixed(2) +
+                      '\nvw ' + window.innerWidth + '  drawn widths ' + boxes.map(function (b) { return Math.round(b.w); }).join(',') +
+                      '\ngaps ' + gaps.join('  ') +
+                      '\nsection h ' + Math.round(wrap.offsetHeight);
+    requestAnimationFrame(tick);
+  }
+  tick();
+  window.addEventListener('error', function (e) { out.textContent = 'ERROR: ' + e.message; });
+</script>
+</body>
+</html>
