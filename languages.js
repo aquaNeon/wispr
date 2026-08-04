@@ -855,8 +855,21 @@
 
     // smoothed per-block scalars so the drift glides and settles on stop. Active detection stays on the
     // RAW rect so the card swap never lags behind.
-    var driftCur = [], yCur = [], tpCur = [], yApplied = [], lastActive = -1;
-    for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; yCur[bi] = 0; tpCur[bi] = 0; yApplied[bi] = 0; }
+    var driftCur = [], yCur = [], tpCur = [], natOff = [], natH_ = [], lastActive = -1;
+    for (var bi = 0; bi < blocks.length; bi++) { driftCur[bi] = 0; yCur[bi] = 0; tpCur[bi] = 0; }
+    function measureNatural() {
+      if (!textWrap || !blocks.length) { return; }
+      var saved = [];
+      for (var m = 0; m < blocks.length; m++) { saved[m] = blocks[m].style.transform; blocks[m].style.transform = 'none'; }
+      var wt = textWrap.getBoundingClientRect().top;
+      for (var q = 0; q < blocks.length; q++) {
+        var br = blocks[q].getBoundingClientRect();
+        natOff[q] = br.top - wt;
+        natH_[q]  = br.height;
+      }
+      for (var z = 0; z < blocks.length; z++) { blocks[z].style.transform = saved[z]; }
+    }
+    measureNatural();
     var autoTp = 0, autoDone = {};
 
     function update() {
@@ -880,9 +893,12 @@
       // ACTIVE_DELAY_VH — blocks travel upward, so a higher line means they take over later.
       var lineY = (ACTIVE_LINE_CARD && cardR ? (cardR.top + cardR.height / 2) : cY) - ACTIVE_DELAY_VH * vh;
 
+      var wrapTop = textWrap.getBoundingClientRect().top;
       var closest = -1, closestDist = Infinity;
       for (var i = 0; i < blocks.length; i++) {
-        var r = blocks[i].getBoundingClientRect();
+        var natTop = wrapTop + (natOff[i] || 0);
+        var natH   = natH_[i] || blocks[i].offsetHeight;
+        var r = { top: natTop, height: natH };
         var prog = clamp01((vh - r.top) / (vh + r.height));            // 0 entering the bottom, 1 exiting the top
         var tpT  = r.height ? clamp01((cY - r.top) / r.height) : 0;    // 0 at the block's top, 1 at its bottom
 
@@ -913,11 +929,10 @@
 
         var yOut = yCur[i];
         if (cardR && (LAST_STICK && i === blocks.length - 1 || FIRST_STICK && i === 0)) {
-          var natural = (r.top - (yApplied[i] || 0)) + r.height / 2;
+          var natural = natTop + natH / 2;
           var hold = (cardR.top + cardR.height / 2) - natural;
           if (i === 0 ? hold < 0 : hold > 0) { yOut = yCur[i] + hold; }
         }
-        yApplied[i] = yOut;
         blocks[i].style.transform = 'translate(' + driftCur[i] + 'px,' + yOut + 'px)';
         // scrubbed cards follow their block's scroll progress, offset by langStart
         if (renderers[i] && !langIsAuto(i)) { renderers[i](langStart(i) + (1 - langStart(i)) * tpCur[i]); }
@@ -962,6 +977,7 @@
     // re-space + re-measure on viewport/webfont changes
     function refreshAll() {
       layout();
+      measureNatural();
       for (var m = 0; m < cards.length; m++) { if (cards[m]) { cards[m].measure(); } }
       lastActive = -1;
     }
