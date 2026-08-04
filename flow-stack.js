@@ -27,6 +27,8 @@
     var k  = 1 - Math.pow(1 - SMOOTH, dt);
     for (var i = 0; i < els.length; i++) {
       var s = els[i];
+      var live = parseFloat(s.el.getAttribute(ATTR));
+      if (isFinite(live) && live > 0) { s.max = live; }
       var r = s.el.getBoundingClientRect();
       if (!r.width && !r.height) { continue; }                     // display:none
       var tT = Math.max(0, Math.min(s.max, r.top));
@@ -91,7 +93,7 @@
   // in-card animations play once on tab entry (time-based) instead of scrubbing to scroll; each
   // tab is a snap stop, so landing on it plays its chapter. per-tab durations in ms.
   var AUTOPLAY        = true;
-  var AUTOPLAY_MS     = [9500, 6200, 4800];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
+  var AUTOPLAY_MS     = [9500, 6200, 6800];   // [tab1 "Speak naturally" slower, tab2, tab3] — per-tab pace (ms)
   var AUTOPLAY_REPLAY = true;   // false = a revisited tab shows its finished last frame, no replay
   var AUTOPLAY_LOOP   = false;  // false = play once and hold the end frame (looping looked weird)
   var AUTOPLAY_LOOP_TABS = [2]; // ...except these tabs, which do loop. chapter 3's fan reads as a cycle
@@ -127,6 +129,7 @@
   var MOBILE_WPM_MQ_TOP   = 60;
   // same for the wpm HEADINGS — pinned, not flex-centred, so the 45 card (heading only) and the 220
   // card (heading + recorder pill in flow) put their label at the identical height.
+  var MOBILE_HEAD_PIN     = false;
   var MOBILE_WPM_HEAD_TOP = 38;
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
@@ -138,6 +141,10 @@
   // the three windows OVERLAP on purpose: the raw starts dissolving while the gradient is still
   // travelling, and the box opens before the raw is gone, so it reads as one continuous pass from
   // the transcript into the UI rather than three separate beats.
+  var BOX_OUT_POW   = 4;
+  var MSG_BLEED     = true;
+  var MSG_BLEED_X   = -1;
+  var MSG_BORDER    = true;
   var POLISH_GRAD   = [0.0, 0.46];  // PHASE 1 (processing): gradient + glare sweep the whole transcript
   var POLISH_RAWOUT = [0.46, 0.55]; // PHASE 2: only once processing has finished does the text dissolve
   var POLISH_DROP   = [0.52, 0.66]; // ...and move into the UI — overlaps the dissolve so it's one move
@@ -214,6 +221,7 @@
   // clamped (no edge gaps) + smooth dual-image mix (matches the demo, not a hard swap).
   var MELT_INTENSITY  = 0.35; // displacement strength as a fraction of the image (~demo 0.2). 0 = plain crossfade
   var MELT_NOISE      = 3.0;  // cloud scale of the displacement noise (higher = smaller, busier blobs)
+  var MSG_BOX_GUARD   = true;
   var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
                              // the end so the message frame animates in just before the raw text types
   // chapter-3 pill "voice mode": the done pill shows a cream waveform — bars that animate OUT to
@@ -386,7 +394,15 @@
   var SCRUB_LERP   = 0.18;
 
   var GREEN_RADIUS = '80px'; // auto-tags the green panel for the corners module. '' = off
+  var GREEN_RADIUS_VAR = '--_spacing---section-radius--large';
+  var GREEN_RADIUS_BP = [
+    { min: 768, px: 80 },
+    { min: 0,   rem: 2.5 }
+  ];
   var BG_SMOOTH    = 0.12;
+  var BG_TRIGGER   = true;
+  var BG_DRAW_MS   = 900;
+  var BG_DRAW_EASE = 'cubic-bezier(.4,0,.2,1)';
   var SNAP         = true;   // snap to each tab so it lands as a stop, then autoplays
   var SNAP_DUR     = 0.3;
 
@@ -436,6 +452,36 @@
       }
     }
     return count - 1;
+  }
+
+  function resolveRadius(el) {
+    var fallback = parseFloat(GREEN_RADIUS) || 80;
+    if (GREEN_RADIUS_BP && GREEN_RADIUS_BP.length) {
+      var w = window.innerWidth, rootPx = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+      for (var b = 0; b < GREEN_RADIUS_BP.length; b++) {
+        if (w >= GREEN_RADIUS_BP[b].min) {
+          var v = GREEN_RADIUS_BP[b];
+          return Math.round(v.rem != null ? v.rem * rootPx : v.px);
+        }
+      }
+    }
+    if (!GREEN_RADIUS_VAR || !el) { return fallback; }
+    var raw = '';
+    try { raw = window.getComputedStyle(el).getPropertyValue(GREEN_RADIUS_VAR).trim(); } catch (e) {}
+    if (!raw) {
+      try { raw = window.getComputedStyle(document.documentElement).getPropertyValue(GREEN_RADIUS_VAR).trim(); } catch (e2) {}
+    }
+    if (!raw) {
+      try { raw = window.getComputedStyle(el).borderTopLeftRadius; } catch (e3) {}
+    }
+    var n = parseFloat(raw);
+    if (!isFinite(n) || n <= 0) { return fallback; }
+    if (/rem\s*$/.test(raw)) {
+      n *= parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+    } else if (/em\s*$/.test(raw)) {
+      n *= parseFloat(window.getComputedStyle(el).fontSize) || 16;
+    }
+    return Math.round(n);
   }
 
   function init() {
@@ -1020,6 +1066,10 @@
         headEls.push(head);
       });
       function alignHeads() {
+        if (!isDesktop) {
+          for (var hm = 0; hm < headEls.length; hm++) { headEls[hm].style.top = ''; }
+          return;
+        }
         // viewport-relative when HEAD_TOP_VH is set: the stage can stay tall while the screen gets
         // short, which is when these ended up sitting low with a stage-derived offset.
         var headPx = (HEAD_TOP_VH ? (window.innerHeight * HEAD_TOP_VH) : (HEAD_TOP * stageH)) + 'px';
@@ -1198,8 +1248,17 @@
       }
       var canLeave = greenPanel !== card;
       guardStyle(greenPanel);
-      if (canLeave && GREEN_RADIUS && !greenPanel.hasAttribute('data-corners')) {
-        greenPanel.setAttribute('data-corners', String(parseFloat(GREEN_RADIUS) || 80));
+      if (canLeave && (GREEN_RADIUS || (GREEN_RADIUS_BP && GREEN_RADIUS_BP.length))) {
+        var setGreenRadius = function () {
+          var v = String(resolveRadius(greenPanel));
+          if (greenPanel.getAttribute('data-corners') !== v) {
+            greenPanel.setAttribute('data-corners', v);
+            if (DEBUG) { console.log('[flow-stack] green radius ' + v + 'px at ' + window.innerWidth + 'px'); }
+          }
+        };
+        setGreenRadius();
+        window.addEventListener('resize', setGreenRadius);
+        teardown.push(function () { window.removeEventListener('resize', setGreenRadius); });
         if (window.Corners) { window.Corners.scan(); }
       }
 
@@ -1615,6 +1674,18 @@
       function killPillCalls() { for (var c = 0; c < pillCalls.length; c++) { pillCalls[c].kill(); } pillCalls = []; }
       // wave=false stops at the DOTS capsule (stage 2) — that's the ch2 state, reached as the text
       // waves out. wave=true carries on into the ch3 voice waveform.
+      function pillStageIn() {
+        if (!polishPill || polishPill.classList.contains('is-in')) { return; }
+        polishPill.classList.add('is-in');
+        var row = polishPill.querySelector('.flow_pill-dots');
+        if (row) {
+          row.style.transition = 'none';
+          row.style.height = '0px';
+          void row.offsetHeight;
+          row.style.transition = 'height .5s cubic-bezier(.34,1.56,.64,1)';
+          row.style.height = BAR_MAX + 'px';
+        }
+      }
       function setPillDone(on, wave) {
         if (!polishPill) { return; }
         wave = !!wave;
@@ -1624,6 +1695,7 @@
           if (pillDoneOn && wave && !pillWave) {                         // dots → waveform, no restart
             pillWave = true;
             killPillCalls();
+            pillStageIn();
             polishPill.classList.add('is-wave');
             pillCalls.push(gsap.delayedCall(0.5, function () { setVoiceLive(true); }));
             return;
@@ -1638,18 +1710,7 @@
           pillDoneOn = true; pillWave = wave;
           killPillCalls();
           polishPill.classList.add('is-done');                                   // stage 1
-          pillCalls.push(gsap.delayedCall(PILL_OUT_MS / 1000, function () {
-            polishPill.classList.add('is-in');                                   // stage 2
-            // bouncy row grow via a JS transition (not a CSS keyframe → a ST re-pin can't replay it)
-            var row = polishPill.querySelector('.flow_pill-dots');
-            if (row) {
-              row.style.transition = 'none';
-              row.style.height = '0px';
-              void row.offsetHeight;                                             // reflow so the next set transitions
-              row.style.transition = 'height .5s cubic-bezier(.34,1.56,.64,1)';
-              row.style.height = BAR_MAX + 'px';
-            }
-          }));
+          pillCalls.push(gsap.delayedCall(PILL_OUT_MS / 1000, pillStageIn));
           if (wave) {
             pillCalls.push(gsap.delayedCall((PILL_OUT_MS + BULLET_MS) / 1000, function () {
               polishPill.classList.add('is-wave');                               // stage 3: grow out
@@ -1771,6 +1832,7 @@
       var msgGrowEl = oneF(section, 'msg-grow');                 // the box that grows to hold the message
       // reveal = clip (overflow hidden) + grow height, riding the top up via negative margin so the
       // footprint (icons below) stays put. the box carries the WHITE so the rising edge shows white.
+      var msgPadL = 0, msgPadR = 0, msgBorderL = '', msgBorderR = '', msgBorderT = '';
       var msgContainEl = msgGrowEl ? msgGrowEl.parentNode : null;
       if (!(msgContainEl && msgContainEl.nodeType === 1)) { msgContainEl = null; }
       if (msgGrowEl) {
@@ -1784,6 +1846,13 @@
           }
           msgGrowEl.style.borderTopLeftRadius  = ccs.borderTopLeftRadius;
           msgGrowEl.style.borderTopRightRadius = ccs.borderTopRightRadius;
+          msgPadL = (parseFloat(ccs.paddingLeft) || 0) + (parseFloat(ccs.borderLeftWidth) || 0);
+          msgPadR = (parseFloat(ccs.paddingRight) || 0) + (parseFloat(ccs.borderRightWidth) || 0);
+          if ((parseFloat(ccs.borderLeftWidth) || 0) > 0 && ccs.borderLeftStyle !== 'none') {
+            msgBorderL = ccs.borderLeftWidth + ' ' + ccs.borderLeftStyle + ' ' + ccs.borderLeftColor;
+            msgBorderR = ccs.borderRightWidth + ' ' + ccs.borderRightStyle + ' ' + ccs.borderRightColor;
+            msgBorderT = ccs.borderTopWidth + ' ' + ccs.borderTopStyle + ' ' + ccs.borderTopColor;
+          }
         }
       }
       // parent must not clip the upward-grown box (it rides above the contain's own top edge)
@@ -1809,6 +1878,16 @@
           });
         }
       }
+      function paintBg(n) {
+        var N = bgSvgs.length; if (!N) { return; }
+        for (var i = 0; i < N; i++) {
+          var on = (i === n);
+          Array.prototype.forEach.call(bgSvgs[i].querySelectorAll('path'), function (p) {
+            p.style.transition = 'stroke-dashoffset ' + BG_DRAW_MS + 'ms ' + BG_DRAW_EASE;
+            p.style.strokeDashoffset = on ? '0' : String(p._len);
+          });
+        }
+      }
 
       function toggleByIndex(list, attr, n) {
         Array.prototype.forEach.call(list, function (el) {
@@ -1830,6 +1909,7 @@
         toggleByIndex(tabTexts, 'data-tab-text', n);
         toggleByIndex(tabAnims, 'data-tab-anim', n);
         moveIndicator(n);
+        if (BG_TRIGGER) { paintBg(n); }
         startAutoplay(n);
       }
       // in-card autoplay: on tab entry, tween tp 0->1 once (advanced by autoTick); sceneUpdate reads
@@ -1966,8 +2046,10 @@
         function place(el, i, isLive) {
           var rel = i - f, ar = Math.abs(rel);
           if (!show) {
-            if (isLive) { el.style.transform = ''; el.style.transformOrigin = ''; }  // back to normal
-            else { el.style.opacity = '0'; }
+            if (isLive) {
+              el.style.transform = ''; el.style.transformOrigin = '';
+              el.style.opacity = ''; el.style.zIndex = '';
+            } else { el.style.opacity = '0'; }
             return;
           }
           var op = (1 - Math.max(0, Math.min(1, (ar - 1) / FAN_FADE))) * fanAlpha;
@@ -2058,6 +2140,24 @@
 
       // crest riding the wavefront: 0 at rest, 1 at the peak, back to 0 once the front has passed.
       // front and ph are both in sweep space, so the same call drives raw words and polished words.
+      function setMsgBleed(on) {
+        if (!msgGrowEl || !MSG_BLEED) { return; }
+        var l = (MSG_BLEED_X >= 0) ? MSG_BLEED_X : msgPadL;
+        var r = (MSG_BLEED_X >= 0) ? MSG_BLEED_X : msgPadR;
+        msgGrowEl.style.marginLeft  = on ? (-l) + 'px' : '';
+        msgGrowEl.style.marginRight = on ? (-r) + 'px' : '';
+        if (MSG_BORDER && msgBorderL) {
+          msgGrowEl.style.boxSizing   = on ? 'border-box' : '';
+          msgGrowEl.style.borderLeft  = on ? msgBorderL : '';
+          msgGrowEl.style.borderRight = on ? msgBorderR : '';
+          msgGrowEl.style.borderTop   = on ? msgBorderT : '';
+        }
+      }
+      function outPow(t) {
+        if (!(BOX_OUT_POW > 1)) { return smooth(t); }
+        var c = t < 0 ? 0 : (t > 1 ? 1 : t);
+        return 1 - Math.pow(1 - c, BOX_OUT_POW);
+      }
       function crestAt(front, ph) {
         var d = front - ph;
         if (d <= 0 || d >= WAVE_BAND) { return 0; }
@@ -2116,7 +2216,7 @@
         // glow front overshoots past 1 + band so the light band fully sweeps OFF the last words
         var Fglow = phaseT(tp, POLISH_GRAD[0], POLISH_GRAD[1]) * (1 + GLOW_BAND + 0.05);
         // polished-in front: polished staggers in behind the box grow (later window)
-        var F  = phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]) *
+        var F  = outPow(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1])) *
                  (PASTE_MODE ? POLISH_FAST : 1) * (1 + POLISH_GAP + POLISH_BAND);
         for (var i = 0; i < n; i++) {
           var ph = (words[i].diag != null) ? words[i].diag : (n > 1 ? i / (n - 1) : 0);
@@ -2162,7 +2262,7 @@
             pwords[j].style.transform = crestCSS(crestAt(F, pph) * 0.6, POLISH_AMP * (1 - o));
           }
         }
-        var grow = smooth(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
+        var grow = outPow(phaseT(tp, POLISH_DROP[0], POLISH_DROP[1]));
         if (PASTE_MODE && BOX_GROW_FAST > 0) { grow = Math.pow(grow, 1 / BOX_GROW_FAST); }
         var gpx  = (msgExpandedH - msgCollapsedH) * grow;         // how far the box has grown
         // grow upward: bottom (icons) stays put, top rises over the faded transcript. footprint
@@ -2170,6 +2270,7 @@
         if (msgGrowEl && heightsOK) {
           msgGrowEl.style.height = (msgCollapsedH + gpx) + 'px';
           msgGrowEl.style.marginTop = (-gpx) + 'px';
+          setMsgBleed(gpx > 0.5);
         }
 
         // the impact, carried by the whole card so nothing shears against anything else inside it.
@@ -2270,6 +2371,16 @@
           killTabFade(); tabFade = false; clearSceneTransition();
         }
 
+        if (MSG_BOX_GUARD && msgGrowEl && p >= pHold && !tabFade) {
+          var mbr = msgGrowEl.getBoundingClientRect();
+          if (mbr.width > 2 && mbr.height < 2) {
+            msgGrowEl.style.height = '';
+            msgGrowEl.style.marginTop = '0px';
+            heightsOK = false;
+            if (DEBUG) { console.warn('[flow-stack] message box measured 0 tall — restored'); }
+          }
+        }
+
         // handoff: chapter content is TRIGGERED in (CSS-timed fade), not scrubbed — fires once the
         // card starts riding (pC + MSG_TRIGGER of the ride) so the message fades in clean, no scrub.
         // while a tab CROSSFADE is running, the click owns scene opacity — don't fight it here.
@@ -2326,7 +2437,7 @@
           for (var j2 = 0; j2 < np; j2++) { pwords[j2].style.opacity = '1'; pwords[j2].style.transform = ''; }
           // extend the box DOWN by SLACK_PAD (white below the text), eased in over the lift
           var padLiftT = smooth(FAN_LIFT_END > 0 ? Math.min(1, tp / FAN_LIFT_END) : 1);
-          if (msgGrowEl && heightsOK) { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; }
+          if (msgGrowEl && heightsOK) { msgGrowEl.style.height = (msgExpandedH + SLACK_PAD * padLiftT) + 'px'; msgGrowEl.style.marginTop = (-(msgExpandedH - msgCollapsedH)) + 'px'; setMsgBleed(true); }
           if (placeholderEl){ placeholderEl.style.opacity = '0'; }
         } else {                                                     // recording / chapter 1: raw only
           polishActive = false;
@@ -2334,7 +2445,7 @@
           if (rawWrap) { rawWrap.style.webkitMaskImage = ''; rawWrap.style.maskImage = ''; rawWrap.style.transform = ''; }
           resetPolishColor();
           for (var j3 = 0; j3 < np; j3++) { pwords[j3].style.opacity = '0'; pwords[j3].style.transform = ''; }
-          if (msgGrowEl)    { msgGrowEl.style.height = msgCollapsedH ? (msgCollapsedH + 'px') : ''; msgGrowEl.style.marginTop = '0px'; }
+          if (msgGrowEl)    { msgGrowEl.style.height = msgCollapsedH ? (msgCollapsedH + 'px') : ''; msgGrowEl.style.marginTop = '0px'; setMsgBleed(false); }
           if (placeholderEl){ placeholderEl.style.opacity = ''; }
         }
 
@@ -2820,8 +2931,10 @@
         function place(el, i, isLive) {
           var rel = i - f, ar = Math.abs(rel);
           if (!show) {
-            if (isLive) { el.style.transform = ''; el.style.transformOrigin = ''; }
-            else { el.style.opacity = '0'; }
+            if (isLive) {
+              el.style.transform = ''; el.style.transformOrigin = '';
+              el.style.opacity = ''; el.style.zIndex = '';
+            } else { el.style.opacity = '0'; }
             return;
           }
           var op = 1 - Math.max(0, Math.min(1, (ar - 1) / FAN_FADE));
@@ -2930,7 +3043,7 @@
           if (!stage.contains(headEls[h])) { continue; }
           headEls[h].style.position = 'absolute';
           headEls[h].style.left = '0'; headEls[h].style.right = '0';
-          headEls[h].style.top = MOBILE_WPM_HEAD_TOP + '%';
+          if (MOBILE_HEAD_PIN) { headEls[h].style.top = MOBILE_WPM_HEAD_TOP + '%'; }
           headEls[h].style.transform = 'translateY(-50%)';
           headEls[h].style.margin = '0'; headEls[h].style.textAlign = 'center'; headEls[h].style.zIndex = '1';
         }
@@ -3150,6 +3263,7 @@
 
       // eased bg-line paint (only does work if [data-tab-bg] svgs exist)
       var bgTicker = function () {
+        if (BG_TRIGGER) { return; }
         try {
           var diff = bgTargetP - bgCurrentP;
           if (Math.abs(diff) < 0.0005) { return; }
