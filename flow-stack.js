@@ -119,18 +119,34 @@
   // mobile: the 45 + 220 wpm cards stack in normal flow, equal height, marquee text autoplaying
   // (no pin/morph/chapter content). false = hide the desktop stage entirely, as before.
   var MOBILE_WPM          = true;
+  var MOBILE_WPM_LAYOUT   = true;
+  var MOBILE_WPM_AUTO_H   = true;
   var MOBILE_WPM_GAP      = 0;    // px between the two cards (they split the stage height evenly)
   var MOBILE_WPM_PAD      = 12;   // px inner padding of each card
   // marquee text size in RENDERED px (the authored font-size is in viewBox units, so it shrinks with
   // the svg — see fitMarqueeText). 0 = leave the authored size alone.
   var MOBILE_WPM_TEXT_PX  = 13;
+  var MQ_TEXT_BP = [
+    { min: 992, px: 22 },
+    { min: 768, px: 15 },
+    { min: 0,   px: 16 }
+  ];
   // where the marquee TEXT lands, as % of card height from the TOP. aligned per marquee from its
   // rendered text box — the straight (45) and curved (220) svgs sit at different heights in the viewBox.
   var MOBILE_WPM_MQ_TOP   = 60;
+  var MOBILE_MQ_PLACE       = true;
+  var MOBILE_MQ_TOP_PX      = 0;
+  var MOBILE_MQ_TOP_PX_FLOW = 0;
   // same for the wpm HEADINGS — pinned, not flex-centred, so the 45 card (heading only) and the 220
   // card (heading + recorder pill in flow) put their label at the identical height.
-  var MOBILE_HEAD_PIN     = false;
+  var MOBILE_HEAD_PIN     = true;
   var MOBILE_WPM_HEAD_TOP = 38;
+  var MOBILE_HEAD_TOP_PX  = 50;
+  var MOBILE_HEAD_TOP_BP  = [
+    { min: 768, px: 80 },
+    { min: 0,   px: 50 }
+  ];
+  var MOBILE_MQ_TOP_BP    = [];
   // tab click: CROSSFADE the card scene between tabs instead of scrubbing through every chapter.
   // fade the current chapter out, jump to the target (hidden), settle it, fade the target in — so
   // clicking 1→3 shows tab 3, not a fast-forward through tab 2.
@@ -454,6 +470,36 @@
     return count - 1;
   }
 
+  function setMqFont(m, px) {
+    if (!m || !m.text) { return; }
+    var tp = m.text.querySelector('textPath');
+    if (!px) {
+      m.text.style.fontSize = '';
+      if (tp) { tp.style.removeProperty('font-size'); }
+      return;
+    }
+    m.text.style.fontSize = px + 'px';
+    if (tp) { tp.style.setProperty('font-size', px + 'px', 'important'); }
+  }
+
+  function pickBP(list) {
+    if (!list || !list.length) { return 0; }
+    var w = window.innerWidth;
+    for (var i = 0; i < list.length; i++) {
+      if (w >= list[i].min) { return list[i].px || 0; }
+    }
+    return 0;
+  }
+
+  function mqTextPx() {
+    if (!MQ_TEXT_BP || !MQ_TEXT_BP.length) { return 0; }
+    var w = window.innerWidth;
+    for (var i = 0; i < MQ_TEXT_BP.length; i++) {
+      if (w >= MQ_TEXT_BP[i].min) { return MQ_TEXT_BP[i].px || 0; }
+    }
+    return 0;
+  }
+
   function resolveRadius(el) {
     var fallback = parseFloat(GREEN_RADIUS) || 80;
     if (GREEN_RADIUS_BP && GREEN_RADIUS_BP.length) {
@@ -745,7 +791,7 @@
           var m = marquees[i];
           if (MQ_AUTOPLAY) {
             // homepage model: sweep -loopLen -> 0 over a fixed duration; loopLen capped to text so never empty
-            var dur = m.isKb ? MQ_DUR_KB : MQ_DUR;
+            var dur = (m.isKb ? MQ_DUR_KB : MQ_DUR) / (m.mult || 1);
             var frac = ((mqClock / dur) % 1 + 1) % 1;                  // 0..1 through the loop
             var loopLen = (m.len > m.vbw) ? Math.min(m.period, m.len - m.vbw) : m.period;
             m.text.setAttribute('x', String(-loopLen * (1 - frac)));
@@ -1112,6 +1158,8 @@
             mm.svg.style.width    = mw + 'px';
             mm.svg.style.height   = (mw * mm.vbh / mm.vbw) + 'px';
             mm.svg.style.overflow = 'visible';   // wave crests may ride above the viewBox
+            var mqPx = mqTextPx();
+            if (mm.text) { setMqFont(mm, (mqPx > 0 && mw > 0) ? (mqPx * mm.vbw / mw).toFixed(1) : 0); }
           }
           try { mm.len = mm.text.getComputedTextLength ? mm.text.getComputedTextLength() : 0; } catch (e) { mm.len = 0; }
         }
@@ -3015,19 +3063,31 @@
       function buildMobileWpm() {
         if (!stage || !MOBILE_WPM) { return false; }
         var wpmCard = (card && stage.contains(card)) ? card : one(stage, 'card');
+        if (!MOBILE_WPM_LAYOUT) {
+          [kbMq, cardMq].forEach(function (mq) {
+            var svg = mq && mq.querySelector('svg');
+            if (svg) { guardStyle(svg); svg.style.overflow = 'visible'; }
+          });
+          fitMarqueeText();
+          if (typeof window.requestAnimationFrame === 'function') { window.requestAnimationFrame(fitMarqueeText); }
+          window.addEventListener('resize', fitMarqueeText);
+          teardown.push(function () { window.removeEventListener('resize', fitMarqueeText); });
+          return true;
+        }
         guardStyle(stage);
         stage.style.setProperty('display', 'flex', 'important');       // stack the two cards
         stage.style.setProperty('flex-direction', 'column', 'important');
         stage.style.alignItems    = 'stretch';
         stage.style.gap           = MOBILE_WPM_GAP + 'px';
         stage.style.position      = 'static';
-        stage.style.width = ''; stage.style.height = '';               // authored 100vh — cards split it
-        stage.style.overflow = 'hidden';
+        stage.style.width = ''; stage.style.height = '';
+        stage.style.overflow = MOBILE_WPM_AUTO_H ? '' : 'hidden';
         [kb, wpmCard].forEach(function (c) {
           if (!c) { return; }
           guardStyle(c);
           c.style.width = '100%'; c.style.maxWidth = 'none';
-          c.style.flex = '1 1 0'; c.style.height = 'auto'; c.style.minHeight = '0';
+          if (MOBILE_WPM_AUTO_H) { c.style.flex = '0 0 auto'; }
+          else { c.style.flex = '1 1 0'; c.style.height = 'auto'; c.style.minHeight = '0'; }
           c.style.transform = ''; c.style.visibility = ''; c.style.opacity = '1';
           c.style.position = 'relative'; c.style.left = ''; c.style.top = ''; c.style.margin = '0';
           c.style.overflow = 'hidden';
@@ -3041,21 +3101,27 @@
             im.style.width = '100%'; im.style.height = '100%'; im.style.objectFit = 'cover';
           });
         });
-        for (var h = 0; h < headEls.length; h++) {      // pin both wpm headings to the same height
+        for (var h = 0; h < headEls.length; h++) {
           if (!stage.contains(headEls[h])) { continue; }
+          if (!MOBILE_HEAD_PIN) {
+            headEls[h].style.position = ''; headEls[h].style.left = ''; headEls[h].style.right = '';
+            headEls[h].style.top = ''; headEls[h].style.transform = ''; headEls[h].style.margin = '';
+            continue;
+          }
           headEls[h].style.position = 'absolute';
           headEls[h].style.left = '0'; headEls[h].style.right = '0';
-          if (MOBILE_HEAD_PIN) { headEls[h].style.top = MOBILE_WPM_HEAD_TOP + '%'; }
+          var headPx = pickBP(MOBILE_HEAD_TOP_BP) || MOBILE_HEAD_TOP_PX;
+          headEls[h].style.top = headPx > 0 ? (headPx + 'px') : (MOBILE_WPM_HEAD_TOP + '%');
           headEls[h].style.transform = 'translateY(-50%)';
           headEls[h].style.margin = '0'; headEls[h].style.textAlign = 'center'; headEls[h].style.zIndex = '1';
         }
         [kbMq, cardMq].forEach(function (mq) {
           if (!mq) { return; }
-          // absolute → containing block is the card's PADDING box, so left/right:0 spans the full card
-          // width (100% in flow was inset by the padding); top is set in fitMarqueeText
-          mq.style.position = 'absolute';
-          mq.style.left = '0'; mq.style.right = '0'; mq.style.width = 'auto'; mq.style.marginRight = '0';
-          mq.style.top = '0'; mq.style.transform = ''; mq.style.zIndex = '1';
+          if (MOBILE_MQ_PLACE) {
+            mq.style.position = 'absolute';
+            mq.style.left = '0'; mq.style.right = '0'; mq.style.width = 'auto'; mq.style.marginRight = '0';
+            mq.style.top = '0'; mq.style.transform = ''; mq.style.zIndex = '1';
+          }
           var svg = mq.querySelector('svg');
           if (svg) {
             guardStyle(svg);
@@ -3074,13 +3140,14 @@
         // the authored font-size (16px) is in VIEWBOX units: at width:100% in a ~300px card the svg
         // scales by 300/928, so the text renders ~5px. counter-scale it to a real px size.
         function fitMarqueeText() {
-          if (!MOBILE_WPM_TEXT_PX) { return; }
+          var wantPx = mqTextPx() || MOBILE_WPM_TEXT_PX;
+          if (!wantPx) { return; }
           for (var i = 0; i < marquees.length; i++) {
             var m = marquees[i];
             if (!m.svg || !stage.contains(m.svg)) { continue; }
             var w = m.svg.getBoundingClientRect().width;
             if (w <= 0) { continue; }
-            m.text.style.fontSize = (MOBILE_WPM_TEXT_PX * m.vbw / w).toFixed(1) + 'px';
+            setMqFont(m, (wantPx * m.vbw / w).toFixed(1));
             try { m.len = m.text.getComputedTextLength ? m.text.getComputedTextLength() : 0; } catch (e) { m.len = 0; }
             // slide the wrapper so the TEXT (not the svg box) lands at the target height
             var host = (kb && kb.contains(m.svg)) ? kb : wpmCard;
@@ -3089,8 +3156,16 @@
             wrap.style.top = '0px';
             var hostR = host.getBoundingClientRect(), txtR = m.text.getBoundingClientRect();
             if (!txtR.height) { continue; }
-            var want = hostR.top + hostR.height * (MOBILE_WPM_MQ_TOP / 100);
-            wrap.style.top = Math.round(want - (txtR.top + txtR.height / 2)) + 'px';
+            if (!MOBILE_MQ_PLACE) { continue; }
+            var isFlow = !(kb && kb.contains(m.svg));
+            var bpPx = pickBP(MOBILE_MQ_TOP_BP);
+            var topPx = bpPx || (isFlow ? (MOBILE_MQ_TOP_PX_FLOW || MOBILE_MQ_TOP_PX) : MOBILE_MQ_TOP_PX);
+            if (topPx > 0) {
+              wrap.style.top = Math.round((hostR.top + topPx) - (txtR.top + txtR.height / 2)) + 'px';
+            } else {
+              var want = hostR.top + hostR.height * (MOBILE_WPM_MQ_TOP / 100);
+              wrap.style.top = Math.round(want - (txtR.top + txtR.height / 2)) + 'px';
+            }
           }
         }
         fitMarqueeText();
