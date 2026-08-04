@@ -457,9 +457,12 @@
 
     // the composer's final height, measured once with every word laid out, then pinned. without it
     // the box is placeholder-sized at beat 3 and jumps the instant the first word lands.
+    // hideWords before the measure, not after: buildWords leaves the spans plainly visible, and
+    // between init and the first paint that is a full sentence sitting in the composer
     function reserveBox() {
       if (!chatText || TYPE_MODE !== 'word') return;
       buildWords();
+      hideWords();
       measureBox();
       resetChat();
     }
@@ -467,25 +470,22 @@
     // the reserved height is only true for the width it was measured at. a narrower composer
     // wraps the same sentence onto more lines, so a box pinned at desktop width clips the text on
     // a phone - and the pin has to be dropped before re-measuring or it floors the new value.
+    // nothing here changes what is on screen. autoAlpha:0 is visibility:hidden, which still holds
+    // each word's box, so the hidden line measures exactly as tall as the finished one - revealing
+    // the words to measure them (what this used to do) only risked painting the whole sentence,
+    // since the callers fire on webfont load and on a breakpoint change, i.e. possibly mid-beat.
     function measureBox() {
       if (!RESERVE_BOX || !chatText || !wordEls.length) return;
       chatText.style.removeProperty('min-height');
-      gsap.set(wordEls, { autoAlpha: 1, y: 0 });
-      if (phEl) gsap.set(phEl, { autoAlpha: 0 });
       var h = chatText.offsetHeight;
       if (h) chatText.style.minHeight = h + 'px';
     }
 
-    // re-measure without losing the beat: mid-dictation the words already on screen stay on
-    // screen, so a resize during beat 4 re-wraps rather than restarting
+    // re-measure without losing the beat: measureBox no longer touches visibility, so whatever is
+    // on screen mid-dictation stays exactly as it is and a resize just re-wraps
     function remeasureBox() {
       if (!RESERVE_BOX || !chatText || TYPE_MODE !== 'word' || !wordEls.length) return;
-      var n = shown, live = dictating;
       measureBox();
-      if (!live) { resetChat(); return; }
-      gsap.set(wordEls, { autoAlpha: 0, y: WORD_RISE });
-      if (n) gsap.set(wordEls.slice(0, n), { autoAlpha: 1, y: 0 });
-      shown = n;
     }
 
     // ---- wave bars: the bar element IS the bar ----
