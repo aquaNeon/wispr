@@ -131,6 +131,34 @@
   var CHECK_DUR     = 0.4;
   var CHECK_EASE    = 'back.out(2.4)';
 
+  // ---- landed state: what a row becomes as it flies into the card ----
+  // the scattered row says what was said; the landed row says what it became. authored per row in
+  // the Designer, all optional - a row with none of these is untouched:
+  //   data-stack-landed="..."         the pill text
+  //   data-stack-landed-name="..."    the name tag's text
+  //   data-stack-landed-color="..."   the name tag's colour
+  //   data-stack-landed-bg="..."      the name tag's background
+  // the swap is instant and lands mid-flight, where the row is moving fast enough that the change
+  // is not readable. it does NOT touch the gather order - rows land exactly as they did before.
+  // the landed wording per row, keyed by its data-stack-order value, stamped onto the rows at init
+  // so everything downstream still reads the attributes. an attribute authored in the Designer wins
+  // over this table, and LANDED_ROWS = null hands the whole thing back to the Designer.
+  // NOTE: keys are data-stack-order values, NOT positions. if a row's order value is not 1-5 the
+  // text lands on the wrong row - check with the one-liner in the console before trusting it.
+  var LANDED_ROWS = {
+    1: { name: 'Hayle',  text: 'Where are we with the a16z conversation?' },
+    2: { name: 'Mikel',  text: "Term sheet's in, Priya sent it over last night." },
+    3: { name: 'Hayle',  text: "Perfect. ARR's up 12% since we closed Atlassian." },
+    4: { name: 'Zharia', text: "Great, I'll tell Aisha during our sync." },
+    5: { name: 'Mikel',  text: 'The Figma integration is live, right?' }
+  };
+
+  var LANDED_ATTR       = 'data-stack-landed';
+  var LANDED_NAME_ATTR  = 'data-stack-landed-name';
+  var LANDED_COLOR_ATTR = 'data-stack-landed-color';
+  var LANDED_BG_ATTR    = 'data-stack-landed-bg';
+  var LANDED_AT         = 0.35;   // fraction into that row's own flight when it changes
+
   var GATHER_STAGGER = 0.09;
   var GATHER_DUR     = 0.7;
   var GATHER_EASE    = 'power3.inOut';
@@ -194,7 +222,11 @@
   var MELT_NOISE     = 3.0;   // cloud scale of the displacement noise (higher = smaller, busier)
   var CARD_LANDS_ON_STAGE = true;
 
-  var TABS_PLAY_AT    = 1.0;   // point in pG->pHold at which tab 0 activates (1 = at the landing)
+  // point in pG->pHold at which tab 0 activates (1 = at the landing). pulled back so the panel's
+  // 0.4s fade OVERLAPS the row exit instead of following it: the rows start leaving at CH1_AT and
+  // take CH1_ROW_DUR + stagger x rows to clear, so at 1.0 the card sat empty in between and the
+  // two beats read as separate events rather than one handing over to the other.
+  var TABS_PLAY_AT    = 0.85;
 
   var HOLD_STEPS    = 0;
 
@@ -322,6 +354,24 @@
         var bo = parseFloat(b.getAttribute(ORDER)); if (isNaN(bo)) { bo = Infinity; }
         return ao - bo;
       });
+
+      // stamp LANDED_ROWS on as attributes, before anything reads them. never over an attribute the
+      // Designer already set - authored markup outranks this table.
+      if (LANDED_ROWS) {
+        items.forEach(function (it, i) {
+          var key = parseFloat(it.getAttribute(ORDER));
+          var spec = LANDED_ROWS[isNaN(key) ? (i + 1) : key];
+          if (!spec) { return; }
+          if (spec.text  && !it.getAttribute(LANDED_ATTR))       { it.setAttribute(LANDED_ATTR, spec.text); }
+          if (spec.name  && !it.getAttribute(LANDED_NAME_ATTR))  { it.setAttribute(LANDED_NAME_ATTR, spec.name); }
+          if (spec.color && !it.getAttribute(LANDED_COLOR_ATTR)) { it.setAttribute(LANDED_COLOR_ATTR, spec.color); }
+        });
+        if (DEBUG) {
+          console.log('[stack] landed rows:', items.map(function (it) {
+            return it.getAttribute(ORDER) + '=' + (it.getAttribute(LANDED_NAME_ATTR) || '-');
+          }).join(' '));
+        }
+      }
 
       guardStyle(section);
       if (window.getComputedStyle(section).position === 'static') {
@@ -574,6 +624,82 @@
         window.getComputedStyle(card).getPropertyValue(LANDED_BG_VAR).trim() ||
         window.getComputedStyle(document.documentElement).getPropertyValue(LANDED_BG_VAR).trim();
 
+      // rewrite an element's words, preferring its own TEXT NODE over textContent: a row holds its
+      // name tag as an element sibling of its text, and textContent would delete it. originals are
+      // captured on first use so the reverse is exact.
+      function swapNode(el, alt, landed) {
+        if (!el) { return; }
+        for (var i = 0; i < el.childNodes.length; i++) {
+          var n = el.childNodes[i];
+          if (n.nodeType === 3 && n.nodeValue && n.nodeValue.trim()) {
+            if (n._rawText == null) { n._rawText = n.nodeValue; }
+            n.nodeValue = landed ? alt : n._rawText;
+            return;
+          }
+        }
+        if (el._rawText == null) { el._rawText = el.textContent; }
+        el.textContent = landed ? alt : el._rawText;
+      }
+      function swapStyle(el, prop, val, landed) {
+        if (!el || !val) { return; }
+        var key = '_raw_' + prop;
+        if (el[key] == null) { el[key] = el.style[prop] || ''; }   // '' restores the stylesheet's own
+        el.style[prop] = landed ? val : el[key];
+      }
+      function hasLanded(it) {
+        return !!(it.getAttribute(LANDED_ATTR) || it.getAttribute(LANDED_NAME_ATTR) ||
+                  it.getAttribute(LANDED_COLOR_ATTR) || it.getAttribute(LANDED_BG_ATTR));
+      }
+      // replace ALL of an element's content, keeping the original child NODES alive so they can be
+      // put back byte-for-byte. .meeting_item_text is not one text node - it is
+      // "text" + <span class="meeting_item_animate"> + "text", so rewriting only the first text
+      // node left the detect span and the trailing words behind and the two readings ran together.
+      // removeChild keeps each node alive in the saved array, so the detect span that
+      // detectByBatch already holds a reference to is the SAME element when it comes back - an
+      // innerHTML round-trip would silently swap it for a clone and break the gradient on reverse.
+      function swapContent(el, alt, landed) {
+        if (!el) { return; }
+        if (el._rawNodes == null) { el._rawNodes = Array.prototype.slice.call(el.childNodes); }
+        while (el.firstChild) { el.removeChild(el.firstChild); }
+        if (landed) {
+          el.appendChild(document.createTextNode(alt));
+        } else {
+          for (var i = 0; i < el._rawNodes.length; i++) { el.appendChild(el._rawNodes[i]); }
+        }
+      }
+
+      // one row - real or cloned. the clone carries the same attributes (it was cloneNode'd after
+      // they were stamped), so it can be driven by exactly the same code.
+      function applyLanded(row, landed) {
+        if (!row) { return; }
+        var alt = row.getAttribute(LANDED_ATTR);
+        if (alt) { swapContent(row.querySelector('.meeting_item_text') || row, alt, landed); }
+        var tag = row.querySelector(NAME_TAG_SEL);
+        if (!tag) { return; }
+        swapNode(tag, row.getAttribute(LANDED_NAME_ATTR) || '', landed && !!row.getAttribute(LANDED_NAME_ATTR));
+        swapStyle(tag, 'color', row.getAttribute(LANDED_COLOR_ATTR), landed);
+        swapStyle(tag, 'backgroundColor', row.getAttribute(LANDED_BG_ATTR), landed);
+      }
+
+      // the light clone is a snapshot taken at init, so it froze the ORIGINAL wording - it has to be
+      // updated alongside the real row or the card changes text the moment the light reveal swaps
+      // one for the other. matched by position: the clone was made after the rows were reparented,
+      // so its row order is the same.
+      var cloneRowCache = null;
+      function cloneRowFor(it) {
+        if (!cardClone) { return null; }
+        if (!cloneRowCache) {
+          cloneRowCache = Array.prototype.slice.call(cardClone.querySelectorAll('[' + ATTR + '="item"]'));
+        }
+        var idx = items.indexOf(it);
+        return idx >= 0 ? (cloneRowCache[idx] || null) : null;
+      }
+
+      function setRowLanded(it, landed) {
+        applyLanded(it, landed);
+        applyLanded(cloneRowFor(it), landed);
+      }
+
       var gatherTl = gsap.timeline({ paused: true });
       gatherTl.to(card, { backgroundColor: origBg, borderColor: origBorder, duration: CARD_FADE, ease: 'power2.out' }, 0);
       if (head) { gatherTl.to(head, { opacity: 1, duration: CARD_FADE, ease: 'power2.out' }, 0); }
@@ -593,7 +719,19 @@
           tween.borderTopLeftRadius = tween.borderTopRightRadius =
           tween.borderBottomLeftRadius = tween.borderBottomRightRadius = STACK_ITEM_RADIUS;
         }
-        gatherTl.to(it, tween, CARD_FADE * 0.5 + slot * GATHER_STAGGER);
+        var flyAt = CARD_FADE * 0.5 + slot * GATHER_STAGGER;
+        gatherTl.to(it, tween, flyAt);
+        // onStart fires crossing forward, onReverseComplete crossing back - so scrubbing up
+        // restores the scattered wording instead of stranding the landed one
+        if (hasLanded(it)) {
+          (function (row) {
+            gatherTl.to({}, {
+              duration: 0.001,
+              onStart: function () { setRowLanded(row, true); },
+              onReverseComplete: function () { setRowLanded(row, false); }
+            }, flyAt + GATHER_DUR * LANDED_AT);
+          }(it));
+        }
       });
 
       var pops = Array.prototype.slice.call(sel(section, 'pop')).sort(function (a, b) {
