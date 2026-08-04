@@ -1127,6 +1127,7 @@
       }
 
       var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
+      var refreshing = false;
       var heightsOK = false, heightsRetryT = 0, heightsTries = 0;   // message-box heights measured to something real
       var cardMqW = 0;   // the 220 wave's own width (see MQ_CARD_W) — the kb marquee stays stage-wide
       var pillRecY = -180;   // px the pill lifts during recording — recomputed from stage height in measureStage
@@ -2378,7 +2379,7 @@
         // intro (220 wpm): shows once the flow card is at least CARD_MIN_W wide (so the label never
         // spills a too-narrow card), stays in view through the reveal, then fades out at the shrink
         // start. the show/hide is a quick TIMED fade (opacity + CSS transition, 0.25s), not scrubbed.
-        if (introEl) {
+        if (introEl && !refreshing) {
           var gt2 = (pB > pA) ? (p - pA) / (pB - pA) : (p >= pB ? 1 : 0);
           gt2 = gt2 < 0 ? 0 : (gt2 > 1 ? 1 : gt2);
           var cardFrac = (p < pB) ? (1 - SPLIT_START * (1 - snapEnds(gt2))) : 1;   // mirror applyMorph's split
@@ -2431,7 +2432,7 @@
         // handoff: chapter content is TRIGGERED in (CSS-timed fade), not scrubbed — fires once the
         // card starts riding (pC + MSG_TRIGGER of the ride) so the message fades in clean, no scrub.
         // while a tab CROSSFADE is running, the click owns scene opacity — don't fight it here.
-        if (!tabFade) {
+        if (!tabFade && !refreshing) {
           var lit = (p >= pC + MSG_TRIGGER * Math.max(0, pHold - pC)) ? '1' : '0';
           if (screenEl) {
             screenEl.style.opacity = lit;                        // one cover fades in — everything inside comes together
@@ -2578,6 +2579,7 @@
       }
 
       function refresh() {
+        refreshing = true;
         if (isDesktop) { section.style.height = 'calc(100vh + 2px)'; }
         contentEls.forEach(function (el) { gsap.set(el, { y: 0 }); });
         measureStage();
@@ -2597,6 +2599,10 @@
         pillCur = pillTgt;                            // pill starts settled (no glide-in on load)
         updateMarquees(pSmooth); updateAudio(pSmooth);
         if (activeTab >= 0) { moveIndicator(activeTab); }
+        refreshing = false;
+        if (typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(function () { if (st) { applyScroll(st.progress); } });
+        }
       }
 
       // ---- MOBILE chapter driver: you duplicate the desktop card into each [data-flow-play] block
