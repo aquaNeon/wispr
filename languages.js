@@ -759,6 +759,7 @@
   var GAP_VH     = 0;      // extra gap between blocks, in viewports. 0 = tight Webflow stacking. raise it
                            // to give each card a longer reign at centre
   var GAP_PX     = 24;     // fixed px gap between blocks — takes precedence over GAP_VH. 0 = use GAP_VH
+  var STATIC_BLOCKS = false;
   var LAST_STICK  = true;
   var FIRST_STICK = true;
   var DRIFT_FRAC = 0.12;   // sideways drift at centre, as a fraction of column width. 0 = off, negative
@@ -894,6 +895,7 @@
       var lineY = (ACTIVE_LINE_CARD && cardR ? (cardR.top + cardR.height / 2) : cY) - ACTIVE_DELAY_VH * vh;
 
       var wrapTop = textWrap.getBoundingClientRect().top;
+      var lerpOn = !STATIC_BLOCKS;
       var closest = -1, closestDist = Infinity;
       for (var i = 0; i < blocks.length; i++) {
         var natTop = wrapTop + (natOff[i] || 0);
@@ -913,8 +915,10 @@
         var xT  = offset * xE - enter * enterI * ramp;
         var yT  = ENTER_Y_VH * vh * enterI * ramp;
         var prevX = driftCur[i];
-        driftCur[i] += (xT - prevX) * lerp;
-        yCur[i]     += (yT - yCur[i]) * lerp;
+        if (lerpOn) {
+          driftCur[i] += (xT - prevX) * lerp;
+          yCur[i]     += (yT - yCur[i]) * lerp;
+        }
         tpCur[i]    += (tpT - tpCur[i]) * lerp;
         if (Math.abs(tpT - tpCur[i]) < 0.0002) { tpCur[i] = tpT; }
 
@@ -928,12 +932,16 @@
         }
 
         var yOut = yCur[i];
+        if (STATIC_BLOCKS) {
+          if (blocks[i].style.transform) { blocks[i].style.transform = ''; }
+        } else {
         if (cardR && (LAST_STICK && i === blocks.length - 1 || FIRST_STICK && i === 0)) {
           var natural = natTop + natH / 2;
           var hold = (cardR.top + cardR.height / 2) - natural;
           if (i === 0 ? hold < 0 : hold > 0) { yOut = yCur[i] + hold; }
         }
         blocks[i].style.transform = 'translate(' + driftCur[i] + 'px,' + yOut + 'px)';
+        }
         // scrubbed cards follow their block's scroll progress, offset by langStart
         if (renderers[i] && !langIsAuto(i)) { renderers[i](langStart(i) + (1 - langStart(i)) * tpCur[i]); }
 
@@ -972,6 +980,10 @@
         renderers[closest](autoTp);
       }
     }
+    window.langStatic = function (v) {
+      STATIC_BLOCKS = !!v;
+      console.log('[languages] STATIC_BLOCKS =', STATIC_BLOCKS);
+    };
     gsap.ticker.add(update);
 
     // re-space + re-measure on viewport/webfont changes
