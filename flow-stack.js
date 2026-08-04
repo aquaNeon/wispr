@@ -127,7 +127,7 @@
   // the svg — see fitMarqueeText). 0 = leave the authored size alone.
   var MOBILE_WPM_TEXT_PX  = 13;
   var MQ_TEXT_BP = [
-    { min: 992, px: 22 },
+    { min: 992, px: 0 },
     { min: 768, px: 15 },
     { min: 0,   px: 16 }
   ];
@@ -238,6 +238,7 @@
   var MELT_INTENSITY  = 0.35; // displacement strength as a fraction of the image (~demo 0.2). 0 = plain crossfade
   var MELT_NOISE      = 3.0;  // cloud scale of the displacement noise (higher = smaller, busier blobs)
   var MSG_BOX_GUARD   = true;
+  var MSG_HEIGHT_RETRY = false;
   var MSG_TRIGGER     = 0.8; // where in the card ride (pC→pHold fraction) the message fade fires — near
                              // the end so the message frame animates in just before the raw text types
   // chapter-3 pill "voice mode": the done pill shows a cream waveform — bars that animate OUT to
@@ -2065,10 +2066,6 @@
         // for good — which is what a lot of fast scrolling up and down tends to produce.
         if (show && !fanWasShown) { fanPositioned = false; }
         fanWasShown = show;
-        if (show && fanPositioned && screenEl) {
-          var nowH = screenEl.getBoundingClientRect().height;
-          if (nowH && fanPlacedAt && Math.abs(nowH - fanPlacedAt) > 1) { fanPositioned = false; }
-        }
         // retry until the geometry is real — positionFanCards reports whether it could trust it
         if (show && !fanPositioned) { fanPositioned = positionFanCards(); }
         // two scrubbed phases: LIFT the note to centre (no jump from ch2), then SWING the cards through
@@ -2396,7 +2393,7 @@
         // A bad height measurement must never be permanent: retry once the card actually has a box.
         // Until it succeeds the height writes are skipped, so the box keeps its authored size rather
         // than being pinned to 0 — visible and roughly right beats invisible.
-        if (!heightsOK && isDesktop && heightsTries < 6 && msgGrowEl && stage) {
+        if (MSG_HEIGHT_RETRY && !heightsOK && isDesktop && heightsTries < 6 && msgGrowEl && stage) {
           var nowH = Date.now();
           if (nowH - heightsRetryT > 400) {
             heightsRetryT = nowH;
