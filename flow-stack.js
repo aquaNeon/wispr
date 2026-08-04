@@ -207,6 +207,8 @@
   var PILL_PAD_Y = 5;
 
   var DOTS_PAD_Y = 2;
+  var MOBILE_DOTS_PAD_X = 12;
+  var MOBILE_DOTS_PAD_Y = 4;
   var PILL_WAVE_PADX = 16;
 
   var PILL_WAVE_W = 72;
@@ -1514,18 +1516,26 @@
       if (!polishPill && isDesktop) {
         console.warn('[flow-stack] no [data-pill="polishing"] in the DESKTOP card (mobile clones do not count)');
       }
-      if (polishPill) {
-        var polishWrap = polishPill.querySelector('.flow_pill-polish_wrap') || polishPill;
-        if (!polishWrap.querySelector('.flow_pill-dots')) {
-          var dw = document.createElement('div'); dw.className = 'flow_pill-dots';
-          for (var di = 0; di < BAR_SHAPE.length; di++) {
-            var bar = document.createElement('span'); bar.className = 'flow_pill-dot';
-            bar.style.setProperty('--h', (BAR_MIN + BAR_SHAPE[di] * (BAR_MAX - BAR_MIN)) + 'px');
-            bar.style.transitionDelay = (di * 0.03) + 's';
-            dw.appendChild(bar);
-          }
-          polishWrap.appendChild(dw);
+      // the mobile clones are copied from the card and may predate this injection, so any pill can
+      // ask for its own row rather than assuming the desktop one seeded it
+      function ensureDots(pill) {
+        if (!pill) { return null; }
+        var wrap = pill.querySelector('.flow_pill-polish_wrap') || pill;
+        var row = wrap.querySelector('.flow_pill-dots');
+        if (row) { return row; }
+        row = document.createElement('div'); row.className = 'flow_pill-dots';
+        for (var di = 0; di < BAR_SHAPE.length; di++) {
+          var bar = document.createElement('span'); bar.className = 'flow_pill-dot';
+          bar.style.setProperty('--h', (BAR_MIN + BAR_SHAPE[di] * (BAR_MAX - BAR_MIN)) + 'px');
+          bar.style.transitionDelay = (di * 0.03) + 's';
+          row.appendChild(bar);
         }
+        wrap.appendChild(row);
+        return row;
+      }
+
+      if (polishPill) {
+        ensureDots(polishPill);
 
         polishPill.style.setProperty('align-self', 'center', 'important');
         polishPill.style.setProperty('flex', '0 0 auto', 'important');
@@ -1551,10 +1561,11 @@
 
       // idempotent: the dots stage must exist before is-wave, whether we arrive slowly (ch2 dots
       // then ch3) or in one scroll. without it the pill renders empty and oversized.
-      function pillStageIn() {
-        if (!polishPill || polishPill.classList.contains('is-in')) { return; }
-        polishPill.classList.add('is-in');
-        var row = polishPill.querySelector('.flow_pill-dots');
+      function pillStageIn() { pillDotsIn(polishPill); }
+      function pillDotsIn(pill) {
+        if (!pill || pill.classList.contains('is-in')) { return; }
+        pill.classList.add('is-in');
+        var row = pill.querySelector('.flow_pill-dots');
         if (row) {
           row.style.transition = 'none';
           row.style.height = '0px';
@@ -2486,7 +2497,8 @@
           ctx.polishPill.style.setProperty('width', 'fit-content', 'important');
           ctx.polishPill.style.setProperty('min-width', '0', 'important');
           ctx.polishPill.style.setProperty('max-width', '100%', 'important');
-          if (MOBILE_PILL_Y) { ctx.polishPill.style.position = 'relative'; ctx.polishPill.style.top = MOBILE_PILL_Y + 'px'; }
+            if (MOBILE_PILL_Y) { ctx.polishPill.style.position = 'relative'; ctx.polishPill.style.top = MOBILE_PILL_Y + 'px'; }
+          ensureDots(ctx.polishPill);
         } else {
           console.warn('[flow-stack] mobile ch2: no [data-pill="polishing"] inside this block');
         }
@@ -2587,7 +2599,29 @@
         }
         if (ctx.placeholder) { ctx.placeholder.style.opacity = String(1 - smooth(Math.min(1, grow * PLACEHOLDER_OUT))); }
         var pillOn = tp >= MOBILE_PILL_AT;
-        if (ctx.polishPill) { ctx.polishPill.classList.toggle('is-on', pillOn); }
+        if (ctx.polishPill) {
+          ctx.polishPill.classList.toggle('is-on', pillOn);
+          var wantDots = pillOn && tp >= PILL_DOTS_AT;
+          if (wantDots !== !!ctx.dotsOn) {
+            ctx.dotsOn = wantDots;
+            if (ctx.dotsCall) { ctx.dotsCall.kill(); ctx.dotsCall = null; }
+            if (wantDots) {
+              ctx.polishPill.classList.add('is-done');
+              ctx.dotsCall = gsap.delayedCall(PILL_OUT_MS / 1000, function () {
+                pillDotsIn(ctx.polishPill);
+                if (MOBILE_DOTS_PAD_X >= 0) {
+                  var dwrap = ctx.polishPill.querySelector('.flow_pill-polish_wrap') || ctx.polishPill;
+                  dwrap.style.setProperty('padding', MOBILE_DOTS_PAD_Y + 'px ' + MOBILE_DOTS_PAD_X + 'px', 'important');
+                }
+              });
+            } else {
+              ctx.polishPill.classList.remove('is-in');
+              ctx.polishPill.classList.remove('is-done');
+              var dwrap0 = ctx.polishPill.querySelector('.flow_pill-polish_wrap') || ctx.polishPill;
+              dwrap0.style.removeProperty('padding');
+            }
+          }
+        }
         if (ctx.pillAudio) { ctx.pillAudio.style.opacity = pillOn ? '0' : '1'; }
       }
       function mobileCh2Reset(host) {
@@ -2603,6 +2637,8 @@
         for (i = 0; i < ctx.pwords.length; i++) { ctx.pwords[i].style.opacity = '0'; ctx.pwords[i].style.transform = ''; }
         if (ctx.measured && ctx.msgGrow) { ctx.msgGrow.style.height = ctx.collapsedH + 'px'; ctx.msgGrow.style.marginTop = '0px'; }
         if (ctx.placeholder) { ctx.placeholder.style.opacity = '1'; }
+        if (ctx.dotsCall) { ctx.dotsCall.kill(); ctx.dotsCall = null; }
+        ctx.dotsOn = false;
         if (ctx.polishPill) { ctx.polishPill.classList.remove('is-on', 'is-done', 'is-in', 'is-wave'); }
         if (ctx.pillAudio) { ctx.pillAudio.style.opacity = '1'; }
       }
