@@ -89,11 +89,22 @@
       return;
     }
 
+    // No pin: the track goes sticky and an injected wrapper supplies the scroll distance, so the
+    // section keeps its authored heading/spacers and Webflow needs no structural change.
+    var holder = track.parentElement;
+    if (!holder || holder.getAttribute('data-slider-holder') !== 'true') {
+      holder = document.createElement('div');
+      holder.setAttribute('data-slider-holder', 'true');
+      holder.style.position = 'relative';
+      track.parentNode.insertBefore(holder, track);
+      holder.appendChild(track);
+    }
+
     var scrollTween = null;
 
     function destroy() {
       if (scrollTween) {
-        if (scrollTween.scrollTrigger) { scrollTween.scrollTrigger.kill(true); }
+        if (scrollTween.scrollTrigger) { scrollTween.scrollTrigger.kill(); }
         scrollTween.kill();
         scrollTween = null;
       }
@@ -118,9 +129,10 @@
       var modeHost = wrap.closest('[data-spacing]');
       var mode     = modeHost ? modeHost.getAttribute('data-spacing') : SPACING_MODE;
 
+      track.style.position = 'sticky';
+      track.style.top      = '0px';
       track.style.height   = '100vh';
       track.style.overflow = 'hidden';
-      track.style.position = 'relative';
       track.style.padding  = '0';
 
       cards.forEach(function (card) {
@@ -238,21 +250,17 @@
       var proxy     = { h: headStart };
       render(headStart);
 
-      // Pinned, not sticky: the section holds a heading above the deck and Webflow owns its height,
-      // so the pin's own spacer provides the scroll distance.
-      var dist = Math.round((headEnd - headStart) * scrollRatio);
+      var dist   = Math.round((headEnd - headStart) * scrollRatio);
+      var trackH = track.offsetHeight || window.innerHeight;
+      holder.style.height = (trackH + dist) + 'px';
 
       scrollTween = gsap.to(proxy, {
         h: headEnd, ease: 'none',
         onUpdate: function () { render(proxy.h); },
         scrollTrigger: {
-          trigger: track,
+          trigger: holder,
           start: 'top top',
-          end: '+=' + dist,
-          pin: track,
-          pinType: 'transform',
-          pinSpacing: true,
-          anticipatePin: 1,
+          end: 'bottom bottom',
           scrub: scrubVal
         }
       });

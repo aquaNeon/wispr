@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>testimonial-2 deck — pinned variant</title>
+<title>testimonial-2 deck — sticky, no pin</title>
 <style>
-  /* Stub of the Webflow styles that matter: card widths. No sticky here — the script pins. */
+  /* Stub of the Webflow styles that matter: card widths. Sticky comes from the script; no pin. */
   * { box-sizing: border-box; }
   body { margin: 0; background: #0d0d0f; color: #fff; font: 16px/1.4 -apple-system, Segoe UI, sans-serif; }
   .lead, .after { height: 90vh; display: flex; align-items: center; justify-content: center; opacity: .4; }
@@ -64,7 +64,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
-<script src="./testimonial-2.js?v=1"></script>
+<script src="./testimonial-2.js?v=2"></script>
 <script>
   var wrap = document.querySelector('[data-slider="wrap"]');
   var hud  = document.getElementById('hud');
