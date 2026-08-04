@@ -1080,7 +1080,7 @@
       }
 
       var stageW = 0, stageH = 0, padL = 0, padT = 0, cardHpx = CARD_H_FALLBACK, msgCollapsedH = 0, msgExpandedH = 0, msgContainBaseH = 0, transcriptH = 0;
-      var heightsOK = false, heightsRetryT = 0;   // message-box heights measured to something real
+      var heightsOK = false, heightsRetryT = 0, heightsTries = 0;   // message-box heights measured to something real
       var cardMqW = 0;   // the 220 wave's own width (see MQ_CARD_W) — the kb marquee stays stage-wide
       var pillRecY = -180;   // px the pill lifts during recording — recomputed from stage height in measureStage
       function measureStage() {
@@ -1144,6 +1144,7 @@
             // comes back 0 — and every height write below would then pin the box to 0px with
             // overflow:hidden, i.e. the message UI silently disappears. Only trust a real number.
             heightsOK = msgCollapsedH > 0;
+            if (heightsOK) { heightsTries = 0; }
           }
           // screen baseline = chapter-1 state (message box collapsed), so we don't double-count polished
           var mgh = msgGrowEl ? msgGrowEl.style.cssText : null;
@@ -2347,10 +2348,11 @@
         // A bad height measurement must never be permanent: retry once the card actually has a box.
         // Until it succeeds the height writes are skipped, so the box keeps its authored size rather
         // than being pinned to 0 — visible and roughly right beats invisible.
-        if (!heightsOK && msgGrowEl && stage) {
+        if (!heightsOK && isDesktop && heightsTries < 6 && msgGrowEl && stage) {
           var nowH = Date.now();
           if (nowH - heightsRetryT > 400) {
             heightsRetryT = nowH;
+            heightsTries++;
             var sr2 = stage.getBoundingClientRect();
             if (sr2.width > 2 && sr2.height > 2) {
               measurePositions();
@@ -2371,7 +2373,7 @@
           killTabFade(); tabFade = false; clearSceneTransition();
         }
 
-        if (MSG_BOX_GUARD && msgGrowEl && p >= pHold && !tabFade) {
+        if (MSG_BOX_GUARD && isDesktop && msgGrowEl && p >= pHold && !tabFade) {
           var mbr = msgGrowEl.getBoundingClientRect();
           if (mbr.width > 2 && mbr.height < 2) {
             msgGrowEl.style.height = '';
