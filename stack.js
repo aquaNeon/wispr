@@ -176,6 +176,12 @@
   var CARD_FADE      = 0.4;
   var STACK_TOP_PAD     = 0;   // px above the first stacked row, desktop. 0 = off
   var STACK_TOP_PAD_MOB = 16;  // same, tablet and down (<992px)
+  // rows hug their own text at every size (white-space:nowrap, width auto), which is right on a
+  // wide card and wrong on a narrow one: the row ends where its sentence ends, leaving a band of
+  // empty card that the pop images then drift over. on mobile they fill the card's width instead
+  // and wrap, so the text uses the space and the photos have nothing to sit on top of.
+  // 'fill' = full width + wrapping, 'wrap' = keep hugging but allow a second line, '' = as desktop
+  var ROW_MOBILE_FIT = 'fill';
   var LANDED_BG      = '';                      // '' = read LANDED_BG_VAR
   var LANDED_BG_VAR  = '--base-color--fathom';  // row bg once gathered
   var STACK_ITEM_RADIUS = '12px';   // every row's corners once stacked (scattered = authored). '' = off
@@ -464,9 +470,17 @@
         it.style.position   = 'relative';
         it.style.inset      = 'auto';
         it.style.margin     = '0';
-        it.style.width      = '';
         it.style.boxSizing  = 'border-box';
-        it.style.whiteSpace = 'nowrap';
+        if (!isDesktop && ROW_MOBILE_FIT === 'fill') {
+          it.style.width      = '100%';
+          it.style.whiteSpace = 'normal';
+        } else if (!isDesktop && ROW_MOBILE_FIT === 'wrap') {
+          it.style.width      = '';
+          it.style.whiteSpace = 'normal';
+        } else {
+          it.style.width      = '';
+          it.style.whiteSpace = 'nowrap';
+        }
         it.style.willChange = 'transform, opacity';
       });
       // the rows are re-parented into the card with margin:0, so the first one sits flush against
