@@ -101,6 +101,12 @@
     var CARD_IN_TRAVEL_MS = 780; // whole left-to-right journey duration
     var CARD_FROM_SCALE = 0.72; // cards start small and grow as they travel
     var THROW_BUMP_X = 14; // px the committing line nudges right as it throws
+
+    // stacked layout (tablet and down): the throw rotates — card drops in from above, line nudges down
+    var STACK_BP     = 991;   // px at or below which the layout is stacked
+    var CARD_FROM_Y  = -120;  // entrance start when stacked: negative = from above the deck
+    var THROW_BUMP_Y = 14;    // px the committing line nudges DOWN as it throws
+    var STACK_GAP    = 14;    // px between transcript and deck when stacked
     var THROW_BUMP_MS = 480; // out-and-back duration of that nudge
 
     // stack scroll: the whole column glides up one row each line — smooth, no per-line jump
@@ -183,6 +189,11 @@
     };
     var TEXT_ON_DARK = '#FFFDF9';
     var TEXT_ON_LIGHT = '#1A1A1A';
+
+    // read live: the breakpoint can be crossed without a reload
+    function isStacked() {
+      return !!(window.matchMedia && window.matchMedia('(max-width: ' + STACK_BP + 'px)').matches);
+    }
 
     // readable name colour for a pill background (sRGB relative luminance)
     function autoText(hex) {
@@ -593,7 +604,10 @@
       if (CARD_POP && typeof node.animate === 'function') {
         node.animate(
           [
-            { transform: 'translateX(' + CARD_FROM_X + 'px) scale(' + CARD_FROM_SCALE + ') rotate(0deg)', opacity: 0, offset: 0 },
+            { transform: (isStacked()
+                ? 'translateY(' + CARD_FROM_Y + 'px)'
+                : 'translateX(' + CARD_FROM_X + 'px)') +
+                ' scale(' + CARD_FROM_SCALE + ') rotate(0deg)', opacity: 0, offset: 0 },
             { opacity: 1, offset: 0.22 },
             { transform: 'translateX(0) scale(1) rotate(' + node._tilt + 'deg)', opacity: 1, offset: 1 },
           ],
@@ -670,7 +684,9 @@
             ln.el.animate(
               [
                 { transform: 'translateX(0)', offset: 0 },
-                { transform: 'translateX(' + THROW_BUMP_X + 'px)', offset: 0.35 },
+                { transform: isStacked()
+                    ? 'translateY(' + THROW_BUMP_Y + 'px)'
+                    : 'translateX(' + THROW_BUMP_X + 'px)', offset: 0.35 },
                 { transform: 'translateX(0)', offset: 1 },
               ],
               { duration: THROW_BUMP_MS, easing: 'ease-in-out' },
@@ -1084,8 +1100,19 @@
       container.style.overflow = 'hidden';
       // clip box extends right past the throw-bump so the nudge isn't cut off
       container.style.boxSizing = 'border-box';
-      container.style.width = 'calc(100% + ' + THROW_BUMP_X * 2 + 'px)';
-      container.style.paddingRight = THROW_BUMP_X * 2 + 'px';
+      // extend the clip box along whichever axis the bump travels, padded back so the content area
+      // is unchanged — otherwise overflow:hidden crops the nudge
+      if (isStacked()) {
+        container.style.width = '';
+        container.style.paddingRight = '';
+        container.style.paddingBottom = THROW_BUMP_Y * 2 + 'px';
+        container.style.marginBottom = (STACK_GAP - THROW_BUMP_Y * 2) + 'px';   // pad added height back off
+      } else {
+        container.style.paddingBottom = '';
+        container.style.marginBottom = '';
+        container.style.width = 'calc(100% + ' + THROW_BUMP_X * 2 + 'px)';
+        container.style.paddingRight = THROW_BUMP_X * 2 + 'px';
+      }
 
       var edge = 'rgba(0,0,0,' + FADE_ALPHA + ')';
       // history fades out toward the top only — the live line at the bottom
@@ -1120,7 +1147,8 @@
           lines[p].el.style.minHeight = rowHeightPx + 'px';
         }
 
-        var lockH = rowHeightPx * MAX_LINES;
+        // border-box: the pad must be added to the lock or it eats content instead of extending the box
+        var lockH = rowHeightPx * MAX_LINES + (isStacked() ? THROW_BUMP_Y * 2 : 0);
         container.style.height = lockH + 'px';
         container.style.minHeight = lockH + 'px';
         container.style.maxHeight = lockH + 'px';
