@@ -208,6 +208,31 @@
     });
   }
 
+  // Width of the line as the font actually sets it, with no SVG involved — so it is the same number
+  // in every engine, and it works whether or not the card is currently rendered. Cached per
+  // string+font: it is only called from measure(), but that runs on every resize and webfont load.
+  var canvasCtx = null, canvasCache = {};
+  function measureOnCanvas(textEl, tp) {
+    var src = tp || textEl;
+    if (!src) { return 0; }
+    var str = src.textContent || '';
+    if (!str) { return 0; }
+    try {
+      var cs  = window.getComputedStyle(src);
+      var key = str + '|' + cs.fontSize + '|' + cs.fontFamily + '|' + cs.fontWeight;
+      if (canvasCache[key] !== undefined) { return canvasCache[key]; }
+      if (!canvasCtx) {
+        var c = document.createElement('canvas');
+        canvasCtx = c.getContext ? c.getContext('2d') : null;
+      }
+      if (!canvasCtx) { return 0; }
+      canvasCtx.font = [cs.fontStyle, cs.fontWeight, cs.fontSize, cs.fontFamily].join(' ');
+      var w = canvasCtx.measureText(str).width || 0;
+      canvasCache[key] = w;
+      return w;
+    } catch (e) { return 0; }
+  }
+
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
   var LINE = '', MID_FRAC = [];
   (function buildLine() {
@@ -267,9 +292,12 @@
     }
 
     // the <text> owns the x attr we move; nameEl is its <textPath> child (holds the string)
-    var textEl = null;
+    var textEl = null, tpEl = null;
     if (nameEl) {
-      textEl = (nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath') ? nameEl.parentNode : nameEl;
+      var isTp = !!(nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath');
+      textEl = isTp ? nameEl.parentNode : nameEl;
+      // the embed sizes the <textPath> by id, so its computed font is the one that actually renders
+      tpEl   = isTp ? nameEl : (textEl.querySelector ? textEl.querySelector('textPath') : null);
     }
     var fs = (fontSize === undefined) ? LANG_PATH_FONT : fontSize;
     if (textEl && fs) { textEl.style.fontSize = fs; }
@@ -304,8 +332,19 @@
     var span = 0, anchorArc = 0;
     function measure() {
       try { fitLabelWrap(); } catch (eW) {}     // must never abort the span measure below
-      try { span = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
-      catch (e) { span = 0; }
+      var svgSpan = 0;
+      try { svgSpan = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
+      catch (e) { svgSpan = 0; }
+      // getComputedTextLength() on a <text> wrapping a <textPath> is not comparable across engines:
+      // Blink reports the whole string, WebKit only the glyphs it placed on the path — about the
+      // path's own length, 943 here against a real string of ~5500. It also returns 0 in any engine
+      // if the card was not rendered when we asked, and the desktop stack parks inactive cards in a
+      // display:none wrap. Either way a short span leaves the AUTHORED x in place (1500, past the end
+      // of a 943-long curve), and text on a path does not render beyond the path — so the line
+      // vanished entirely rather than merely mistiming.
+      // Canvas measures the string itself, so it neither clips to the path nor cares about render
+      // state. Take the larger: Blink's own number wins there, leaving Chrome untouched.
+      span = Math.max(svgSpan, measureOnCanvas(textEl, tpEl));
       var pathLen = 0;
       try { pathLen = pathEl && pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e2) {}
       if (!pathLen && svgEl && svgEl.viewBox && svgEl.viewBox.baseVal) { pathLen = svgEl.viewBox.baseVal.width; }
