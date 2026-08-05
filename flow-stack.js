@@ -286,7 +286,9 @@
 
   var MQ_CARD_W    = 1;
 
-  var MQ_PATH_W    = 0.85;
+  // DIAGNOSTIC: 1 makes narrowPath() bail before it touches d, so the path stays exactly as authored.
+  // Isolates "does rewriting d at runtime break the textPath in WebKit" from everything else.
+  var MQ_PATH_W    = 1;
 
   var MQ_PATH_TAILS = true;
   var MQ_PATH_OVER  = 0;
