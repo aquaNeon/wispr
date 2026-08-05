@@ -230,6 +230,14 @@
   var CARD_OUT      = true;
   var MOBILE_KEEP_CARD = true;
 
+  // phones run no choreography at all - mobile landscape (<768px) and down. the pop/gather/pin
+  // sequence needs width: below the tablet breakpoint it re-parented the rows into the card,
+  // transformed and pinned them, and ended in a layout nothing in the Designer could correct.
+  // with this on the script leaves that markup exactly as authored - place the rows, the card and
+  // the panels by hand and they stay put. tablet and desktop are untouched and still animate.
+  // false = the old behaviour, the full sequence at every size.
+  var MOBILE_STATIC = true;
+
   var CH2_OUT         = true;
   var CH2_OUT_DUR     = 0.45;
   var CH2_OUT_STAGGER = 0.05;
@@ -304,6 +312,13 @@
   var ATTR  = 'data-stack';
   var ORDER = 'data-stack-order';
 
+  // two breakpoints, and matchMedia AND the injected CSS both read them so they cannot drift apart.
+  // BP_DESKTOP picks WHICH build runs - the wide one above it, the narrow one below. BP_STATIC is
+  // lower and picks WHETHER anything runs at all: under it the build bails (see MOBILE_STATIC).
+  // between them - Webflow's tablet - the narrow build runs exactly as it always did.
+  var BP_DESKTOP = 992;   // desktop
+  var BP_STATIC  = 768;   // tablet down to here; below = mobile landscape and portrait
+
   var DESKTOP_SEL = '[' + ATTR + '="desktop"]';
   var MOBILE_SEL  = '[' + ATTR + '="mobile"]';
   var TABS_SEL    = '.meeting_tabs_contain';   // tabs grid; falls back to the desktop wrapper
@@ -361,11 +376,13 @@
     if (!document.getElementById('stack-mode-style')) {
       var ms = document.createElement('style');
       ms.id = 'stack-mode-style';
-      ms.textContent =
-        'html[data-stack-mode="desktop"] ' + MOBILE_SEL  + '{display:none !important;}' +
-        'html[data-stack-mode="mobile"] '  + DESKTOP_SEL + '{display:none !important;}' +
-        (COPY_SEL ? ('@media (max-width:' + COPY_NARROW_BP + 'px){' + COPY_SEL +
-          '{max-width:' + COPY_NARROW_MAXW + ';}}') : '') +
+      // the tab rules hide every panel and wait for .is-active, which only the build ever adds.
+      // under MOBILE_STATIC no build runs below BP_STATIC, so they have to stop there or the phone
+      // markup would sit invisible forever with nothing left to reveal it. tablet still builds, so
+      // the cutoff is BP_STATIC and not BP_DESKTOP. a media query, not the data-stack-mode attribute:
+      // that attribute is written late in the build, and scoping to it would leave the panels
+      // visible until then.
+      var tabCss =
         '[data-tab-anim],[data-tab-text]{opacity:0;visibility:hidden;transition:opacity .4s ease;}' +
         '[data-tab-anim].is-active,[data-tab-text].is-active{opacity:1;visibility:visible;}' +
         '[data-tab-text] .meeting_tabs_heading,[data-tab-text] .meeting_tabs_paragraph{' +
@@ -375,23 +392,40 @@
         '[data-tab-anim][data-play="off"] *,' +
         '[data-tab-anim][data-play="off"] *::before,' +
         '[data-tab-anim][data-play="off"] *::after{animation:none !important;}';
+      ms.textContent =
+        'html[data-stack-mode="desktop"] ' + MOBILE_SEL  + '{display:none !important;}' +
+        'html[data-stack-mode="mobile"] '  + DESKTOP_SEL + '{display:none !important;}' +
+        (COPY_SEL ? ('@media (max-width:' + COPY_NARROW_BP + 'px){' + COPY_SEL +
+          '{max-width:' + COPY_NARROW_MAXW + ';}}') : '') +
+        (MOBILE_STATIC ? ('@media (min-width:' + BP_STATIC + 'px){' + tabCss + '}') : tabCss);
       document.head.appendChild(ms);
     }
 
     var prevStart = null, prevEnd = null;
     var anchorY = null, anchorStart = null, anchorEnd = null;
-    var bpMQ = window.matchMedia('(min-width: 992px)');
     function captureAnchor() {
       anchorY = window.pageYOffset || window.scrollY || 0;
       anchorStart = prevStart; anchorEnd = prevEnd;
     }
-    if (bpMQ.addEventListener) { bpMQ.addEventListener('change', captureAnchor); }
-    else if (bpMQ.addListener) { bpMQ.addListener(captureAnchor); }
+    // both breakpoints rebuild, so both have to hand the scroll position over
+    [BP_DESKTOP, BP_STATIC].forEach(function (bp) {
+      var mq = window.matchMedia('(min-width: ' + bp + 'px)');
+      if (mq.addEventListener) { mq.addEventListener('change', captureAnchor); }
+      else if (mq.addListener) { mq.addListener(captureAnchor); }
+    });
 
     var builtOnce = false;
     var mm = gsap.matchMedia();
-    mm.add({ isDesktop: '(min-width: 992px)', isMobile: '(max-width: 991px)' }, function (ctx) {
+    // three conditions, not two: the context is only alive while ONE of them matches, so a plain
+    // desktop/mobile pair plus a third state would have left the phone range with no callback at
+    // all - and the wrapper swap lives inside it.
+    mm.add({
+      isDesktop: '(min-width: ' + BP_DESKTOP + 'px)',
+      isTablet:  '(min-width: ' + BP_STATIC + 'px) and (max-width: ' + (BP_DESKTOP - 1) + 'px)',
+      isStatic:  '(max-width: ' + (BP_STATIC - 1) + 'px)'
+    }, function (ctx) {
       var isDesktop = ctx.conditions.isDesktop;
+      var isStatic  = ctx.conditions.isStatic;
       var isRebuild = builtOnce; builtOnce = true;
 
       var teardown = [];
@@ -403,6 +437,27 @@
           else { el.setAttribute('style', prev); }
         });
         return el;
+      }
+
+      // phones are authored, not animated. everything below this point measures, re-parents the rows
+      // into the card, transforms them and pins the section - none of which the phone layout
+      // survived. bailing here leaves that markup exactly as the Designer placed it; the only thing
+      // this branch still owns is the desktop/mobile wrapper swap. tablet falls through and builds.
+      if (isStatic && MOBILE_STATIC) {
+        document.documentElement.setAttribute('data-stack-mode', 'mobile');
+        Array.prototype.forEach.call(document.querySelectorAll(MOBILE_SEL), function (el) {
+          guardStyle(el);
+          el.style.display = '';
+          if (window.getComputedStyle(el).display === 'none') {
+            el.style.setProperty('display', MOBILE_DISPLAY, 'important');
+          }
+        });
+        if (DEBUG) { console.log('[stack] mobile static: no choreography built'); }
+        return function cleanupStatic() {
+          for (var t = teardown.length - 1; t >= 0; t--) {
+            try { teardown[t](); } catch (e) {  }
+          }
+        };
       }
 
       var section = one(document, 'section');
