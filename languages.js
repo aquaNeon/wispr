@@ -480,16 +480,26 @@
       var probe = document.createElementNS(SVG_NS, 'text');
       probe.setAttribute('x', '0');
       probe.setAttribute('y', '0');
+      // WITHOUT THIS THE INDICES LIE. SVG collapses each run of whitespace to a single space, so the
+      // three-space separators made getNumberOfChars() 420 against a 430-character line. Every
+      // getSubStringLength(0, jsIndex) past that point is then measuring the wrong character —
+      // and Chrome clamps rather than throwing, so the tail of the line silently collapsed onto one
+      // position instead of failing loudly. preserve makes DOM indices match the string exactly.
+      probe.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
       probe.style.visibility = 'hidden';   // still laid out, so still measurable
       probe.textContent = LINE;
       g.appendChild(probe);
 
       function advAt(k) {
-        try { return probe.getSubStringLength ? probe.getSubStringLength(0, k) : 0; } catch (e) { return 0; }
+        if (k <= 0) { return 0; }
+        try { return probe.getSubStringLength ? probe.getSubStringLength(0, k) : 0; } catch (e) { return -1; }
       }
+      // require the DOM to hold exactly the characters we are about to index, and a usable total.
       // 0 means the card was not rendered when we asked; fall back to isolated widths and rebuild
-      // later, rather than laying the whole line out on bad numbers
-      var exact = advAt(LINE.length) > 0;
+      // later, rather than laying the whole line out on numbers that do not line up
+      var nChars = 0;
+      try { nChars = probe.getNumberOfChars ? probe.getNumberOfChars() : 0; } catch (eN) { nChars = 0; }
+      var exact = (nChars === LINE.length) && advAt(LINE.length) > 0;
 
       var items = [], at = 0, idx = 0;
       graphemes(LINE).forEach(function (c) {
