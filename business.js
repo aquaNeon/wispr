@@ -138,6 +138,14 @@
   var TAB_ACTIVE   = 'is-active';
   var REC_PULSE    = 1.4;
 
+  var T_GEN        = 1.6;
+  var T_REVEAL     = 2.2;
+  var GEN_STAG     = 0.12;
+  var REVEAL_STAG  = 0.25;
+  var DOC_SCROLL   = '-54%';
+  var DOC_DUR      = 0.9;
+  var PAUSE_ON_SUMMARY = true;
+
 
 
 
@@ -248,6 +256,20 @@
     var meetWave    = root.querySelector(P + 'wave.is-meeting');
     var meetStop    = q(root, 'meeting-recorder-stop');
 
+    var tabLines   = qa(root, 'panel-tab-line');
+    var sumGen     = q(root, 'summary-gen');
+    var sumGenTtl  = q(root, 'summary-gen-title');
+    var sumGenList = qa(root, 'summary-gen-list').reduce(function (all, ul) {
+      return all.concat([].slice.call(ul.children));
+    }, []);
+    var sumBlock   = q(root, 'summary-block');
+    var sumBlockKids = sumBlock ? [].slice.call(sumBlock.children) : [];
+    var sumDoc     = q(root, 'summary-doc');
+    var stoStop    = root.querySelector(P + 'sto-btn.is-stop');
+    var stoResume  = root.querySelector(P + 'sto-btn.is-resume');
+    var sumReveal  = sumBlockKids.length ? sumBlockKids : sumBits;
+    if (sumBlockKids.length && sumBits.length) gsap.set(sumBits, { autoAlpha: 1, y: 0 });
+
 
 
 
@@ -286,10 +308,11 @@
     function armStart() {
       gsap.set(cast, { autoAlpha: 0, y: IN_Y, scale: IN_SCALE });
       gsap.set(panelWrap, { autoAlpha: 1, y: 0, scale: 1 });
-      gsap.set(trLines.concat(sumBits), { autoAlpha: 0, y: 10 });
+      gsap.set(trLines.concat(sumReveal), { autoAlpha: 0, y: 10 });
       gsap.set(trLayer, { autoAlpha: 1 });
       gsap.set(sumLayer, { autoAlpha: 0 });
       setTab('transcript');
+      armSummary();
       if (timer) timer.textContent = TIMER_FROM;
       if (micBtn) { micBtn.classList.remove(HOVER_CLASS); gsap.set(micBtn, { scale: 1 }); }
       releaseAll();
@@ -951,9 +974,29 @@
     }
 
 
-    function setTab(name) {
+    function armSummary() {
+      if (sumGen)     gsap.set(sumGen, { autoAlpha: 1, y: 0 });
+      if (sumGenTtl)  gsap.set(sumGenTtl, { autoAlpha: 0, y: 6 });
+      if (sumGenList.length) gsap.set(sumGenList, { autoAlpha: 0, y: 5 });
+      if (sumReveal.length)  gsap.set(sumReveal, { autoAlpha: 0, y: 10 });
+      if (sumDoc)     gsap.set(sumDoc, { y: 0 });
+      if (stoStop)    gsap.set(stoStop, { autoAlpha: 1 });
+      if (stoResume)  gsap.set(stoResume, { autoAlpha: 0 });
+    }
+
+    function setTab(name, animate) {
       var want = name === 'summary' ? 2 : 1;
       tabs.forEach(function (t, i) { t.classList.toggle(TAB_ACTIVE, i === want); });
+      if (!tabLines.length) return;
+      tabLines.forEach(function (line, i) {
+        var on = tabs[want] ? tabs[want].contains(line) : i === want;
+        if (animate) {
+          gsap.to(line, { scaleX: on ? 1 : 0, autoAlpha: on ? 1 : 0, transformOrigin: 'left center',
+                          duration: 0.35, ease: on ? IN_EASE : OUT_EASE, overwrite: true });
+        } else {
+          gsap.set(line, { scaleX: on ? 1 : 0, autoAlpha: on ? 1 : 0, transformOrigin: 'left center' });
+        }
+      });
     }
 
 
@@ -1058,7 +1101,7 @@
       gsap.set(trLayer, { autoAlpha: 1 });
       gsap.set(sumLayer, { autoAlpha: 0 });
       gsap.set(trLines, { autoAlpha: 0, y: 10 });
-      gsap.set(sumBits, { autoAlpha: 0, y: 10 });
+      gsap.set(sumReveal, { autoAlpha: 0, y: 10 });
       tiles.forEach(function (t) { t.classList.remove(SPEAK_CLASS); });
       startClock();
       run(meetWaveTl, true);
@@ -1080,14 +1123,41 @@
 
     master.to({}, { duration: T_CALL });
 
-    master.add(function () { setTab('summary'); });
-    master.to(trLayer, { autoAlpha: 0, duration: 0.35, ease: OUT_EASE }, '<');
+    master.add(function () {
+      setTab('summary', true);
+      if (PAUSE_ON_SUMMARY) { run(meetWaveTl, false); run(pulse, false); stopClock(); }
+    });
+    master.to(trLayer, { autoAlpha: 0, y: -6, duration: 0.35, ease: OUT_EASE }, '<');
+    if (stoStop)   master.to(stoStop, { autoAlpha: 0, duration: 0.3, ease: OUT_EASE }, '<');
+    if (stoResume) master.to(stoResume, { autoAlpha: 1, duration: 0.3, ease: IN_EASE }, '<+0.1');
     master.fromTo(sumLayer, { autoAlpha: 0 },
-      { autoAlpha: 1, duration: 0.35, ease: IN_EASE, immediateRender: false }, '<+0.15');
-    master.fromTo(sumBits, { autoAlpha: 0, y: 10 },
-      { autoAlpha: 1, y: 0, duration: 0.45, ease: IN_EASE, stagger: 0.07, immediateRender: false },
-      '<+0.1');
-    master.to({}, { duration: T_SUMMARY });
+      { autoAlpha: 1, duration: 0.4, ease: IN_EASE, immediateRender: false }, '<+0.15');
+
+    if (sumGenTtl || sumGenList.length) {
+      if (sumGenTtl) {
+        master.fromTo(sumGenTtl, { autoAlpha: 0, y: 6 },
+          { autoAlpha: 1, y: 0, duration: 0.4, ease: IN_EASE, immediateRender: false }, '>-0.1');
+      }
+      if (sumGenList.length) {
+        master.fromTo(sumGenList, { autoAlpha: 0, y: 5 },
+          { autoAlpha: 1, y: 0, duration: 0.4, ease: IN_EASE, stagger: GEN_STAG, immediateRender: false },
+          '<+0.15');
+      }
+      master.to({}, { duration: T_GEN });
+      if (sumGen) master.to(sumGen, { autoAlpha: 0, y: -5, duration: 0.35, ease: OUT_EASE });
+    }
+
+    master.fromTo(sumReveal, { autoAlpha: 0, y: 10 },
+      { autoAlpha: 1, y: 0, duration: 0.45, ease: IN_EASE, stagger: REVEAL_STAG, immediateRender: false },
+      sumGen ? '>-0.15' : '<+0.1');
+    master.to({}, { duration: T_REVEAL });
+
+    if (sumDoc) {
+      master.to(sumDoc, { y: DOC_SCROLL, duration: DOC_DUR, ease: 'power2.inOut' });
+      master.to({}, { duration: T_SUMMARY });
+    } else {
+      master.to({}, { duration: T_SUMMARY });
+    }
 
 
     tlHide(master, tiles, '>', { stagger: TILE_STAG * 0.6 });

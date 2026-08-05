@@ -78,6 +78,14 @@
   .biz-animation_panel-tab.is-active { opacity: 1; font-weight: 600; }
   .biz-animation_panel-content { flex: 1; min-height: 0; }
   .biz-animation_transcript-line { margin-bottom: 6px; }
+  /* the summary doc scrolls inside the layer, so the layer clips and the doc is taller than it */
+  .biz-animation_panel-layer.is-summary { position: relative; overflow: hidden; }
+  .biz-animation_summary-gen { position: absolute; inset: 0; z-index: 2; background: #fffdf5; padding: 4px; }
+  .biz-animation_summary-gen-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .biz-animation_summary-gen-list { margin: 0; padding-left: 16px; font-size: 11px; opacity: .8; }
+  .biz-animation_summary-doc { position: relative; }
+  .biz-animation_sto-btn { font-size: 10px; }
+  .biz-animation_sto-btn.is-resume { position: absolute; }
   .biz-animation_transcript-speaker { opacity: .5; font-size: 10px; }
   .biz-animation_summary-item { margin-top: 3px; }
   .biz-animation_panel-footer { display: flex; gap: 10px; opacity: .55; padding-top: 6px; }
@@ -243,6 +251,15 @@
             </div>
           </div>
           <div class="biz-animation_panel-layer is-summary">
+            <div class="biz-animation_summary-gen">
+              <div class="biz-animation_summary-gen-title">Generating summary…</div>
+              <ul class="biz-animation_summary-gen-list">
+                <li>Reading transcript</li>
+                <li>Pulling out actions</li>
+                <li>Checking SLA mentions</li>
+              </ul>
+            </div>
+            <div class="biz-animation_summary-doc">
             <div class="biz-animation_summary-badge"><div class="biz-animation_text">Enhanced Summary</div></div>
             <div class="biz-animation_summary-block">
               <p class="biz-animation_summary-block biz-animation_summary-paragraph">Live support operations reviewed ahead of the launch push.</p>
@@ -255,9 +272,12 @@
               <div class="biz-animation_resume-wrap"><div class="biz-animation_resume">Resume</div></div>
               <div class="biz-animation_ask-wrap"><div class="biz-animation_text-ask">Ask anything</div></div>
             </div>
+            </div>
           </div>
         </div>
         <div class="biz-animation_panel-footer">
+          <span class="biz-animation_sto-btn is-stop">Stop</span>
+          <span class="biz-animation_sto-btn is-resume">Resume</span>
           <span class="biz-animation_panel-footer-stop">Stop</span>
           <span>Ask anything</span>
           <span class="biz-animation_panel-spacer"></span>
