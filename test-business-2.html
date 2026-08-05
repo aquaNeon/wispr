@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>business.js test</title>
+<style>
+  /* Rough stand-in for the Webflow styles: enough geometry to see the beats fire.
+     SVG icons are stubbed - the script never touches them. */
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, sans-serif; background: #0d0d0d; color: #f4f4e8;
+         display: grid; place-items: center; min-height: 100vh; }
+
+  .biz-animation_wrap { position: relative; width: min(1100px, 92vw); aspect-ratio: 16/8;
+    border-radius: 24px; overflow: hidden; background: #2b1c14; }
+  .biz-animation_bg-visual-wrap { position: absolute; inset: 0; }
+  .biz-animation_visual { width: 100%; height: 100%; object-fit: cover; opacity: .9; }
+
+  .biz-animation_nav-wrap { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%);
+    display: grid; gap: 12px; justify-items: center; z-index: 5; }
+
+  .biz-animation_pill { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px;
+    border-radius: 999px; background: #111; color: #fff; font-size: 15px; white-space: nowrap; }
+  .biz-animation_pill-key { background: #333; border-radius: 6px; padding: 2px 8px; }
+  .biz-animation_pill-icon { width: 16px; height: 16px; }
+
+  .biz-animation_chat { width: 420px; background: #f6f4ea; color: #1a1a1a; border-radius: 12px;
+    padding: 10px 12px; }
+  .biz-animation_chat-text { font-size: 13px; line-height: 1.35; min-height: 34px; }
+  .biz-animation_chat-text.is-placeholder { opacity: .45; }
+  .biz-animation_chat-bar { display: flex; justify-content: space-between; margin-top: 8px; }
+  .biz-animation_chat-left, .biz-animation_chat-right { display: flex; gap: 8px; opacity: .5; }
+  .biz-animation_chat-icon, .biz-animation_chat-icon-big-wrap,
+  .biz-animation_chat-right-icon-big-wrap, .biz-animation_chat-right-icon-small-wrap
+    { width: 16px; height: 16px; background: currentColor; opacity: .35; border-radius: 3px; }
+
+  .biz-animation_meeting-card { display: flex; align-items: center; gap: 16px; background: #111;
+    border-radius: 14px; padding: 10px 12px; }
+  .biz-animation_meeting-badge { width: 26px; height: 26px; background: #d8a24a; border-radius: 6px; }
+  .biz-animation_meeting-title { font-size: 14px; }
+  .biz-animation_meeting-meta { font-size: 12px; opacity: .6; }
+  .biz-animation_meeting-cta { display: flex; gap: 8px; background: #1d1d1d; border-radius: 10px;
+    padding: 6px 10px; font-size: 12px; }
+
+  .biz-animation_nav-buttons { display: flex; gap: 10px; }
+  .biz-animation_nav-button { width: 38px; height: 38px; border-radius: 999px; background: #111;
+    display: grid; place-items: center; }
+  .biz-animation_nav-icon { width: 18px; height: 18px; }
+
+  .biz-animation_recorder { background: #111; border-radius: 999px; padding: 10px 18px; }
+  .biz-animation_recorder-dots { display: flex; gap: 5px; }
+  .biz-animation_recorder-dot { width: 4px; height: 4px; border-radius: 999px; background: #9aa; }
+  .biz-animation_wave { display: flex; align-items: center; gap: 3px; height: 18px; }
+  .biz-animation_wave-bar { display: flex; align-items: center; }
+
+  .biz-animation_panel-wrap { position: absolute; inset: 0; z-index: 4; }
+  .biz-animation_people-item { position: absolute; width: 74px; height: 74px; border-radius: 10px;
+    overflow: hidden; background: #444; }
+  .biz-animation_people-item.is-1 { left: 34%; top: 14%; }
+  .biz-animation_people-item.is-2 { right: 27%; top: 42%; }
+  .biz-animation_people-item.is-3 { left: 6%; top: 52%; }
+  .biz-animation_people-item.is-speaking { outline: 2px solid #6cf; }
+  .biz-animation_people-visual { width: 100%; height: 100%; object-fit: cover; }
+
+  .biz-animation_panel { position: absolute; right: 3%; top: 8%; width: 300px; height: 78%;
+    background: #f6f4ea; color: #1a1a1a; border-radius: 10px; display: flex; flex-direction: column;
+    overflow: hidden; font-size: 11px; }
+  .biz-animation_panel-chrome { display: flex; justify-content: space-between; padding: 6px 8px; }
+  .biz-animation_panel-dots-wrap { display: flex; gap: 4px; }
+  .biz-animation_panel-dot { width: 7px; height: 7px; border-radius: 999px; background: #bbb; }
+  .biz-animation_panel-dot.is-red { background: #f2685f; }
+  .biz-animation_panel-dot.is-yellow { background: #f4bf4f; }
+  .biz-animation_panel-dot.is-green { background: #62c554; }
+  .biz-animation_inner-panel { padding: 8px 12px; flex: 1; display: flex; flex-direction: column;
+    min-height: 0; }
+  .biz-animation_panel-title { font-size: 14px; margin-bottom: 6px; }
+  .biz-animation_panel-tabs { display: flex; gap: 12px; margin-bottom: 8px; opacity: .55; }
+  .biz-animation_panel-tab.is-active { opacity: 1; font-weight: 600; }
+  .biz-animation_panel-content { flex: 1; min-height: 0; }
+  .biz-animation_transcript-line { margin-bottom: 6px; }
+  /* the summary doc scrolls inside the layer, so the layer clips and the doc is taller than it */
+  .biz-animation_panel-layer.is-summary { position: relative; overflow: hidden; }
+  .biz-animation_summary-gen { position: absolute; inset: 0; z-index: 2; background: #fffdf5; padding: 4px; }
+  .biz-animation_summary-gen-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .biz-animation_summary-gen-list { margin: 0; padding-left: 16px; font-size: 11px; opacity: .8; }
+  .biz-animation_summary-doc { position: relative; }
+  .biz-animation_sto-btn { font-size: 10px; }
+  .biz-animation_sto-btn.is-resume { position: absolute; }
+  .biz-animation_transcript-speaker { opacity: .5; font-size: 10px; }
+  .biz-animation_summary-item { margin-top: 3px; }
+  .biz-animation_panel-footer { display: flex; gap: 10px; opacity: .55; padding-top: 6px; }
+
+  .biz-animation_meeting-recorder-wrap { position: absolute; left: 44%; top: 68%; z-index: 6; }
+  .biz-animation_meeting-recorder { display: flex; align-items: center; gap: 10px; background: #111;
+    border-radius: 999px; padding: 8px 14px; color: #FFFFEB; }
+  /* deliberately NO width/height on .biz-animation_wave.is-meeting - the Webflow svg is
+     width="100%" with no height, and the script has to survive that on its own */
+  .biz-animation_meeting-recorder-stop { width: 14px; height: 14px; border-radius: 3px; background: #62c554; }
+
+  #probe { position: fixed; left: 10px; bottom: 10px; font: 12px monospace; opacity: .7; }
+
+  /* stand-in for the Webflow tablet-and-down rules: the composer goes narrow and the panel
+     shrinks. the point of the test is that the script's stacks stay centred against this. */
+  @media (max-width: 991px) {
+    .biz-animation_wrap { width: 94vw; aspect-ratio: 3/5; }
+    .biz-animation_chat { width: min(300px, 84vw); }
+    .biz-animation_panel { position: static; width: 88%; height: auto; margin: 8% auto 0; }
+    .biz-animation_nav-wrap { bottom: 4%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="biz-animation_wrap">
+  <div class="biz-animation_bg-visual-wrap">
+    <img src="https://cdn.prod.website-files.com/682f84b3838c89f8ff7667db/6a6fddc513f05253e2fe9867_bg_base.png" alt="" class="biz-animation_visual">
+  </div>
+
+  <div class="biz-animation_nav-wrap">
+    <div class="biz-animation_pill-wrap">
+      <div class="biz-animation_pill is-hint">
+        <span class="biz-animation_pill-text">Hold</span>
+        <div class="biz-animation_pill-key"><span class="biz-animation_pill-text is-key">fn</span></div>
+        <span class="biz-animation_pill-text">to dictate</span>
+      </div>
+      <div class="biz-animation_pill is-slack">
+        <svg viewBox="0 0 30 30" class="biz-animation_pill-icon"><circle cx="15" cy="15" r="8" fill="currentColor"/></svg>
+        <span class="biz-animation_pill-text">Formatted for Slack</span>
+      </div>
+    </div>
+
+    <div class="biz-animation_chat-wrap">
+      <div class="biz-animation_chat">
+        <div class="biz-animation_chat-body">
+          <p class="biz-animation_chat-text is-placeholder">Message...</p>
+        </div>
+        <div class="biz-animation_chat-bar">
+          <div class="biz-animation_chat-left">
+            <div class="biz-animation_chat-icon-big-wrap"></div>
+            <div class="biz-animation_chat-icon"></div>
+            <div class="biz-animation_chat-icon"></div>
+            <div class="biz-animation_chat-icon"></div>
+          </div>
+          <div class="biz-animation_chat-right">
+            <div class="biz-animation_chat-right-icon-big-wrap"></div>
+            <div class="biz-animation_chat-right-icon-small-wrap"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="biz-animation_meeting-wrap">
+      <div class="biz-animation_meeting-card">
+        <div class="biz-animation_meeting-badge"></div>
+        <div class="biz-animation_meeting-info-wrap">
+          <p class="biz-animation_meeting-title">Product launch review</p>
+          <div class="biz-animation_meeting-info-bot">
+            <div class="biz-animation_meeting-dot"></div>
+            <div class="biz-animation_meeting-meta">In 2 min • Brief</div>
+          </div>
+        </div>
+        <div class="biz-animation_meeting-cta">
+          <div class="biz-animation_meeting-cta-body">
+            <div class="biz-animation_meeting-cta-label">
+              <p class="biz-animation_meeting-cta-title">Join Meeting</p>
+              <p class="biz-animation_meeting-cta-sub">&amp; Start Notetaker</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="biz-animation_nav">
+      <div class="biz-animation_nav-buttons">
+        <div class="biz-animation_nav-button"><svg viewBox="0 0 24 24" class="biz-animation_nav-icon" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/></svg></div>
+        <div class="biz-animation_nav-button is-mic"><svg viewBox="0 0 24 24" class="biz-animation_nav-icon" fill="none" stroke="currentColor"><rect x="9" y="3" width="6" height="11" rx="3"/></svg></div>
+        <div class="biz-animation_nav-button is-recording"><svg viewBox="0 0 24 24" class="biz-animation_nav-icon" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.6" fill="currentColor"/></svg></div>
+      </div>
+      <div class="biz-animation_recorder">
+        <div class="biz-animation_recorder-dots">
+          <span class="biz-animation_recorder-dot"></span><span class="biz-animation_recorder-dot"></span>
+          <span class="biz-animation_recorder-dot"></span><span class="biz-animation_recorder-dot"></span>
+          <span class="biz-animation_recorder-dot"></span><span class="biz-animation_recorder-dot"></span>
+          <span class="biz-animation_recorder-dot"></span><span class="biz-animation_recorder-dot"></span>
+          <span class="biz-animation_recorder-dot"></span>
+        </div>
+        <!-- PATH bars, the way Figma exports a rounded capsule: no width/height/rx to animate.
+             the script rebuilds each one as a rect from its bounding box. -->
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 29" fill="none" class="biz-animation_wave is-paths">
+          <path d="M0 13.25C0 12.0074 1.00736 11 2.25 11C3.49264 11 4.5 12.0074 4.5 13.25V15.25C4.5 16.4926 3.49264 17.5 2.25 17.5C1.00736 17.5 0 16.4926 0 15.25V13.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+          <path d="M8.5 8.25C8.5 7.00736 9.50736 6 10.75 6C11.9926 6 13 7.00736 13 8.25V20.25C13 21.4926 11.9926 22.5 10.75 22.5C9.50736 22.5 8.5 21.4926 8.5 20.25V8.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+          <path d="M17 2.25C17 1.00736 18.0074 0 19.25 0C20.4926 0 21.5 1.00736 21.5 2.25V26.25C21.5 27.4926 20.4926 28.5 19.25 28.5C18.0074 28.5 17 27.4926 17 26.25V2.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+          <path d="M25.5 10.25C25.5 9.00736 26.5074 8 27.75 8C28.9926 8 30 9.00736 30 10.25V18.25C30 19.4926 28.9926 20.5 27.75 20.5C26.5074 20.5 25.5 19.4926 25.5 18.25V10.25Z" fill="currentColor" class="biz-animation_wave-bar"/>
+        </svg>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="biz-animation_panel-wrap">
+    <div class="biz-animation_people-wrap">
+      <div data-biz-speaker="mikel" class="biz-animation_people-item is-1">
+        <div class="biz-animation_people-visual-wrap"><img src="https://cdn.prod.website-files.com/682f84b3838c89f8ff7667db/6a6c5014e390b944cac5f52f_Image%20Container.webp" alt="" class="biz-animation_people-visual"></div>
+      </div>
+      <div data-biz-speaker="zharia" class="biz-animation_people-item is-2">
+        <div class="biz-animation_people-visual-wrap"><img src="https://cdn.prod.website-files.com/682f84b3838c89f8ff7667db/6a6c5014621b7716556910b4_Frame%202147238113.webp" alt="" class="biz-animation_people-visual"></div>
+      </div>
+      <div data-biz-speaker="hayle" class="biz-animation_people-item is-3">
+        <div class="biz-animation_people-visual-wrap"><img src="https://cdn.prod.website-files.com/682f84b3838c89f8ff7667db/6a6c5013ec27fe59b8a3b338_Frame%202147238114.webp" alt="" class="biz-animation_people-visual"></div>
+      </div>
+    </div>
+
+    <div class="biz-animation_panel">
+      <div class="biz-animation_panel-chrome">
+        <div class="biz-animation_pane-chrome-left">
+          <div class="biz-animation_panel-dots-wrap">
+            <div class="biz-animation_panel-dot is-red"></div>
+            <div class="biz-animation_panel-dot is-yellow"></div>
+            <div class="biz-animation_panel-dot is-green"></div>
+          </div>
+        </div>
+        <div class="biz-animation_pane-chrome-right"><div class="biz-animation_share-wrap">Share</div></div>
+      </div>
+      <div class="biz-animation_inner-panel">
+        <h3 class="biz-animation_panel-title">Product launch review</h3>
+        <div class="biz-animation_panel-tabs">
+          <div class="biz-animation_panel-tab">My thoughts<span class="biz-animation_panel-tab-line"></span></div>
+          <div class="biz-animation_panel-tab is-active">Transcript<span class="biz-animation_panel-tab-line"></span></div>
+          <div class="biz-animation_panel-tab">Summary<span class="biz-animation_panel-tab-line"></span></div>
+        </div>
+        <div class="biz-animation_panel-content">
+          <div class="biz-animation_panel-layer is-transcript">
+            <div class="biz-animation_panel-meta"><span class="biz-animation_timer">28:30</span></div>
+            <div class="biz-animation_transcript">
+              <div class="biz-animation_transcript-line">
+                <div class="biz-animation_transcript-speaker">Anouk</div>
+                <div class="biz-animation_transcript-text">Can everyone see the CSAT dashboard?</div>
+              </div>
+              <div class="biz-animation_transcript-line">
+                <div class="biz-animation_transcript-speaker">Emeka</div>
+                <div class="biz-animation_transcript-text">Yeah, I'll route the escalation to tier two after this.</div>
+              </div>
+              <div class="biz-animation_transcript-line">
+                <div class="biz-animation_transcript-speaker">Anouk</div>
+                <div class="biz-animation_transcript-text">Did we close out the Okonkwo chargeback in Zendesk?</div>
+              </div>
+              <div class="biz-animation_transcript-line">
+                <div class="biz-animation_transcript-speaker">Bastien</div>
+                <div class="biz-animation_transcript-text">That's been holding up the RMA for two weeks.</div>
+              </div>
+            </div>
+          </div>
+          <div class="biz-animation_panel-layer is-summary">
+            <div class="biz-animation_summary-gen">
+              <div class="biz-animation_summary-gen-title">Generating summary…</div>
+              <ul class="biz-animation_summary-gen-list">
+                <li>Reading transcript</li>
+                <li>Pulling out actions</li>
+                <li>Checking SLA mentions</li>
+              </ul>
+            </div>
+            <div class="biz-animation_summary-doc">
+            <div class="biz-animation_summary-badge"><div class="biz-animation_text">Enhanced Summary</div></div>
+            <div class="biz-animation_summary-block">
+              <p class="biz-animation_summary-block biz-animation_summary-paragraph">Live support operations reviewed ahead of the launch push.</p>
+              <p class="biz-animation_summary-heading">Escalations &amp; SLA</p>
+              <div class="biz-animation_summary-item">• Emeka to route outstanding escalations to tier two post-call</div>
+              <div class="biz-animation_summary-item">• P1 backlog cleared — aging tickets flagged as first priority</div>
+              <div class="biz-animation_summary-item">• On-call lead to be pinged about SLA breaches</div>
+            </div>
+            <div class="biz-animation_bottom_wrap">
+              <div class="biz-animation_resume-wrap"><div class="biz-animation_resume">Resume</div></div>
+              <div class="biz-animation_ask-wrap"><div class="biz-animation_text-ask">Ask anything</div></div>
+            </div>
+            </div>
+          </div>
+        </div>
+        <div class="biz-animation_panel-footer">
+          <span class="biz-animation_sto-btn is-stop">Stop</span>
+          <span class="biz-animation_sto-btn is-resume">Resume</span>
+          <span class="biz-animation_panel-footer-stop">Stop</span>
+          <span>Ask anything</span>
+          <span class="biz-animation_panel-spacer"></span>
+          <span>What did I miss?</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="biz-animation_meeting-recorder-wrap">
+    <div class="biz-animation_meeting-recorder">
+      <!-- the user's live Webflow markup: ONE compound path holding all five bars, and no
+           element carrying biz-animation_wave-bar at all. -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 48 48" fill="none" class="biz-animation_wave is-meeting"><path d="M17 35.2C15.8954 35.2 15 34.3046 15 33.2L15 16.8C15 15.6954 15.8954 14.8 17 14.8C18.1046 14.8 19 15.6954 19 16.8L19 33.2C19 34.3046 18.1046 35.2 17 35.2ZM25 42C23.8954 42 23 41.1046 23 40L23 10C23 8.89543 23.8954 8 25 8C26.1046 8 27 8.89543 27 10L27 40C27 41.1046 26.1046 42 25 42ZM9 28.4C7.89543 28.4 7 27.5046 7 26.4L7 23.6C7 22.4954 7.89543 21.6 9 21.6C10.1046 21.6 11 22.4954 11 23.6L11 26.4C11 27.5046 10.1046 28.4 9 28.4ZM33 35.2C31.8954 35.2 31 34.3046 31 33.2L31 16.8C31 15.6954 31.8954 14.8 33 14.8C34.1046 14.8 35 15.6954 35 16.8V33.2C35 34.3046 34.1046 35.2 33 35.2ZM41 28.4C39.8954 28.4 39 27.5046 39 26.4V23.6C39 22.4954 39.8954 21.6 41 21.6C42.1046 21.6 43 22.4954 43 23.6V26.4C43 27.5046 42.1046 28.4 41 28.4Z" fill="currentColor"></path></svg>
+      <div class="biz-animation_meeting-recorder-stop"></div>
+    </div>
+  </div>
+</div>
+
+<div id="probe">booting…</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="./business-2.js"></script>
+<script>
+  // probe: reports the loop length and which beat is on screen, for the smoke test
+  setTimeout(function () {
+    var p = document.getElementById('probe');
+    if (!window.BizHero) { p.textContent = 'BizHero missing — script did not init'; return; }
+    var tl = window.BizHero.timeline;
+    console.log('[probe] loop duration', tl.duration().toFixed(2));
+    setInterval(function () {
+      p.textContent = 'loop ' + tl.duration().toFixed(1) + 's  t=' + tl.time().toFixed(1) +
+        '  chat="' + (document.querySelector('.biz-animation_chat-text') || {}).textContent.slice(0, 24) + '"';
+    }, 200);
+  }, 300);
+</script>
+</body>
+</html>
