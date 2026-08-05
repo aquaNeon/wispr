@@ -212,13 +212,9 @@
   // in every engine, and it works whether or not the card is currently rendered. Cached per
   // string+font: it is only called from measure(), but that runs on every resize and webfont load.
   var canvasCtx = null, canvasCache = {};
-  function measureOnCanvas(textEl, tp) {
-    var src = tp || textEl;
-    if (!src) { return 0; }
-    var str = src.textContent || '';
-    if (!str) { return 0; }
+  function measureOnCanvasStr(str, cs) {
+    if (!str || !cs) { return 0; }
     try {
-      var cs  = window.getComputedStyle(src);
       var key = str + '|' + cs.fontSize + '|' + cs.fontFamily + '|' + cs.fontWeight;
       if (canvasCache[key] !== undefined) { return canvasCache[key]; }
       if (!canvasCtx) {
@@ -231,6 +227,50 @@
       canvasCache[key] = w;
       return w;
     } catch (e) { return 0; }
+  }
+
+  function measureOnCanvas(textEl, tp) {
+    var src = tp || textEl;
+    if (!src) { return 0; }
+    return measureOnCanvasStr(src.textContent || '', window.getComputedStyle(src));
+  }
+
+  // ==========================================================================
+  // Devanagari on a curve, WebKit only.
+  //
+  // textPath places every GLYPH separately along the curve. Devanagari does not survive that: the
+  // matras belong to a base letter, and WebKit draws each orphaned mark on a U+25CC dotted circle.
+  // Blink keeps the clusters together and renders the line correctly, so it MUST be left alone —
+  // replacing textPath everywhere is what kept breaking Chrome.
+  //
+  // Detection is a measurement, not a browser name: getComputedTextLength() on a <text> wrapping a
+  // <textPath> reports the glyphs actually placed on the path in WebKit (about the path's length,
+  // ~943 here) and the whole string in Blink (~6700). Canvas gives the true string width to compare
+  // against. That keys off the defect itself, so it stops applying if WebKit fixes it.
+  // ==========================================================================
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function graphemes(str) {
+    var raw = null;
+    if (window.Intl && window.Intl.Segmenter && window.Array && Array.from) {
+      try {
+        raw = Array.from(new window.Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(str),
+                         function (s) { return s.segment; });
+      } catch (e) { raw = null; }
+    }
+    if (!raw || !raw.length) {
+      raw = str.match(/[\s\S][̀-ͯऀ-ःऺ-ॏ॑-ॗॢॣ]*/g) || [];
+    }
+    // a virama binds two consonants into one conjunct — keep those in one element or the ligature
+    // splits down the middle
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      var c = raw[i];
+      while (/्$/.test(c) && i + 1 < raw.length) { c += raw[++i]; }
+      out.push(c);
+    }
+    return out;
   }
 
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
@@ -385,6 +425,152 @@
       } catch (e) {}
     }
 
+    // ---- WebKit-only cluster rig (see the note above graphemes()) ----
+    // Built ONLY once the card is genuinely on screen. Everything here depends on measuring text,
+    // and card 0 sits in a display:none wrap until the stack shows it — measuring there returns 0
+    // in every engine. Earlier versions built early and guessed, and the guesses were wrong by
+    // roughly ten times, which emptied the card. There are no fallbacks now: no measurement, no rig.
+    var rig = null, decided = false, decideTries = 0, lastDecide = 0;
+
+    function isOnScreen() {
+      var host = svgEl || textEl;
+      return !!(host && host.getClientRects && host.getClientRects().length);
+    }
+
+    // true  → this engine clips the measurement to the path, i.e. it splits clusters
+    // false → this engine reports the whole string and renders the line properly
+    // null  → cannot tell yet
+    function splitsClusters() {
+      if (!textEl || !pathEl) { return false; }
+      var onPath = 0;
+      try { onPath = textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; } catch (e) { return null; }
+      if (!(onPath > 0)) { return null; }
+      var whole = measureOnCanvasStr(LINE, window.getComputedStyle(tpEl || textEl));
+      if (!(whole > 0)) { return null; }
+      return onPath < whole * 0.6;
+    }
+
+    function buildRig() {
+      if (!textEl || !pathEl || !LINE) { return null; }
+      var len = 0;
+      try { len = pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e) { return null; }
+      if (!(len > 0)) { return null; }
+
+      var cs = window.getComputedStyle(tpEl || textEl);
+      var g  = document.createElementNS(SVG_NS, 'g');
+      // the embed sizes the textPath by id (#marquee-text-lang); these elements will not match that
+      // selector, so carry the rendered values over explicitly
+      g.style.fontFamily    = cs.fontFamily;
+      g.style.fontSize      = cs.fontSize;
+      g.style.fontWeight    = cs.fontWeight;
+      g.style.fontStyle     = cs.fontStyle;
+      g.style.letterSpacing = cs.letterSpacing;
+      g.setAttribute('fill', cs.fill || 'currentColor');
+      textEl.parentNode.insertBefore(g, textEl.nextSibling);
+
+      // Positions come from the whole line as the font shapes it. Measured in isolation the clusters
+      // lose their shaping context and sum ~11% short, which crowds the Devanagari.
+      // xml:space=preserve is REQUIRED: SVG collapses each three-space separator to one, which left
+      // getNumberOfChars() at 420 against a 430-character string — and Chrome clamps rather than
+      // throwing, so every index past the first separator silently measured the wrong character.
+      var probe = document.createElementNS(SVG_NS, 'text');
+      probe.setAttribute('x', '0');
+      probe.setAttribute('y', '0');
+      probe.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+      probe.style.visibility = 'hidden';
+      probe.textContent = LINE;
+      g.appendChild(probe);
+
+      function advAt(k) {
+        if (k <= 0) { return 0; }
+        try { return probe.getSubStringLength(0, k); } catch (e) { return -1; }
+      }
+      var nChars = 0;
+      try { nChars = probe.getNumberOfChars ? probe.getNumberOfChars() : 0; } catch (eN) { nChars = 0; }
+      var total = advAt(LINE.length);
+      if (nChars !== LINE.length || !(total > 0)) {   // cannot measure honestly — do not build
+        g.parentNode.removeChild(g);
+        return null;
+      }
+
+      var items = [], idx = 0;
+      graphemes(LINE).forEach(function (c) {
+        var a0 = advAt(idx), a1 = advAt(idx + c.length);
+        idx += c.length;
+        if (/^\s+$/.test(c)) { return; }
+        var t = document.createElementNS(SVG_NS, 'text');
+        t.setAttribute('text-anchor', 'middle');
+        t.textContent = c;
+        g.appendChild(t);
+        items.push({ el: t, mid: (a0 + a1) / 2, shown: true });
+      });
+      g.removeChild(probe);
+      if (!items.length) { g.parentNode.removeChild(g); return null; }
+
+      // sample the curve once; three getPointAtLength calls per cluster per frame is real cost
+      var STEP = 2, n = Math.ceil(len / STEP) + 1, xs = [], ys = [], ang = [], i, pt;
+      for (i = 0; i < n; i++) {
+        try { pt = pathEl.getPointAtLength(Math.min(len, i * STEP)); } catch (e3) { pt = { x: i * STEP, y: 0 }; }
+        xs.push(pt.x); ys.push(pt.y);
+      }
+      for (i = 0; i < n; i++) {
+        var lo = i > 0 ? i - 1 : 0, hi = i < n - 1 ? i + 1 : n - 1;
+        ang.push(Math.atan2(ys[hi] - ys[lo], xs[hi] - xs[lo]) * 180 / Math.PI);
+      }
+
+      textEl.style.display = 'none';   // only now is the replacement real
+      return { g: g, items: items, total: total, len: len, step: STEP, n: n,
+               xs: xs, ys: ys, ang: ang, lo: 0, hi: -1 };
+    }
+
+    function destroyRig() {
+      if (!rig) { return; }
+      if (rig.g && rig.g.parentNode) { rig.g.parentNode.removeChild(rig.g); }
+      if (textEl) { textEl.style.display = ''; }
+      rig = null;
+    }
+
+    function placeRig(offset) {
+      var it = rig.items, N = it.length, len = rig.len, i;
+      // mids ascend, so the visible run is contiguous — walk that, not all ~250 elements
+      var loBound = -offset, hiBound = len - offset, mid, a = 0, b = N - 1, lo, hi;
+      while (a <= b) { mid = (a + b) >> 1; if (it[mid].mid < loBound) { a = mid + 1; } else { b = mid - 1; } }
+      lo = a;
+      a = 0; b = N - 1;
+      while (a <= b) { mid = (a + b) >> 1; if (it[mid].mid > hiBound) { b = mid - 1; } else { a = mid + 1; } }
+      hi = b;
+
+      for (i = rig.lo; i <= rig.hi; i++) {
+        if ((i < lo || i > hi) && it[i] && it[i].shown) { it[i].el.setAttribute('display', 'none'); it[i].shown = false; }
+      }
+      for (i = lo; i <= hi; i++) {
+        var item = it[i];
+        if (!item.shown) { item.el.removeAttribute('display'); item.shown = true; }
+        var d = offset + item.mid, fi = d / rig.step, i0 = fi | 0;
+        if (i0 < 0) { i0 = 0; } else if (i0 > rig.n - 1) { i0 = rig.n - 1; }
+        var i1 = i0 < rig.n - 1 ? i0 + 1 : i0, tt = fi - i0;
+        var x = rig.xs[i0] + (rig.xs[i1] - rig.xs[i0]) * tt;
+        var y = rig.ys[i0] + (rig.ys[i1] - rig.ys[i0]) * tt;
+        item.el.setAttribute('transform',
+          'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') rotate(' + rig.ang[i0].toFixed(1) + ')');
+      }
+      rig.lo = lo; rig.hi = hi;
+    }
+
+    // decide once, on screen, then never again
+    function decideOnce() {
+      if (decided || decideTries > 12 || !isOnScreen()) { return; }
+      var now = (window.performance && window.performance.now) ? window.performance.now() : +new Date();
+      if (now - lastDecide < 250) { return; }
+      lastDecide = now;
+      decideTries++;
+      var splits = splitsClusters();
+      if (splits === null) { return; }        // still unmeasurable, try again shortly
+      if (!splits) { decided = true; return; } // Blink and friends: textPath is correct here
+      var built = buildRig();
+      if (built) { rig = built; span = rig.total; decided = true; }
+    }
+
     var lastFlagI = -1;
     function render(progress) {
       if (SEGS.length === 0) { return; }
@@ -402,7 +588,10 @@
         a -= half; b += half;
       }
       var ff = a + (b - a) * p;
-      if (textEl && span > 0) {
+      decideOnce();
+      if (rig) {
+        placeRig(anchorArc - ff * rig.total);
+      } else if (textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
       }
 
@@ -415,7 +604,7 @@
       if (flagIdx !== lastFlagI) { setActive(SEGS[flagIdx]); lastFlagI = flagIdx; }
     }
 
-    return { render: render, measure: measure, destroy: function () {} };
+    return { render: render, measure: measure, destroy: destroyRig };
   }
 
   // ---- card 1: chips → form in → word types → scrolls to the toggles + Add word → form out → chips +1 ----
