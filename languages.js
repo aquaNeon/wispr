@@ -212,13 +212,9 @@
   // in every engine, and it works whether or not the card is currently rendered. Cached per
   // string+font: it is only called from measure(), but that runs on every resize and webfont load.
   var canvasCtx = null, canvasCache = {};
-  function measureOnCanvas(textEl, tp) {
-    var src = tp || textEl;
-    if (!src) { return 0; }
-    var str = src.textContent || '';
-    if (!str) { return 0; }
+  function measureOnCanvasStr(str, cs) {
+    if (!str || !cs) { return 0; }
     try {
-      var cs  = window.getComputedStyle(src);
       var key = str + '|' + cs.fontSize + '|' + cs.fontFamily + '|' + cs.fontWeight;
       if (canvasCache[key] !== undefined) { return canvasCache[key]; }
       if (!canvasCtx) {
@@ -231,6 +227,11 @@
       canvasCache[key] = w;
       return w;
     } catch (e) { return 0; }
+  }
+  function measureOnCanvas(textEl, tp) {
+    var src = tp || textEl;
+    if (!src) { return 0; }
+    return measureOnCanvasStr(src.textContent || '', window.getComputedStyle(src));
   }
 
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
@@ -349,6 +350,14 @@
       try { pathLen = pathEl && pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e2) {}
       if (!pathLen && svgEl && svgEl.viewBox && svgEl.viewBox.baseVal) { pathLen = svgEl.viewBox.baseVal.width; }
       anchorArc = ANCHOR * pathLen;
+      // cluster widths change with the font, so the rig is rebuilt when the size actually moves —
+      // not on every refresh, since ScrollTrigger fires those on mobile address-bar resizes too and
+      // rebuilding a few hundred elements there would be its own stutter
+      if (rig) {
+        var fk = fontKey();
+        if (fk !== rig.fontKey) { destroyRig(); rig = buildRig(); }
+        if (rig) { span = rig.total; }
+      }
       if (LANG_DEBUG) { reportPacing(); }
     }
     measure();
@@ -385,6 +394,152 @@
       } catch (e) {}
     }
 
+    // ---- per-cluster placement, replacing <textPath> ----
+    // textPath positions every GLYPH separately along the curve. Devanagari does not survive that:
+    // matras and conjuncts belong to a base letter, and detaching them makes WebKit draw each
+    // orphaned mark on a U+25CC dotted circle — the dots under the Hindi. Blink hides the problem;
+    // Safari shows it.
+    //
+    // A grapheme cluster is the right unit. For Latin a cluster IS one character, so every letter is
+    // placed and rotated individually exactly as textPath does and the look is unchanged. For
+    // Devanagari the base keeps its marks, so nothing comes loose. Placing whole WORDS was tried and
+    // rejected: a word can only sit as one straight segment and stops following the curve.
+    //
+    // It is also cheaper. Nothing re-shapes per frame — each cluster is shaped once at build time and
+    // only its transform changes after that, where textPath re-solved the whole line every frame.
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function fontKey() {
+      if (!textEl) { return ''; }
+      var cs = window.getComputedStyle(tpEl || textEl);
+      return cs.fontSize + '|' + cs.fontFamily + '|' + cs.fontWeight;
+    }
+
+    function destroyRig() {
+      if (!rig) { return; }
+      if (rig.g && rig.g.parentNode) { rig.g.parentNode.removeChild(rig.g); }
+      if (textEl) { textEl.style.display = ''; }
+      rig = null;
+    }
+
+    function graphemes(str) {
+      var raw;
+      if (window.Intl && window.Intl.Segmenter) {
+        raw = [];
+        var it = new window.Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(str);
+        // no Array.from on the iterator: older engines here predate it on Segments
+        var arr = [];
+        try { arr = Array.prototype.slice.call(Array.from ? Array.from(it) : []); } catch (e) { arr = []; }
+        if (arr.length) { for (var k = 0; k < arr.length; k++) { raw.push(arr[k].segment); } }
+      }
+      if (!raw || !raw.length) {
+        // base character plus any trailing combining marks, Devanagari ranges included
+        raw = str.match(/[\s\S][̀-ͯऀ-ःऺ-ॏ॑-ॗॢॣ]*/g) || [];
+      }
+      // a virama binds two consonants into one conjunct — keep them in a single element or the
+      // ligature splits down the middle
+      var out = [];
+      for (var i = 0; i < raw.length; i++) {
+        var c = raw[i];
+        while (/्$/.test(c) && i + 1 < raw.length) { c += raw[++i]; }
+        out.push(c);
+      }
+      return out;
+    }
+
+    var rig = null;
+
+    function buildRig() {
+      if (!textEl || !pathEl || !LINE) { return null; }
+      var len = 0;
+      try { len = pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e) { return null; }
+      if (!(len > 0)) { return null; }
+
+      var cs = window.getComputedStyle(tpEl || textEl);
+      var g  = document.createElementNS(SVG_NS, 'g');
+      // the embed styles the textPath by id (#marquee-text-lang); the new elements will not match
+      // that selector, so carry the rendered values across explicitly
+      g.style.fontFamily    = cs.fontFamily;
+      g.style.fontSize      = cs.fontSize;
+      g.style.fontWeight    = cs.fontWeight;
+      g.style.fontStyle     = cs.fontStyle;
+      g.style.letterSpacing = cs.letterSpacing;
+      g.setAttribute('fill', cs.fill || 'currentColor');
+      if (cs.baselineShift && cs.baselineShift !== 'baseline') {
+        g.style.baselineShift = cs.baselineShift;
+      }
+      textEl.parentNode.insertBefore(g, textEl.nextSibling);
+      textEl.style.display = 'none';   // the textPath line is replaced, not hidden behind
+
+      var items = [], at = 0;
+      graphemes(LINE).forEach(function (c) {
+        if (/^\s+$/.test(c)) { at += measureOnCanvasStr(c, cs); return; }
+        var t = document.createElementNS(SVG_NS, 'text');
+        t.setAttribute('text-anchor', 'middle');
+        t.textContent = c;
+        g.appendChild(t);
+        var w = 0;
+        try { w = t.getComputedTextLength ? t.getComputedTextLength() : 0; } catch (e2) { w = 0; }
+        if (!(w > 0)) { w = measureOnCanvasStr(c, cs); }   // plain <text> measures fine, but be safe
+        items.push({ el: t, mid: at + w / 2, shown: true });
+        at += w;
+      });
+      if (!items.length) { textEl.style.display = ''; if (g.parentNode) { g.parentNode.removeChild(g); } return null; }
+
+      // sample the curve once. getPointAtLength is cheap but not free, and calling it three times per
+      // cluster per frame on an old machine is exactly the kind of cost this card cannot afford.
+      var STEP = 2, n = Math.ceil(len / STEP) + 1, xs = [], ys = [], ang = [], i, pt;
+      for (i = 0; i < n; i++) {
+        try { pt = pathEl.getPointAtLength(Math.min(len, i * STEP)); } catch (e3) { pt = { x: i * STEP, y: 0 }; }
+        xs.push(pt.x); ys.push(pt.y);
+      }
+      for (i = 0; i < n; i++) {
+        var lo = i > 0 ? i - 1 : 0, hi = i < n - 1 ? i + 1 : n - 1;
+        ang.push(Math.atan2(ys[hi] - ys[lo], xs[hi] - xs[lo]) * 180 / Math.PI);
+      }
+
+      return { g: g, items: items, total: at, len: len, step: STEP, n: n,
+               xs: xs, ys: ys, ang: ang, lo: 0, hi: -1, fontKey: fontKey() };
+    }
+
+    function placeRig(offset) {
+      var it = rig.items, N = it.length, len = rig.len, i;
+
+      // mids ascend, so the visible window is a contiguous slice — walk that, not all ~400 elements
+      var loBound = -offset, hiBound = len - offset;
+      var lo = 0, hi = N - 1, mid;
+      var a = 0, b = N - 1;
+      while (a <= b) { mid = (a + b) >> 1; if (it[mid].mid < loBound) { a = mid + 1; } else { b = mid - 1; } }
+      lo = a;
+      a = 0; b = N - 1;
+      while (a <= b) { mid = (a + b) >> 1; if (it[mid].mid > hiBound) { b = mid - 1; } else { a = mid + 1; } }
+      hi = b;
+
+      for (i = rig.lo; i <= rig.hi; i++) {
+        if ((i < lo || i > hi) && it[i] && it[i].shown) {
+          it[i].el.setAttribute('display', 'none'); it[i].shown = false;
+        }
+      }
+
+      for (i = lo; i <= hi; i++) {
+        var item = it[i];
+        if (!item.shown) { item.el.removeAttribute('display'); item.shown = true; }
+        var d  = offset + item.mid;
+        var fi = d / rig.step, i0 = fi | 0;
+        if (i0 < 0) { i0 = 0; } else if (i0 > rig.n - 1) { i0 = rig.n - 1; }
+        var i1 = i0 < rig.n - 1 ? i0 + 1 : i0, t = fi - i0;
+        var x  = rig.xs[i0] + (rig.xs[i1] - rig.xs[i0]) * t;
+        var y  = rig.ys[i0] + (rig.ys[i1] - rig.ys[i0]) * t;
+        item.el.setAttribute('transform',
+          'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') rotate(' + rig.ang[i0].toFixed(1) + ')');
+      }
+
+      rig.lo = lo; rig.hi = hi;
+    }
+
+    rig = buildRig();
+    if (rig) { span = rig.total; }   // the summed cluster widths ARE the rendered line length
+
     var lastFlagI = -1;
     function render(progress) {
       if (SEGS.length === 0) { return; }
@@ -402,7 +557,9 @@
         a -= half; b += half;
       }
       var ff = a + (b - a) * p;
-      if (textEl && span > 0) {
+      if (rig) {
+        placeRig(anchorArc - ff * rig.total);
+      } else if (textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
       }
 
@@ -415,7 +572,7 @@
       if (flagIdx !== lastFlagI) { setActive(SEGS[flagIdx]); lastFlagI = flagIdx; }
     }
 
-    return { render: render, measure: measure, destroy: function () {} };
+    return { render: render, measure: measure, destroy: destroyRig };
   }
 
   // ---- card 1: chips → form in → word types → scrolls to the toggles + Add word → form out → chips +1 ----
