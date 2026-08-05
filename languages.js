@@ -323,6 +323,7 @@
     // span = rendered length of the line, in arc units. Re-measured after webfonts load + on resize.
     var span = 0, anchorArc = 0;
     function measure() {
+      spanTries = 0;     // a resize or webfont load is a fresh chance; let render() retry again
       try { fitLabelWrap(); } catch (eW) {}     // must never abort the span measure below
       try { span = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
       catch (e) { span = 0; }
@@ -333,6 +334,18 @@
       if (LANG_DEBUG) { reportPacing(); }
     }
     measure();
+
+    // span only, no fitLabelWrap: the retry in render() can run repeatedly, and fitLabelWrap swaps
+    // every language through the label and reads offsetWidth — forcing layout each time. Polling
+    // that at 2.5/sec across the desktop card and four mobile clones is enough to wreck scrolling.
+    function measureSpanOnly() {
+      span = measureSpan(textEl, tpEl);
+      if (!(span > 0)) { return; }
+      var pl = 0;
+      try { pl = pathEl && pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e) {}
+      if (!pl && svgEl && svgEl.viewBox && svgEl.viewBox.baseVal) { pl = svgEl.viewBox.baseVal.width; }
+      anchorArc = ANCHOR * pl;
+    }
 
     // read-only: what each language ACTUALLY costs. the sweep is linear in CHARACTERS but moves the
     // line in RENDERED px, and Devanagari packs very differently from Latin — so equal char counts
@@ -366,7 +379,7 @@
       } catch (e) {}
     }
 
-    var lastFlagI = -1, lastSpanTry = 0;
+    var lastFlagI = -1, lastSpanTry = 0, spanTries = 0;
     function render(progress) {
       if (SEGS.length === 0) { return; }
       var N = SEGS.length;
@@ -389,9 +402,21 @@
       // <text> is 0 in EVERY engine, Chrome included. Chrome happens to re-measure later and
       // recovers; WebKit loses that race and span stays 0 forever. Retry here, where we know we are
       // being drawn. Throttled because measure() re-fits the label wrap, which is not free.
-      if (!(span > 0)) {
+      // Bounded, and only while the card is actually on screen. A card parked in a display:none wrap
+      // (the desktop card, on mobile) can never measure, so polling it is pure cost forever — that is
+      // what dragged the whole page down. Ask the SVG, not the <text>: an unrendered text has no
+      // client rects, but neither does one whose glyphs all fall off the end of the path, which is
+      // precisely the state we are trying to climb out of.
+      if (!(span > 0) && spanTries < 12) {
         var now = (window.performance && performance.now) ? performance.now() : +new Date();
-        if (now - lastSpanTry > 400) { lastSpanTry = now; measure(); }
+        if (now - lastSpanTry > 500) {
+          lastSpanTry = now;
+          var host = svgEl || textEl;
+          if (host && host.getClientRects && host.getClientRects().length) {
+            spanTries++;
+            measureSpanOnly();
+          }
+        }
       }
 
       if (textEl) {
