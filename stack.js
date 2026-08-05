@@ -1643,7 +1643,7 @@
           var lp = (p <= pG) ? 0 : (p >= pHold ? 1 : ((pHold > pG) ? (p - pG) / (pHold - pG) : 1));
           gsap.set(card, {
             x: landDX * lp,
-            y: (S - Math.min(cardRiseDist, Math.max(0, S - sCardStart))) + landDY * lp + CARD_DROP_PX
+            y: (S - Math.min(cardRiseDist, Math.max(0, S - sCardStart))) + landDY * lp + CARD_DROP_PX * (1 - lp)
           });
         }
         popParallax(p);
