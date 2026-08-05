@@ -286,9 +286,7 @@
 
   var MQ_CARD_W    = 1;
 
-  // DIAGNOSTIC: 1 makes narrowPath() bail before it touches d, so the path stays exactly as authored.
-  // Isolates "does rewriting d at runtime break the textPath in WebKit" from everything else.
-  var MQ_PATH_W    = 1;
+  var MQ_PATH_W    = 0.85;
 
   var MQ_PATH_TAILS = true;
   var MQ_PATH_OVER  = 0;
@@ -672,6 +670,20 @@
           parent.insertBefore(textEl, next);
         }
       }
+      // The kb marquee takes x fine in Safari; the flow one renders but ignores every x we write.
+      // The difference is that the kb line sits on a straight path and the flow line on curves.
+      // startOffset is the attribute SVG actually defines for this, and it lives on the <textPath>
+      // itself rather than on its parent — so it does not depend on the parent's x invalidating a
+      // curved-path layout. Same units and same origin here (the path starts at 0, MQ_PATH_OVER is
+      // 0), so this is a like-for-like swap in Chrome.
+      function setMqX(m, v) {
+        var s = String(Math.round(v * 10) / 10);
+        if (m._x === s) { return; }
+        m._x = s;
+        if (m.tp) { m.tp.setAttribute('startOffset', s); }
+        else { m.text.setAttribute('x', s); }
+      }
+
       var marquees = [];
       Array.prototype.forEach.call(section.querySelectorAll('[' + FLOW + '="marquee"]'), function (wrapEl) {
         var textEl = wrapEl.querySelector('text');
@@ -687,13 +699,17 @@
           relinkTextPath(textEl);   // d just changed under the textPath — see the note on relinkTextPath
         }
         var startX = (isKb || MQ_FLOW_FILL) ? 0 : (vbw + MQ_PAD);
-        marquees.push({
-          text: textEl, svg: svgEl, period: period, start: startX, isKb: isKb,
+        var m = {
+          text: textEl, tp: textEl.querySelector('textPath'),
+          svg: svgEl, period: period, start: startX, isKb: isKb,
           vbw: vbw, vbh: vbh, len: 0,
           rand: Math.random(),
           mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1
-        });
-        textEl.setAttribute('x', String(startX));
+        };
+        marquees.push(m);
+        // the authored x would stack on top of the startOffset we drive from here on
+        if (m.tp) { textEl.setAttribute('x', '0'); }
+        setMqX(m, startX);
       });
 
       var mqClock = 0;
@@ -706,7 +722,7 @@
             var dur = (m.isKb ? MQ_DUR_KB : MQ_DUR) / (m.mult || 1);
             var frac = ((mqClock / dur) % 1 + 1) % 1;
             var loopLen = (m.len > m.vbw) ? Math.min(m.period, m.len - m.vbw) : m.period;
-            m.text.setAttribute('x', String(-loopLen * (1 - frac)));
+            setMqX(m, -loopLen * (1 - frac));
             continue;
           }
 
@@ -720,7 +736,7 @@
             var xx = -x;
             x = -((xx + Math.min(xx, per) * m.rand) % per);
           }
-          m.text.setAttribute('x', String(x));
+          setMqX(m, x);
         }
       }
 

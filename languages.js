@@ -366,7 +366,7 @@
       } catch (e) {}
     }
 
-    var lastFlagI = -1;
+    var lastFlagI = -1, lastSpanTry = 0;
     function render(progress) {
       if (SEGS.length === 0) { return; }
       var N = SEGS.length;
@@ -383,8 +383,26 @@
         a -= half; b += half;
       }
       var ff = a + (b - a) * p;
-      if (textEl && span > 0) {
-        textEl.setAttribute('x', String(anchorArc - ff * span));
+
+      // span comes back 0 whenever the card wasn't rendered at measure() time — the desktop stack
+      // keeps inactive cards in a display:none wrap, and getComputedTextLength() on an unrendered
+      // <text> is 0 in EVERY engine, Chrome included. Chrome happens to re-measure later and
+      // recovers; WebKit loses that race and span stays 0 forever. Retry here, where we know we are
+      // being drawn. Throttled because measure() re-fits the label wrap, which is not free.
+      if (!(span > 0)) {
+        var now = (window.performance && performance.now) ? performance.now() : +new Date();
+        if (now - lastSpanTry > 400) { lastSpanTry = now; measure(); }
+      }
+
+      if (textEl) {
+        if (span > 0) {
+          textEl.setAttribute('x', String(anchorArc - ff * span));
+        } else {
+          // NEVER leave the authored x in place: Webflow authors it well past the end of the curve
+          // (1500 against a 943-long path), and text on a path does not render outside the path at
+          // all — so a failed measure showed as no text whatsoever rather than as a still line.
+          textEl.setAttribute('x', String(anchorArc));
+        }
       }
 
       // flag = whichever language's centre is nearest the anchor
