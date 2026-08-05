@@ -585,7 +585,7 @@
     rig = buildRig();
     if (rig) { span = rig.total; }   // the summed cluster widths ARE the rendered line length
 
-    var lastFlagI = -1;
+    var lastFlagI = -1, rigTries = 0, lastRigTry = 0;
     function render(progress) {
       if (SEGS.length === 0) { return; }
       var N = SEGS.length;
@@ -602,6 +602,24 @@
         a -= half; b += half;
       }
       var ff = a + (b - a) * p;
+      // A rig built while the card was still in the display:none wrap could not measure anything and
+      // is running on fallback spacing — which lands almost every cluster off the curve, so the card
+      // reads as empty. measure() rebuilds it, but nothing guarantees a measure() fires once the
+      // card is finally shown. Retry from here, bounded and throttled, and only while it is wrong.
+      if (rig && !rig.exact && rigTries < 8) {
+        var nowMs = (window.performance && window.performance.now) ? window.performance.now() : +new Date();
+        if (nowMs - lastRigTry > 400) {
+          lastRigTry = nowMs;
+          var hostEl = svgEl || textEl;
+          if (hostEl && hostEl.getClientRects && hostEl.getClientRects().length) {
+            rigTries++;
+            destroyRig();
+            rig = buildRig();
+            if (rig) { span = rig.total; }
+          }
+        }
+      }
+
       if (rig) {
         placeRig(anchorArc - ff * rig.total);
       } else if (textEl && span > 0) {
