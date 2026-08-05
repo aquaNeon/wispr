@@ -402,16 +402,10 @@
   // ignored for text on a path, and only Blink/Gecko bend that into "treat it as the start offset",
   // which is what every marquee below was riding on. startOffset is the spec'd control and reads the
   // same in all three, so drive that whenever there IS a textPath.
-  // WebKit re-shapes EVERY glyph on the path on each write, so a redundant one is not free the way it
-  // is in Blink. Round to a tenth and skip writes that land on the same value.
   function setTextOffset(textEl, tp, v) {
     if (!textEl) { return; }
-    var host = tp || textEl;
-    var s = String(Math.round(v * 10) / 10);
-    if (host._off === s) { return; }
-    host._off = s;
-    if (tp) { tp.setAttribute('startOffset', s); }
-    else { textEl.setAttribute('x', s); }
+    if (tp) { tp.setAttribute('startOffset', String(v)); }
+    else { textEl.setAttribute('x', String(v)); }
   }
 
   // SAFARI: getComputedTextLength() on the wrapping <text> comes back 0 there, which collapsed every
@@ -723,12 +717,7 @@
       });
 
       var mqClock = 0;
-      // perf bisect: flowMq(false) in the console freezes the marquees without touching the rest of
-      // the rig, so their share of a slow frame can be read straight off the fps meter
-      var mqOff = false;
-      window.flowMq = function (on) { mqOff = (on === false); return !mqOff; };
       function updateMarquees(p) {
-        if (mqOff) { return; }
         for (var i = 0; i < marquees.length; i++) {
           var m = marquees[i];
           if (MQ_AUTOPLAY) {
