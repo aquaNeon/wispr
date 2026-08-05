@@ -753,13 +753,15 @@
   var FORCE_TIGHT = true;  // collapse per-block 100vh → natural height, so blocks stack tight. false =
                            // respect the authored heights (strip the 100vh in Webflow yourself)
   var LEAD_TOP_VH    = 0.15;  // blank scroll before the first block
-  var LEAD_BOTTOM_VH = 0.1;   // blank scroll after the last. lower = section ends earlier with the last
+  var LEAD_BOTTOM_VH = 0.02;   // blank scroll after the last. lower = section ends earlier with the last
                               // text still visible → next section peeks in
-  var START_LIFT_VH  = 0.55;
+  var START_LIFT_VH  = 0.72;
+  var END_ALIGN      = true;
+  var END_LINE_VH    = 0.5;
   var GAP_VH     = 0;      // extra gap between blocks, in viewports. 0 = tight Webflow stacking. raise it
                            // to give each card a longer reign at centre
   var GAP_PX     = 24;     // fixed px gap between blocks — takes precedence over GAP_VH. 0 = use GAP_VH
-  var STATIC_BLOCKS = false;
+  var STATIC_BLOCKS = true;
   var LAST_STICK  = true;
   var FIRST_STICK = true;
   var DRIFT_FRAC = 0.12;   // sideways drift at centre, as a fraction of column width. 0 = off, negative
@@ -838,6 +840,22 @@
       textWrap.style.paddingTop = (vh * LEAD_TOP_VH) + 'px';
       textWrap.style.paddingBottom = (vh * LEAD_BOTTOM_VH) + 'px';
       textWrap.style.transform = 'translateY(' + (-vh * START_LIFT_VH) + 'px)';
+      if (END_ALIGN && section) {
+        var lineY = vh * END_LINE_VH;
+        var secR  = section.getBoundingClientRect();
+        var lastR = blocks[blocks.length - 1].getBoundingClientRect();
+        var relLast = (lastR.top + lastR.height / 2) - secR.top;
+        var curPB = parseFloat(window.getComputedStyle(textWrap).paddingBottom) || 0;
+        var curMB = parseFloat(window.getComputedStyle(textWrap).marginBottom) || 0;
+        var pb = relLast - lineY + vh - secR.height + curPB + curMB;
+        textWrap.style.paddingBottom = (pb > 0 ? pb : 0) + 'px';
+        textWrap.style.marginBottom  = (pb < 0 ? pb : 0) + 'px';
+        if (LANG_DEBUG) {
+          console.log('[languages] end align: relLast=' + Math.round(relLast) + ' sectionH=' +
+            Math.round(secR.height) + ' line=' + Math.round(lineY) +
+            ' -> ' + (pb < 0 ? ('trim ' + Math.round(-pb) + 'px') : ('pad ' + Math.round(pb) + 'px')));
+        }
+      }
       for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
         b.style.position = 'relative';
