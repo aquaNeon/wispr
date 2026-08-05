@@ -208,52 +208,6 @@
     });
   }
 
-  // SAFARI: `x` on a <text> that carries a <textPath> child does nothing there — SVG says x/y are
-  // ignored for text on a path, and only Blink/Gecko bend that into "treat it as the start offset",
-  // which is what the card-0 sweep was riding on. startOffset is the spec'd control and reads the
-  // same in all three, so drive that whenever there IS a textPath.
-  function setTextOffset(textEl, tp, v) {
-    if (!textEl) { return; }
-    if (tp) { tp.setAttribute('startOffset', String(v)); }
-    else { textEl.setAttribute('x', String(v)); }
-  }
-
-  // SAFARI: getComputedTextLength() on the wrapping <text> comes back 0 there, so span stayed 0 and
-  // render() skipped the move entirely. Ask the textPath itself, then a plain off-path copy.
-  function textLen(textEl, tp) {
-    var n = 0;
-    if (!textEl) { return 0; }
-    try { n = textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; } catch (e) { n = 0; }
-    if (n > 0) { return n; }
-    if (tp) {
-      try { n = tp.getComputedTextLength ? tp.getComputedTextLength() : 0; } catch (e2) { n = 0; }
-      if (n > 0) { return n; }
-      var s = tp.textContent || '';
-      try { n = (tp.getSubStringLength && s.length) ? tp.getSubStringLength(0, s.length) : 0; } catch (e3) { n = 0; }
-      if (n > 0) { return n; }
-    }
-    return measureOffPath(textEl, tp);
-  }
-
-  // last resort — a hidden copy of the <text> with the path link dropped. Same font, same string, no
-  // textPath, so getComputedTextLength answers everywhere.
-  function measureOffPath(textEl, tp) {
-    var svg = textEl.ownerSVGElement;
-    if (!svg) { return 0; }
-    var probe = textEl.cloneNode(true), n = 0;
-    var inner = probe.querySelector('textPath');
-    if (inner) { inner.parentNode.replaceChild(document.createTextNode(inner.textContent || ''), inner); }
-    probe.removeAttribute('id');
-    probe.setAttribute('x', '0'); probe.setAttribute('y', '0');
-    probe.style.visibility = 'hidden';
-    // the copy drops the id the embed's CSS sizes it by (#marquee-text-lang), so carry the rendered size
-    if (tp) { probe.style.fontSize = window.getComputedStyle(tp).fontSize; }
-    svg.appendChild(probe);
-    try { n = probe.getComputedTextLength ? probe.getComputedTextLength() : 0; } catch (e4) { n = 0; }
-    if (probe.parentNode) { probe.parentNode.removeChild(probe); }
-    return n;
-  }
-
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
   var LINE = '', MID_FRAC = [];
   (function buildLine() {
@@ -313,14 +267,10 @@
     }
 
     // the <text> owns the x attr we move; nameEl is its <textPath> child (holds the string)
-    var textEl = null, tpEl = null;
+    var textEl = null;
     if (nameEl) {
-      var isTp = !!(nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath');
-      textEl = isTp ? nameEl.parentNode : nameEl;
-      tpEl   = isTp ? nameEl : (textEl.querySelector ? textEl.querySelector('textPath') : null);
+      textEl = (nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath') ? nameEl.parentNode : nameEl;
     }
-    // the authored x would stack on top of the startOffset we drive from here on
-    if (textEl && tpEl) { textEl.setAttribute('x', '0'); }
     var fs = (fontSize === undefined) ? LANG_PATH_FONT : fontSize;
     if (textEl && fs) { textEl.style.fontSize = fs; }
     // the embed's #marquee-text-lang rule outranks the <text> inline size, so a hard override must go on
@@ -354,7 +304,8 @@
     var span = 0, anchorArc = 0;
     function measure() {
       try { fitLabelWrap(); } catch (eW) {}     // must never abort the span measure below
-      span = textLen(textEl, tpEl);
+      try { span = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
+      catch (e) { span = 0; }
       var pathLen = 0;
       try { pathLen = pathEl && pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e2) {}
       if (!pathLen && svgEl && svgEl.viewBox && svgEl.viewBox.baseVal) { pathLen = svgEl.viewBox.baseVal.width; }
@@ -413,7 +364,7 @@
       }
       var ff = a + (b - a) * p;
       if (textEl && span > 0) {
-        setTextOffset(textEl, tpEl, anchorArc - ff * span);
+        textEl.setAttribute('x', String(anchorArc - ff * span));
       }
 
       // flag = whichever language's centre is nearest the anchor
