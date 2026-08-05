@@ -398,6 +398,52 @@
     if (tp) { tp.style.setProperty('font-size', px + 'px', 'important'); }
   }
 
+  // SAFARI: `x` on a <text> that carries a <textPath> child does nothing there — SVG says x/y are
+  // ignored for text on a path, and only Blink/Gecko bend that into "treat it as the start offset",
+  // which is what every marquee below was riding on. startOffset is the spec'd control and reads the
+  // same in all three, so drive that whenever there IS a textPath.
+  function setTextOffset(textEl, tp, v) {
+    if (!textEl) { return; }
+    if (tp) { tp.setAttribute('startOffset', String(v)); }
+    else { textEl.setAttribute('x', String(v)); }
+  }
+
+  // SAFARI: getComputedTextLength() on the wrapping <text> comes back 0 there, which collapsed every
+  // loop length to the fallback. Ask the textPath itself, then a plain off-path copy.
+  function textLen(textEl, tp) {
+    var n = 0;
+    if (!textEl) { return 0; }
+    try { n = textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; } catch (e) { n = 0; }
+    if (n > 0) { return n; }
+    if (tp) {
+      try { n = tp.getComputedTextLength ? tp.getComputedTextLength() : 0; } catch (e2) { n = 0; }
+      if (n > 0) { return n; }
+      var s = tp.textContent || '';
+      try { n = (tp.getSubStringLength && s.length) ? tp.getSubStringLength(0, s.length) : 0; } catch (e3) { n = 0; }
+      if (n > 0) { return n; }
+    }
+    return measureOffPath(textEl, tp);
+  }
+
+  // last resort — a hidden copy of the <text> with the path link dropped. Same font, same string, no
+  // textPath, so getComputedTextLength answers everywhere.
+  function measureOffPath(textEl, tp) {
+    var svg = textEl.ownerSVGElement;
+    if (!svg) { return 0; }
+    var probe = textEl.cloneNode(true), n = 0;
+    var inner = probe.querySelector('textPath');
+    if (inner) { inner.parentNode.replaceChild(document.createTextNode(inner.textContent || ''), inner); }
+    probe.removeAttribute('id');
+    probe.setAttribute('x', '0'); probe.setAttribute('y', '0');
+    probe.style.visibility = 'hidden';
+    // the copy drops the id the embed's CSS sizes it by, so carry over the size that actually rendered
+    if (tp) { probe.style.fontSize = window.getComputedStyle(tp).fontSize; }
+    svg.appendChild(probe);
+    try { n = probe.getComputedTextLength ? probe.getComputedTextLength() : 0; } catch (e4) { n = 0; }
+    if (probe.parentNode) { probe.parentNode.removeChild(probe); }
+    return n;
+  }
+
   function pickBP(list) {
     if (!list || !list.length) { return 0; }
     var w = window.innerWidth;
@@ -651,6 +697,7 @@
         var textEl = wrapEl.querySelector('text');
         var svgEl  = wrapEl.querySelector('svg');
         if (!textEl) { return; }
+        var tpEl   = textEl.querySelector('textPath');
         var period = Math.abs(parseFloat(textEl.getAttribute('x'))) || 4000;
         var vbw    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width)  || 928;
         var vbh    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || 76;
@@ -659,12 +706,14 @@
         if (!isKb) { narrowPath(wrapEl.querySelector('path'), vbw, MQ_PATH_W); }
         var startX = (isKb || MQ_FLOW_FILL) ? 0 : (vbw + MQ_PAD);
         marquees.push({
-          text: textEl, svg: svgEl, period: period, start: startX, isKb: isKb,
+          text: textEl, tp: tpEl, svg: svgEl, period: period, start: startX, isKb: isKb,
           vbw: vbw, vbh: vbh, len: 0,
           rand: Math.random(),
           mult: parseFloat(wrapEl.getAttribute('data-speed')) || 1
         });
-        textEl.setAttribute('x', String(startX));
+        // the authored x would stack on top of the startOffset we drive from here on
+        if (tpEl) { textEl.setAttribute('x', '0'); }
+        setTextOffset(textEl, tpEl, startX);
       });
 
       var mqClock = 0;
@@ -677,7 +726,7 @@
             var dur = (m.isKb ? MQ_DUR_KB : MQ_DUR) / (m.mult || 1);
             var frac = ((mqClock / dur) % 1 + 1) % 1;
             var loopLen = (m.len > m.vbw) ? Math.min(m.period, m.len - m.vbw) : m.period;
-            m.text.setAttribute('x', String(-loopLen * (1 - frac)));
+            setTextOffset(m.text, m.tp, -loopLen * (1 - frac));
             continue;
           }
 
@@ -691,7 +740,7 @@
             var xx = -x;
             x = -((xx + Math.min(xx, per) * m.rand) % per);
           }
-          m.text.setAttribute('x', String(x));
+          setTextOffset(m.text, m.tp, x);
         }
       }
 
@@ -1027,7 +1076,7 @@
             var mqPx = mqTextPx();
             if (mm.text) { setMqFont(mm, (mqPx > 0 && mw > 0) ? (mqPx * mm.vbw / mw).toFixed(1) : 0); }
           }
-          try { mm.len = mm.text.getComputedTextLength ? mm.text.getComputedTextLength() : 0; } catch (e) { mm.len = 0; }
+          mm.len = textLen(mm.text, mm.tp);
         }
 
         if (CARD_H === 'auto' && screenEl) {
@@ -2925,7 +2974,7 @@
             var w = m.svg.getBoundingClientRect().width;
             if (w <= 0) { continue; }
             setMqFont(m, (wantPx * m.vbw / w).toFixed(1));
-            try { m.len = m.text.getComputedTextLength ? m.text.getComputedTextLength() : 0; } catch (e) { m.len = 0; }
+            m.len = textLen(m.text, m.tp);
 
             var host = (kb && kb.contains(m.svg)) ? kb : wpmCard;
             var wrap = m.svg.parentNode;
