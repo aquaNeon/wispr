@@ -314,7 +314,7 @@
   var MQ_AUTOPLAY  = true;
 
   var MQ_DUR       = 30;
-  var MQ_DUR_KB    = 100;
+  var MQ_DUR_KB    = 50;    // was 100 — seconds per loop; the kb line barely read as moving at that
 
   var AUDIO_SEL    = '[data-anim="audio"]';
   var AUDIO_MIN    = 0.24;
@@ -676,7 +676,15 @@
             // data-speed (m.mult) applies here too, not just on the scroll-tied path
             var dur = (m.isKb ? MQ_DUR_KB : MQ_DUR) / (m.mult || 1);
             var frac = ((mqClock / dur) % 1 + 1) % 1;
-            var loopLen = (m.len > m.vbw) ? Math.min(m.period, m.len - m.vbw) : m.period;
+            // Travel is the authored x, the way the hero authors it — NOT the measured string.
+            // getComputedTextLength() on a <text> wrapping a <textPath> does not mean the same thing
+            // in every engine: Blink reports the whole string, WebKit reports only the glyphs it
+            // actually placed on the path, i.e. roughly the path's own length. That fed straight into
+            // (len - vbw), so in Safari the flow marquee travelled 947-928 = 19 units per loop and
+            // the kb one 2000-928 = 1072 — reading as frozen and as crawling respectively.
+            // Both marquees measure well past m.period in Blink, so min() already returns m.period
+            // there: this is the same number Chrome has always used, just no longer measured.
+            var loopLen = m.period;
             m.text.setAttribute('x', String(-loopLen * (1 - frac)));
             continue;
           }
