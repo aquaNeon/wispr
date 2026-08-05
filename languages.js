@@ -208,6 +208,47 @@
     });
   }
 
+  // WebKit answers getComputedTextLength() with 0 on a <text> that wraps a <textPath>, which left
+  // span at 0 — and render() guards on span > 0, so card 0 never moved a pixel in Safari. Fall
+  // through to measurements that don't depend on SVG text metrics. Canvas comes before the cloned
+  // <text> ON PURPOSE: measure() runs from a ScrollTrigger refresh, and touching the DOM in there is
+  // what caused the scroll glitch last time. Canvas touches nothing.
+  var spanCache = {};
+  function measureSpan(textEl, tp) {
+    if (!textEl) { return 0; }
+    var str = (tp || textEl).textContent || '';
+    var cs  = window.getComputedStyle(tp || textEl);
+    var key = [str, cs.fontSize, cs.fontFamily, cs.fontWeight, cs.letterSpacing].join('|');
+    if (spanCache[key] > 0) { return spanCache[key]; }
+
+    var n = 0;
+    try { n = textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; } catch (e) { n = 0; }
+    if (!(n > 0) && tp) {
+      try { n = tp.getComputedTextLength ? tp.getComputedTextLength() : 0; } catch (e2) { n = 0; }
+      if (!(n > 0) && str.length) {
+        try { n = tp.getSubStringLength ? tp.getSubStringLength(0, str.length) : 0; } catch (e3) { n = 0; }
+      }
+    }
+    if (!(n > 0)) { n = measureOnCanvas(str, cs); }
+
+    if (n > 0) { spanCache[key] = n; }
+    return n || 0;
+  }
+
+  var canvasCtx = null;
+  function measureOnCanvas(str, cs) {
+    if (!str) { return 0; }
+    try {
+      if (!canvasCtx) {
+        var c = document.createElement('canvas');
+        canvasCtx = c.getContext ? c.getContext('2d') : null;
+      }
+      if (!canvasCtx) { return 0; }
+      canvasCtx.font = [cs.fontStyle, cs.fontWeight, cs.fontSize, cs.fontFamily].join(' ');
+      return canvasCtx.measureText(str).width || 0;
+    } catch (e) { return 0; }
+  }
+
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
   var LINE = '', MID_FRAC = [];
   (function buildLine() {
@@ -267,9 +308,11 @@
     }
 
     // the <text> owns the x attr we move; nameEl is its <textPath> child (holds the string)
-    var textEl = null;
+    var textEl = null, tpEl = null;
     if (nameEl) {
-      textEl = (nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath') ? nameEl.parentNode : nameEl;
+      var isTp = !!(nameEl.tagName && nameEl.tagName.toLowerCase() === 'textpath');
+      textEl = isTp ? nameEl.parentNode : nameEl;
+      tpEl   = isTp ? nameEl : (textEl.querySelector ? textEl.querySelector('textPath') : null);
     }
     var fs = (fontSize === undefined) ? LANG_PATH_FONT : fontSize;
     if (textEl && fs) { textEl.style.fontSize = fs; }
@@ -304,8 +347,7 @@
     var span = 0, anchorArc = 0;
     function measure() {
       try { fitLabelWrap(); } catch (eW) {}     // must never abort the span measure below
-      try { span = textEl && textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0; }
-      catch (e) { span = 0; }
+      span = measureSpan(textEl, tpEl);
       var pathLen = 0;
       try { pathLen = pathEl && pathEl.getTotalLength ? pathEl.getTotalLength() : 0; } catch (e2) {}
       if (!pathLen && svgEl && svgEl.viewBox && svgEl.viewBox.baseVal) { pathLen = svgEl.viewBox.baseVal.width; }
@@ -346,6 +388,47 @@
       } catch (e) {}
     }
 
+    // ---- the sweep runs on SMIL; JS is left with the flag ----
+    // Writing x every frame is affordable in Blink and is not in WebKit: this line is ~250 chars
+    // across four scripts, and re-solving every glyph against the curve 60 times a second is what
+    // made the card stutter there. The motion is a plain constant-speed loop, so the browser can own
+    // it outright — the same <animate> the homepage hero has always used. JS still runs per frame,
+    // but only to decide which flag is showing, which changes four times a loop.
+    var SMIL_OK = (function () {
+      try {
+        var el = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+        return typeof el.beginElement === 'function';
+      } catch (e) { return false; }
+    }());
+    var sweepAnim = null;
+
+    function sweepX(p) {
+      var N = SEGS.length;
+      var a = MID_FRAC[0], b = MID_FRAC[N - 1];
+      if (EDGE_LEAD && EDGE_FILL && N > 1) {
+        var half = ((b - a) / (N - 1)) * 0.5 * EDGE_LEAD;
+        a -= half; b += half;
+      }
+      return anchorArc - (a + (b - a) * p) * span;
+    }
+
+    function attachSweep() {
+      if (!SMIL_OK || !textEl || !(span > 0)) { return false; }
+      if (sweepAnim && sweepAnim.parentNode) { sweepAnim.parentNode.removeChild(sweepAnim); }
+      var dur = (LANG_AUTOPLAY_MS[0] || 16000) / 1000;
+      var a = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+      a.setAttribute('attributeName', 'x');
+      a.setAttribute('values', sweepX(0) + '; ' + sweepX(1));
+      a.setAttribute('dur', dur + 's');
+      a.setAttribute('repeatCount', 'indefinite');
+      // negative begin starts the loop part-way in, which is what LANG_START used to do
+      a.setAttribute('begin', (-(langStart(0) * dur)).toFixed(2) + 's');
+      textEl.appendChild(a);
+      sweepAnim = a;
+      return true;
+    }
+    attachSweep();
+
     var lastFlagI = -1;
     function render(progress) {
       if (SEGS.length === 0) { return; }
@@ -363,7 +446,8 @@
         a -= half; b += half;
       }
       var ff = a + (b - a) * p;
-      if (textEl && span > 0) {
+      // SMIL owns x once attached; writing it here would fight the animation
+      if (!sweepAnim && textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
       }
 
@@ -376,7 +460,15 @@
       if (flagIdx !== lastFlagI) { setActive(SEGS[flagIdx]); lastFlagI = flagIdx; }
     }
 
-    return { render: render, measure: measure, destroy: function () {} };
+    return {
+      render: render,
+      // span changes with the breakpoint and after webfonts land, so the keyframes are rebuilt
+      measure: function () { measure(); attachSweep(); },
+      destroy: function () {
+        if (sweepAnim && sweepAnim.parentNode) { sweepAnim.parentNode.removeChild(sweepAnim); }
+        sweepAnim = null;
+      }
+    };
   }
 
   // ---- card 1: chips → form in → word types → scrolls to the toggles + Add word → form out → chips +1 ----

@@ -667,8 +667,59 @@
         textEl.setAttribute('x', String(startX));
       });
 
+      // ---- autoplay marquees run on SMIL, not on the ticker ----
+      // Writing x every frame made these dead in Safari: the loop length came from
+      // getComputedTextLength() on a <text> wrapping a <textPath>, which WebKit answers with 0, so
+      // the travel collapsed to the fallback. The hero marquee on the homepage has always used
+      // <animate> with an AUTHORED travel and has always worked there — same shape, no measurement
+      // in the loop, and the browser owns the timeline instead of the main thread.
+      var SMIL_OK = (function () {
+        try {
+          var el = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+          return typeof el.beginElement === 'function';
+        } catch (e) { return false; }
+      }());
+      var smilRunning = false;
+
+      function attachSmil() {
+        if (!MQ_AUTOPLAY || !SMIL_OK) { return false; }
+        for (var i = 0; i < marquees.length; i++) {
+          var m = marquees[i];
+          if (m.anim && m.anim.parentNode) { m.anim.parentNode.removeChild(m.anim); }
+
+          // the authored x IS the travel, exactly as the hero authors it. Deliberately not the
+          // measured string width: that number is unavailable in WebKit, and deriving it per engine
+          // would make the same marquee run at two different speeds.
+          var travel = m.period;
+          var dur    = (m.isKb ? MQ_DUR_KB : MQ_DUR) / (m.mult || 1);
+
+          var a = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+          a.setAttribute('attributeName', 'x');
+          a.setAttribute('values', (-travel) + '; 0');
+          a.setAttribute('dur', dur + 's');
+          a.setAttribute('repeatCount', 'indefinite');
+          // negative begin = start mid-cycle, which keeps the staggered phase the old rand gave us
+          a.setAttribute('begin', (-(m.rand * dur)).toFixed(2) + 's');
+          m.text.appendChild(a);
+          m.anim = a;
+        }
+        smilRunning = true;
+        return true;
+      }
+      teardown.push(function () {
+        for (var i = 0; i < marquees.length; i++) {
+          var a = marquees[i].anim;
+          if (a && a.parentNode) { a.parentNode.removeChild(a); }
+          marquees[i].anim = null;
+        }
+        smilRunning = false;
+      });
+      attachSmil();
+
       var mqClock = 0;
       function updateMarquees(p) {
+        // SMIL owns the autoplay loop; the ticker would only fight it
+        if (smilRunning) { return; }
         for (var i = 0; i < marquees.length; i++) {
           var m = marquees[i];
           if (MQ_AUTOPLAY) {
