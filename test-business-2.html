@@ -77,7 +77,11 @@
   .biz-animation_panel-tabs { display: flex; gap: 12px; margin-bottom: 8px; opacity: .55; }
   .biz-animation_panel-tab.is-active { opacity: 1; font-weight: 600; }
   .biz-animation_panel-content { flex: 1; min-height: 0; }
-  .biz-animation_transcript-line { margin-bottom: 6px; }
+  /* line is flex so the little green svg sits next to the text, and the text block hugs its
+     content — that is what lets the wrapper widen as the words land */
+  .biz-animation_transcript-line { margin-bottom: 6px; display: flex; align-items: flex-start; gap: 6px; }
+  .biz-animation_transcript-svg { width: 8px; height: 16px; flex: 0 0 auto; }
+  .biz-animation_transcript-text { background: rgba(255,255,255,.06); border-radius: 6px; padding: 2px 6px; }
   /* the summary doc scrolls inside the layer, so the layer clips and the doc is taller than it */
   .biz-animation_panel-layer.is-summary { position: relative; overflow: hidden; }
   .biz-animation_summary-gen { position: absolute; inset: 0; z-index: 2; background: #fffdf5; padding: 4px; }
@@ -88,7 +92,14 @@
   .biz-animation_sto-btn.is-resume { position: absolute; }
   .biz-animation_transcript-speaker { opacity: .5; font-size: 10px; }
   .biz-animation_summary-item { margin-top: 3px; }
-  .biz-animation_panel-footer { display: flex; gap: 10px; opacity: .55; padding-top: 6px; }
+  /* footer mirrors the real one: a Stop pill and a wide "Ask anything" pill holding the chip */
+  .biz-animation_panel-footer { display: flex; gap: 8px; padding-top: 8px; align-items: center; font-size: 11px; }
+  .biz-animation_sto-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+    border: 1px solid #EEEBE3; border-radius: 999px; background: #fff; color: #1A1A1A; }
+  .biz-animation_sto-dot { width: 6px; height: 6px; border-radius: 2px; background: #059669; }
+  .biz-animation_ask-bar { flex: 1; display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 10px; border: 1px solid #EEEBE3; border-radius: 999px; background: #fff; color: #71716E; }
+  .biz-animation_ask-chip { background: #F5F4F0; color: #1A1A1A; font-weight: 600; border-radius: 999px; padding: 2px 8px; }
 
   .biz-animation_meeting-recorder-wrap { position: absolute; left: 44%; top: 68%; z-index: 6; }
   .biz-animation_meeting-recorder { display: flex; align-items: center; gap: 10px; background: #111;
@@ -232,19 +243,31 @@
           <div class="biz-animation_panel-layer is-transcript">
             <div class="biz-animation_panel-meta"><span class="biz-animation_timer">28:30</span></div>
             <div class="biz-animation_transcript">
-              <div class="biz-animation_transcript-line">
-                <div class="biz-animation_transcript-speaker">Anouk</div>
+              <div class="biz-animation_transcript-line" data-biz-speaker="soraya">
+                <svg viewBox="0 0 12 20" class="biz-animation_transcript-svg" fill="none" stroke="#62c554" stroke-width="2">
+                  <path d="M2 4 L2 16"/><path d="M8 7 L8 13"/>
+                </svg>
+                <div class="biz-animation_transcript-speaker">Soraya</div>
                 <div class="biz-animation_transcript-text">Can everyone see the CSAT dashboard?</div>
               </div>
-              <div class="biz-animation_transcript-line">
+              <div class="biz-animation_transcript-line" data-biz-speaker="emeka">
+                <svg viewBox="0 0 12 20" class="biz-animation_transcript-svg" fill="none" stroke="#62c554" stroke-width="2">
+                  <path d="M2 4 L2 16"/><path d="M8 7 L8 13"/>
+                </svg>
                 <div class="biz-animation_transcript-speaker">Emeka</div>
-                <div class="biz-animation_transcript-text">Yeah, I'll route the escalation to tier two after this.</div>
+                <div class="biz-animation_transcript-text">Yeah. I'll route the escalation to tier two after this.</div>
               </div>
-              <div class="biz-animation_transcript-line">
+              <div class="biz-animation_transcript-line" data-biz-speaker="anouk">
+                <svg viewBox="0 0 12 20" class="biz-animation_transcript-svg" fill="none" stroke="#62c554" stroke-width="2">
+                  <path d="M2 4 L2 16"/><path d="M8 7 L8 13"/>
+                </svg>
                 <div class="biz-animation_transcript-speaker">Anouk</div>
                 <div class="biz-animation_transcript-text">Did we close out the Okonkwo chargeback in Zendesk?</div>
               </div>
-              <div class="biz-animation_transcript-line">
+              <div class="biz-animation_transcript-line" data-biz-speaker="bastien">
+                <svg viewBox="0 0 12 20" class="biz-animation_transcript-svg" fill="none" stroke="#62c554" stroke-width="2">
+                  <path d="M2 4 L2 16"/><path d="M8 7 L8 13"/>
+                </svg>
                 <div class="biz-animation_transcript-speaker">Bastien</div>
                 <div class="biz-animation_transcript-text">That's been holding up the RMA for two weeks.</div>
               </div>
@@ -276,12 +299,13 @@
           </div>
         </div>
         <div class="biz-animation_panel-footer">
-          <span class="biz-animation_sto-btn is-stop">Stop</span>
-          <span class="biz-animation_sto-btn is-resume">Resume</span>
-          <span class="biz-animation_panel-footer-stop">Stop</span>
-          <span>Ask anything</span>
-          <span class="biz-animation_panel-spacer"></span>
-          <span>What did I miss?</span>
+          <div class="biz-animation_sto-btn is-stop">
+            <span class="biz-animation_sto-dot"></span><span class="biz-animation_text">Stop</span>
+          </div>
+          <div class="biz-animation_ask-bar">
+            <span class="biz-animation_ask-label">Ask anything</span>
+            <span class="biz-animation_ask-chip"><span class="biz-animation_ask-chip-text">What did I miss?</span></span>
+          </div>
         </div>
       </div>
     </div>
