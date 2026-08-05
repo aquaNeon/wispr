@@ -354,8 +354,10 @@
       // not on every refresh, since ScrollTrigger fires those on mobile address-bar resizes too and
       // rebuilding a few hundred elements there would be its own stutter
       if (rig) {
+        // rebuild on a real font change, and also if the first build had to guess its spacing
+        // because the card was not rendered yet — by now it usually is
         var fk = fontKey();
-        if (fk !== rig.fontKey) { destroyRig(); rig = buildRig(); }
+        if (fk !== rig.fontKey || !rig.exact) { destroyRig(); rig = buildRig(); }
         if (rig) { span = rig.total; }
       }
       if (LANG_DEBUG) { reportPacing(); }
@@ -471,19 +473,52 @@
       textEl.parentNode.insertBefore(g, textEl.nextSibling);
       textEl.style.display = 'none';   // the textPath line is replaced, not hidden behind
 
-      var items = [], at = 0;
+      // Positions come from the WHOLE line as the font shapes it, not from measuring each cluster on
+      // its own. Measured in isolation the clusters lose their shaping context and sum about 11%
+      // short of the real string — which packs the Devanagari together and reads as crowding.
+      // getSubStringLength(0, n) on the full line gives the true cumulative advance.
+      var probe = document.createElementNS(SVG_NS, 'text');
+      probe.setAttribute('x', '0');
+      probe.setAttribute('y', '0');
+      probe.style.visibility = 'hidden';   // still laid out, so still measurable
+      probe.textContent = LINE;
+      g.appendChild(probe);
+
+      function advAt(k) {
+        try { return probe.getSubStringLength ? probe.getSubStringLength(0, k) : 0; } catch (e) { return 0; }
+      }
+      // 0 means the card was not rendered when we asked; fall back to isolated widths and rebuild
+      // later, rather than laying the whole line out on bad numbers
+      var exact = advAt(LINE.length) > 0;
+
+      var items = [], at = 0, idx = 0;
       graphemes(LINE).forEach(function (c) {
-        if (/^\s+$/.test(c)) { at += measureOnCanvasStr(c, cs); return; }
+        var a0 = 0, a1 = 0;
+        if (exact) { a0 = advAt(idx); a1 = advAt(idx + c.length); }
+        idx += c.length;
+
+        if (/^\s+$/.test(c)) {
+          at = exact ? a1 : at + measureOnCanvasStr(c, cs);
+          return;
+        }
         var t = document.createElementNS(SVG_NS, 'text');
         t.setAttribute('text-anchor', 'middle');
         t.textContent = c;
         g.appendChild(t);
-        var w = 0;
-        try { w = t.getComputedTextLength ? t.getComputedTextLength() : 0; } catch (e2) { w = 0; }
-        if (!(w > 0)) { w = measureOnCanvasStr(c, cs); }   // plain <text> measures fine, but be safe
-        items.push({ el: t, mid: at + w / 2, shown: true });
-        at += w;
+
+        if (exact) {
+          items.push({ el: t, mid: (a0 + a1) / 2, shown: true });
+          at = a1;
+        } else {
+          var w = 0;
+          try { w = t.getComputedTextLength ? t.getComputedTextLength() : 0; } catch (e2) { w = 0; }
+          if (!(w > 0)) { w = measureOnCanvasStr(c, cs); }
+          items.push({ el: t, mid: at + w / 2, shown: true });
+          at += w;
+        }
       });
+      if (exact) { at = advAt(LINE.length); }
+      if (probe.parentNode) { probe.parentNode.removeChild(probe); }
       if (!items.length) { textEl.style.display = ''; if (g.parentNode) { g.parentNode.removeChild(g); } return null; }
 
       // sample the curve once. getPointAtLength is cheap but not free, and calling it three times per
@@ -499,7 +534,7 @@
       }
 
       return { g: g, items: items, total: at, len: len, step: STEP, n: n,
-               xs: xs, ys: ys, ang: ang, lo: 0, hi: -1, fontKey: fontKey() };
+               xs: xs, ys: ys, ang: ang, lo: 0, hi: -1, fontKey: fontKey(), exact: exact };
     }
 
     function placeRig(offset) {
