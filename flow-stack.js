@@ -314,7 +314,7 @@
   var MQ_AUTOPLAY  = true;
 
   var MQ_DUR       = 30;
-  var MQ_DUR_KB    = 100;
+  var MQ_DUR_KB    = 50;    // was 100 — the kb line reads as barely moving at that. seconds per loop
 
   var AUDIO_SEL    = '[data-anim="audio"]';
   var AUDIO_MIN    = 0.24;
@@ -646,6 +646,30 @@
         pathEl.setAttribute('d', d1);
         teardown.push(function () { pathEl.setAttribute('d', d0); });
       }
+
+      // WebKit lays a <textPath> out against its referenced path ONCE and does not re-resolve when
+      // that path's d is rewritten underneath it — the glyphs keep their original placement and stop
+      // responding to x. Blink re-links on its own, which is why this only ever showed up in Safari.
+      // Re-setting href and re-inserting the <text> forces the reference to resolve again.
+      //
+      // This is why the kb marquee moves in Safari and the flow one doesn't, from identical code:
+      // narrowPath() skips the kb path (isKb, and its H command is unsupported there anyway), so the
+      // only marquee whose d gets rewritten is the only one that's dead.
+      function relinkTextPath(textEl) {
+        if (!textEl) { return; }
+        var tp = textEl.querySelector ? textEl.querySelector('textPath') : null;
+        if (!tp) { return; }
+        var XL = 'http://www.w3.org/1999/xlink';
+        var h  = tp.getAttribute('href') ||
+                 (tp.getAttributeNS ? tp.getAttributeNS(XL, 'href') : null);
+        if (h) { tp.setAttribute('href', h); }
+        var parent = textEl.parentNode;
+        if (parent) {
+          var next = textEl.nextSibling;
+          parent.removeChild(textEl);
+          parent.insertBefore(textEl, next);
+        }
+      }
       var marquees = [];
       Array.prototype.forEach.call(section.querySelectorAll('[' + FLOW + '="marquee"]'), function (wrapEl) {
         var textEl = wrapEl.querySelector('text');
@@ -656,7 +680,10 @@
         var vbh    = (svgEl && svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || 76;
 
         var isKb   = !!(kb && kb.contains(wrapEl));
-        if (!isKb) { narrowPath(wrapEl.querySelector('path'), vbw, MQ_PATH_W); }
+        if (!isKb) {
+          narrowPath(wrapEl.querySelector('path'), vbw, MQ_PATH_W);
+          relinkTextPath(textEl);   // d just changed under the textPath — see the note on relinkTextPath
+        }
         var startX = (isKb || MQ_FLOW_FILL) ? 0 : (vbw + MQ_PAD);
         marquees.push({
           text: textEl, svg: svgEl, period: period, start: startX, isKb: isKb,

@@ -208,6 +208,26 @@
     });
   }
 
+  // WebKit binds a <textPath> to its referenced path once and never re-resolves it. Any card whose
+  // href we rewrite (every mobile clone, via uniqIds) therefore keeps its first layout and ignores
+  // the x we animate. Re-setting href and re-inserting the <text> forces the link to resolve again.
+  // Takes a root and does every textPath under it, since a clone can hold more than one.
+  function relinkTextPath(root) {
+    if (!root || !root.querySelectorAll) { return; }
+    var XL = 'http://www.w3.org/1999/xlink';
+    Array.prototype.forEach.call(root.querySelectorAll('textPath'), function (tp) {
+      var h = tp.getAttribute('href') || (tp.getAttributeNS ? tp.getAttributeNS(XL, 'href') : null);
+      if (h) { tp.setAttribute('href', h); }
+      var textEl = tp.parentNode;
+      var parent = textEl && textEl.parentNode;
+      if (parent) {
+        var next = textEl.nextSibling;
+        parent.removeChild(textEl);
+        parent.insertBefore(textEl, next);
+      }
+    });
+  }
+
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
   var LINE = '', MID_FRAC = [];
   (function buildLine() {
@@ -1086,6 +1106,11 @@
         clone.style.transform = ''; clone.style.transition = ''; clone.style.opacity = '';
         clone.style.pointerEvents = '';
         slot.appendChild(clone);
+        // uniqIds just rewrote the <textPath>'s href to the suffixed curve. WebKit resolves that
+        // reference once and does not re-resolve when it changes, so the clone's line stays pinned to
+        // wherever it first laid out and ignores every x we write. Blink re-links by itself, which is
+        // why the mobile cards only ever died in Safari.
+        relinkTextPath(clone);
         el = clone;
       }
 
