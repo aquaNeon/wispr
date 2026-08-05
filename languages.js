@@ -212,10 +212,16 @@
   // ignored for text on a path, and only Blink/Gecko bend that into "treat it as the start offset",
   // which is what the card-0 sweep was riding on. startOffset is the spec'd control and reads the
   // same in all three, so drive that whenever there IS a textPath.
+  // WebKit re-shapes EVERY glyph on the path on each write, so a redundant one is not free the way it
+  // is in Blink. Round to a tenth and skip writes that land on the same value.
   function setTextOffset(textEl, tp, v) {
     if (!textEl) { return; }
-    if (tp) { tp.setAttribute('startOffset', String(v)); }
-    else { textEl.setAttribute('x', String(v)); }
+    var host = tp || textEl;
+    var s = String(Math.round(v * 10) / 10);
+    if (host._off === s) { return; }
+    host._off = s;
+    if (tp) { tp.setAttribute('startOffset', s); }
+    else { textEl.setAttribute('x', s); }
   }
 
   // SAFARI: getComputedTextLength() on the wrapping <text> comes back 0 there, so span stayed 0 and
@@ -253,6 +259,13 @@
     if (probe.parentNode) { probe.parentNode.removeChild(probe); }
     return n;
   }
+
+  // perf bisect: langSweep(false) in the console freezes card 0's curved text — every clone at once —
+  // without touching cards 1-3, so its share of a slow frame can be read off the fps meter
+  window.langSweep = function (on) {
+    window.__langSweepOff = (on === false);
+    return !window.__langSweepOff;
+  };
 
   // card-0's joined line + each segment's centre as a fraction of it (shared by desktop card + clones)
   var LINE = '', MID_FRAC = [];
@@ -412,7 +425,7 @@
         a -= half; b += half;
       }
       var ff = a + (b - a) * p;
-      if (textEl && span > 0) {
+      if (textEl && span > 0 && !window.__langSweepOff) {
         setTextOffset(textEl, tpEl, anchorArc - ff * span);
       }
 
