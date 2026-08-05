@@ -540,7 +540,7 @@
     rig = buildRig();
     if (rig) { span = rig.total; }   // the summed cluster widths ARE the rendered line length
 
-    var lastFlagI = -1;
+    var lastFlagI = -1, rigDbg = 0;
     function render(progress) {
       if (SEGS.length === 0) { return; }
       var N = SEGS.length;
@@ -558,6 +558,14 @@
       }
       var ff = a + (b - a) * p;
       if (rig) {
+        if (!rigDbg) {
+          rigDbg = 1;
+          console.log('[lang rig] anchorArc', anchorArc, 'ff', ff, 'p', p,
+                      'total', rig.total, 'len', rig.len, 'n', rig.n,
+                      'xs0', rig.xs[0], 'items', rig.items.length,
+                      'mid0', rig.items[0] && rig.items[0].mid,
+                      'offset', anchorArc - ff * rig.total);
+        }
         placeRig(anchorArc - ff * rig.total);
       } else if (textEl && span > 0) {
         textEl.setAttribute('x', String(anchorArc - ff * span));
