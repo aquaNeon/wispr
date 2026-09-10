@@ -138,54 +138,57 @@
     // the lines below are what actually plays. task '' = no card.
     // owner = who the task is assigned to on the card. omit when it's the speaker.
     var CONTENT = [
-      { name: 'Jay', text: 'Screen\'s up. Everyone see the roadmap?', task: '' },
-      { name: 'Siobhan', text: 'Yep. Lelia, send the brief to Ngozi?', task: 'Send the brief to Ngozi', owner: 'Lelia' },
-      { name: 'Lelia', text: 'For sure, this afternoon.', task: '' },
-      { name: 'Deshawn', text: 'Did the Okta SSO ship?', task: '' },
-      { name: 'Siobhan', text: 'Not yet.', task: '' },
-      { name: 'Jay', text: 'And the SOC 2 audit?', task: '' },
-      { name: 'Lelia', text: 'Still with the auditor, two weeks now.', task: '' },
-      { name: 'Deshawn', text: 'Okay, I\'ll chase it.', task: 'Chase SOC 2 audit' },
-      { name: 'Jay', text: 'Thanks, it\'s blocking the enterprise deals.', task: '' },
-      { name: 'Siobhan', text: 'How\'s the activation funnel?', task: '' },
-      { name: 'Lelia', text: 'Onboarding\'s up, day-two retention dipped.', task: '' },
-      { name: 'Deshawn', text: 'We need the cohort data pre-QBR.', task: '' },
-      { name: 'Jay', text: 'Deshawn, pull the retention curves?', task: 'Pull retention curves into Amplitude', owner: 'Deshawn' },
-      { name: 'Deshawn', text: 'Yeah, into the Amplitude dashboard.', task: '' },
-      { name: 'Siobhan', text: 'Is the pricing page locked?', task: '' },
-      { name: 'Lelia', text: 'Mostly. The usage-based tier keeps moving.', task: '' },
-      { name: 'Siobhan', text: 'The metering logic won\'t settle.', task: '' },
-      { name: 'Deshawn', text: 'Pick one and ship.', task: '' },
-      { name: 'Jay', text: 'Agreed. Done beats perfect.', task: '' },
-      { name: 'Lelia', text: 'I\'ll flag it in the deck.', task: 'Flag pricing decision in the deck' },
-      { name: 'Deshawn', text: 'The SAML rollout is when?', task: '' },
-      { name: 'Siobhan', text: 'Monday, if SCIM provisioning\'s done.', task: '' },
-      { name: 'Jay', text: 'We need the API rate limits and webhook retries locked first.', task: '' },
-      { name: 'Lelia', text: 'Who\'s owning that?', task: '' },
-      { name: 'Deshawn', text: 'Siobhan, take it, you\'ve got context.', task: 'Lock API rate limits + webhook retries', owner: 'Siobhan' },
-      { name: 'Siobhan', text: 'Sure, I\'ll send an invite.', task: '' },
-      { name: 'Lelia', text: 'What about the Segment integration?', task: '' },
-      { name: 'Deshawn', text: 'Still syncing to Snowflake.', task: '' },
-      { name: 'Jay', text: 'And the Zapier and Slack connectors?', task: '' },
-      { name: 'Siobhan', text: 'I\'ll check on that to', task: 'Check on Zapier and Slack connectors' },
-      { name: 'Lelia', text: 'Can we talk referrals?', task: '' },
-      { name: 'Jay', text: 'Half done. Attribution\'s the last piece.', task: '' },
-      { name: 'Deshawn', text: 'Payouts still run through Stripe manually.', task: '' },
-      { name: 'Siobhan', text: 'QA flagged a regression, watch the SLA.', task: 'Watch the SLA', owner: 'Jay' },
-      { name: 'Jay', text: 'Pull up the latest build?', task: '' },
-      { name: 'Siobhan', text: 'Yeah, one sec.', task: '' }
+      { name: 'Mark', text: 'Can everyone see the CES proposal?', task: '' },
+      { name: 'Alix', text: 'Yep. Keep in mind the floor plan isn’t final.', task: '' },
+      { name: 'Hailey', text: 'The agency is sending this afternoon.', task: '' },
+      { name: 'DeShawn', text: 'Is the interactive wall still in?', task: '' },
+      { name: 'Jay', text: 'For now.', task: '' },
+      { name: 'Mark', text: 'Do we really need it?', task: '' },
+      { name: 'Hailey', text: 'I’d rather use that space for another demo.', task: '' },
+      { name: 'DeShawn', text: 'Agreed. I’ll flag it.', task: 'Replace interactive wall with demo space' },
+      { name: 'Mark', text: 'Demos should be top priority for us.', task: '' },
+      { name: 'Alix', text: 'What are we planning to show?', task: '' },
+      { name: 'Hailey', text: 'The AI assistant and Tableau dashboard.', task: '' },
+      { name: 'DeShawn', text: 'Let’s keep each spiel under five minutes.', task: '' },
+      { name: 'Mark', text: 'Jay, can you confirm the flow?', task: '' },
+      { name: 'Jay', text: 'Yep, I’ll review it with Product and Eoin.', task: 'Review demo flow with Product team and Eoin' },
+      { name: 'Alix', text: 'Is the booth schedule finalized?', task: '' },
+      { name: 'Hailey', text: 'Almost. Sales and Product will rotate.', task: '' },
+      { name: 'Alix', text: 'Engineering should be there for live demos.', task: '' },
+      { name: 'DeShawn', text: 'Agreed, but not all day.', task: '' },
+      { name: 'Mark', text: 'Let’s say 11am–2pm tentatively.', task: '' },
+      { name: 'Hailey', text: 'I’ll let them know.', task: 'Notify Engineering of tentative 11am–2pm CES coverage' },
+      { name: 'DeShawn', text: 'What’s our meeting target again?', task: '' },
+      { name: 'Jay', text: '25 over the course of three days.', task: '' },
+      { name: 'Mark', text: 'We need Sales targeting priority accounts ASAP.', task: '' },
+      { name: 'Alix', text: 'Who’s handling the list?', task: '' },
+      { name: 'DeShawn', text: 'I’ll send it to Yasmin tomorrow morning.', task: 'Send priority account list to Yasmin tomorrow morning' },
+      { name: 'Jay', text: 'Thanks. I’ll check their progress Friday.', task: 'Check Sales outreach progress Friday' },
+      { name: 'Hailey', text: 'Has everyone booked their travel?', task: '' },
+      { name: 'Alix', text: 'Not everyone on my team.', task: '' },
+      { name: 'Mark', text: 'We need to wrap that up by the 10th.', task: '' },
+      { name: 'Hailey', text: 'The 8th, actually.', task: '' },
+      { name: 'Alix', text: 'Reminding them now.', task: 'Remind team to book CES travel by the 8th' },
+      { name: 'Alix', text: 'Expense reports go through Ramp, right?', task: '' },
+      { name: 'DeShawn', text: 'Yes. We switched over last month.', task: '' },
+      { name: 'Hailey', text: 'I’ll note that in the event channel too.', task: 'Post Ramp expense reminder in the event channel' },
+      { name: 'Mark', text: 'Any other concerns?', task: '' },
+      { name: 'Hailey', text: 'Nope. I’m excited!', task: '' }
     ];
     // pill variant per speaker — picks which Webflow row's colours get cloned
-    var PILL_BY_NAME = { Jay: 'pulse', Siobhan: 'signal', Lelia: 'dawn', Deshawn: 'fathom' };
+    // Mark shares the 'pulse' template: five speakers, four Webflow variants. the variant only
+    // decides which row gets CLONED for structure — COLOR_BY_NAME below overrides the colour.
+    var PILL_BY_NAME = { Jay: 'pulse', Mark: 'pulse', Alix: 'signal', Hailey: 'dawn', DeShawn: 'fathom' };
 
     // hard override, wins over the cloned Webflow colours — the variant lookup
     // can't be trusted here. bg only; `text` is derived from bg luminance
     // unless stated. leave a name out to keep using its Webflow row.
     var COLOR_BY_NAME = {
       Jay: { bg: '#7F1C34' }, // pulse
-      Siobhan: { bg: '#FFBCF2' }, // signal
-      Lelia: { bg: '#FFA946' }, // dawn
-      Deshawn: { bg: '#034F46' }, // fathom
+      Alix: { bg: '#FFBCF2' }, // signal
+      Hailey: { bg: '#FFA946' }, // dawn
+      DeShawn: { bg: '#034F46' }, // fathom
+      Mark: { bg: '#7232A6' }, // brand purple — no Webflow variant of its own
     };
     var TEXT_ON_DARK = '#FFFDF9';
     var TEXT_ON_LIGHT = '#1A1A1A';
