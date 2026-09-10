@@ -103,7 +103,9 @@
     var THROW_BUMP_X = 14; // px the committing line nudges right as it throws
 
     // stacked layout (tablet and down): the throw rotates — card drops in from above, line nudges down
-    var STACK_BP     = 991;   // px at or below which the layout is stacked
+    // notetaker only — deliberately wider than Webflow's own 991 tablet breakpoint, so the deck
+    // stacks under the transcript before the layout itself goes to tablet.
+    var STACK_BP     = 1150;  // px at or below which the layout is stacked
     var CARD_FROM_Y  = -120;  // entrance start when stacked: negative = from above the deck
     var THROW_BUMP_Y = 14;    // px the committing line nudges DOWN as it throws
     var STACK_GAP    = 14;    // px between transcript and deck when stacked
