@@ -175,9 +175,16 @@
       { name: 'Mark', text: 'Any other concerns?', task: '' },
       { name: 'Hailey', text: 'Nope. I’m excited!', task: '' }
     ];
-    // pill variant per speaker — picks which Webflow row's colours get cloned
-    // Mark shares the 'pulse' template: five speakers, four Webflow variants. the variant only
-    // decides which row gets CLONED for structure — COLOR_BY_NAME below overrides the colour.
+    // >>> PLACEHOLDER — change this one hex when the real colour lands. <<<
+    // Mark is the fifth speaker and Webflow only authors four pill variants, so he has no row of
+    // his own. This is his colour outright, not a borrowed one: MARK_BG is written straight onto
+    // the pill and the name's text colour is derived from its luminance (see textOn), so a light
+    // or a dark hex both work with no other edit.
+    var MARK_BG = '#7232A6';
+
+    // pill variant per speaker — picks which Webflow row gets CLONED. structure only: every colour
+    // on the clone is overwritten from COLOR_BY_NAME below. Mark clones 'pulse' purely because a
+    // row has to be cloned from somewhere and a fixed choice keeps the markup predictable.
     var PILL_BY_NAME = { Jay: 'pulse', Mark: 'pulse', Alix: 'signal', Hailey: 'dawn', DeShawn: 'fathom' };
 
     // hard override, wins over the cloned Webflow colours — the variant lookup
@@ -188,7 +195,7 @@
       Alix: { bg: '#FFBCF2' }, // signal
       Hailey: { bg: '#FFA946' }, // dawn
       DeShawn: { bg: '#034F46' }, // fathom
-      Mark: { bg: '#7232A6' }, // brand purple — no Webflow variant of its own
+      Mark: { bg: MARK_BG }, // placeholder — see MARK_BG above
     };
     var TEXT_ON_DARK = '#FFFDF9';
     var TEXT_ON_LIGHT = '#1A1A1A';
