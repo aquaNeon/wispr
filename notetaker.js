@@ -144,7 +144,7 @@
       { name: 'Alix', text: 'Yep. Keep in mind the floor plan isn’t final.', task: '' },
       { name: 'Hailey', text: 'The agency is sending this afternoon.', task: '' },
       { name: 'DeShawn', text: 'Is the interactive wall still in?', task: '' },
-      { name: 'Jay', text: 'For now.', task: '' },
+      { name: 'Alix', text: 'For now.', task: '' },
       { name: 'Mark', text: 'Do we really need it?', task: '' },
       { name: 'Hailey', text: 'I’d rather use that space for another demo.', task: '' },
       { name: 'DeShawn', text: 'Agreed. I’ll flag it.', task: 'Replace interactive wall with demo space' },
@@ -152,8 +152,8 @@
       { name: 'Alix', text: 'What are we planning to show?', task: '' },
       { name: 'Hailey', text: 'The AI assistant and Tableau dashboard.', task: '' },
       { name: 'DeShawn', text: 'Let’s keep each spiel under five minutes.', task: '' },
-      { name: 'Mark', text: 'Jay, can you confirm the flow?', task: '' },
-      { name: 'Jay', text: 'Yep, I’ll review it with Product and Eoin.', task: 'Review demo flow with Product team and Eoin' },
+      { name: 'Mark', text: 'Hailey, can you confirm the flow?', task: '' },
+      { name: 'Hailey', text: 'Yep, I’ll review it with Product and Eoin.', task: 'Review demo flow with Product team and Eoin' },
       { name: 'Alix', text: 'Is the booth schedule finalized?', task: '' },
       { name: 'Hailey', text: 'Almost. Sales and Product will rotate.', task: '' },
       { name: 'Alix', text: 'Engineering should be there for live demos.', task: '' },
@@ -161,11 +161,11 @@
       { name: 'Mark', text: 'Let’s say 11am–2pm tentatively.', task: '' },
       { name: 'Hailey', text: 'I’ll let them know.', task: 'Notify Engineering of tentative 11am–2pm CES coverage' },
       { name: 'DeShawn', text: 'What’s our meeting target again?', task: '' },
-      { name: 'Jay', text: '25 over the course of three days.', task: '' },
+      { name: 'Alix', text: '25 over the course of three days.', task: '' },
       { name: 'Mark', text: 'We need Sales targeting priority accounts ASAP.', task: '' },
       { name: 'Alix', text: 'Who’s handling the list?', task: '' },
-      { name: 'DeShawn', text: 'I’ll send it to Yasmin tomorrow morning.', task: 'Send priority account list to Yasmin tomorrow morning' },
-      { name: 'Jay', text: 'Thanks. I’ll check their progress Friday.', task: 'Check Sales outreach progress Friday' },
+      { name: 'DeShawn', text: 'I’ll send it to Yao tomorrow morning.', task: 'Send priority accounts to Yao tomorrow morning' },
+      { name: 'Mark', text: 'Thanks. I’ll check their progress Friday.', task: 'Check Sales outreach progress Friday' },
       { name: 'Hailey', text: 'Has everyone booked their travel?', task: '' },
       { name: 'Alix', text: 'Not everyone on my team.', task: '' },
       { name: 'Mark', text: 'We need to wrap that up by the 10th.', task: '' },
@@ -177,27 +177,18 @@
       { name: 'Mark', text: 'Any other concerns?', task: '' },
       { name: 'Hailey', text: 'Nope. I’m excited!', task: '' }
     ];
-    // >>> PLACEHOLDER — change this one hex when the real colour lands. <<<
-    // Mark is the fifth speaker and Webflow only authors four pill variants, so he has no row of
-    // his own. This is his colour outright, not a borrowed one: MARK_BG is written straight onto
-    // the pill and the name's text colour is derived from its luminance (see textOn), so a light
-    // or a dark hex both work with no other edit.
-    var MARK_BG = '#7232A6';
-
-    // pill variant per speaker — picks which Webflow row gets CLONED. structure only: every colour
-    // on the clone is overwritten from COLOR_BY_NAME below. Mark clones 'pulse' purely because a
-    // row has to be cloned from somewhere and a fixed choice keeps the markup predictable.
-    var PILL_BY_NAME = { Jay: 'pulse', Mark: 'pulse', Alix: 'signal', Hailey: 'dawn', DeShawn: 'fathom' };
+    // pill variant per speaker — picks which Webflow row's colours get cloned. one speaker per
+    // authored variant, so every pill keeps the colour it was designed with.
+    var PILL_BY_NAME = { Mark: 'pulse', Alix: 'signal', Hailey: 'dawn', DeShawn: 'fathom' };
 
     // hard override, wins over the cloned Webflow colours — the variant lookup
     // can't be trusted here. bg only; `text` is derived from bg luminance
     // unless stated. leave a name out to keep using its Webflow row.
     var COLOR_BY_NAME = {
-      Jay: { bg: '#7F1C34' }, // pulse
+      Mark: { bg: '#7F1C34' }, // pulse
       Alix: { bg: '#FFBCF2' }, // signal
       Hailey: { bg: '#FFA946' }, // dawn
       DeShawn: { bg: '#034F46' }, // fathom
-      Mark: { bg: MARK_BG }, // placeholder — see MARK_BG above
     };
     var TEXT_ON_DARK = '#FFFDF9';
     var TEXT_ON_LIGHT = '#1A1A1A';
@@ -236,7 +227,7 @@
     }
     // what the card shows before the first task fires (last task in the loop,
     // so the rotation reads as continuous)
-    var CARD_DEFAULT = { name: 'Jay', task: 'Watch the SLA' };
+    var CARD_DEFAULT = { name: 'Hailey', task: 'Post Ramp expense reminder in the event channel' };
     var tplByName = {};
     var tplByVariant = {};
 
