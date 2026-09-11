@@ -159,7 +159,7 @@
       { name: 'Alix', text: 'Engineering should be there for live demos.', task: '' },
       { name: 'DeShawn', text: 'Agreed, but not all day.', task: '' },
       { name: 'Mark', text: 'Let’s say 11am–2pm tentatively.', task: '' },
-      { name: 'Hailey', text: 'I’ll let them know.', task: 'Notify Engineering of tentative 11am–2pm CES coverage' },
+      { name: 'Hailey', text: 'I’ll let them know.', task: 'Notify Eng of tentative CES support, 11am-2pm' },
       { name: 'DeShawn', text: 'What’s our meeting target again?', task: '' },
       { name: 'Alix', text: '25 over the course of three days.', task: '' },
       { name: 'Mark', text: 'We need Sales targeting priority accounts ASAP.', task: '' },
