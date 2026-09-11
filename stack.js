@@ -160,11 +160,9 @@
   // existing speaker picks the colour up automatically; a row's own data-stack-landed-color
   // still wins over it.
   var LANDED_NAME_COLORS = {
-    Nathalie: '#FFA946',   // the yellow/orange Hayle used to carry
+    Nathalie: '#FFA946',   // glow — the yellow/orange Hayle used to carry
+    Stephen:  '#F0D7FF',   // dawn
     Mikel:    '#7F1C34'    // maroon
-    // Stephen is deliberately absent: his brief said 'dawn', which is this same #FFA946, so
-    // listing him would give two speakers one colour. Without an entry his tag keeps whatever
-    // the Webflow row carries. Add him here once his own colour is decided.
   };
 
   var LANDED_ROWS = {
