@@ -160,16 +160,19 @@
   // existing speaker picks the colour up automatically; a row's own data-stack-landed-color
   // still wins over it.
   var LANDED_NAME_COLORS = {
-    Hayle:  '#FFA946',
-    Zharia: '#7F1C34'
+    Nathalie: '#FFA946',   // the yellow/orange Hayle used to carry
+    Mikel:    '#7F1C34'    // maroon
+    // Stephen is deliberately absent: his brief said 'dawn', which is this same #FFA946, so
+    // listing him would give two speakers one colour. Without an entry his tag keeps whatever
+    // the Webflow row carries. Add him here once his own colour is decided.
   };
 
   var LANDED_ROWS = {
-    1: { name: 'Hayle',  text: 'Where are we with the a16z conversation?' },
-    2: { name: 'Mikel',  text: "Term sheet's in, Priya sent it over last night." },
-    3: { name: 'Hayle',  text: "Perfect. ARR's up 12% since we closed Atlassian." },
-    4: { name: 'Zharia', text: "Great, I'll tell Aisha during our sync." },
-    5: { name: 'Mikel',  text: 'The Figma integration is live, right?' }
+    1: { name: 'Nathalie', text: 'Stephen, how’s the process review going?' },
+    2: { name: 'Stephen',  text: 'I’d give Raphael carte blanche.' },
+    3: { name: 'Stephen',  text: 'Most ad hoc updates can go in Asana.' },
+    4: { name: 'Mikel',    text: 'Will you be ready to present the Miro board on Monday?' },
+    5: { name: 'Stephen',  text: 'Tuesday is better. I want to run it by Siobhan first.' }
   };
 
   var LANDED_ATTR       = 'data-stack-landed';
