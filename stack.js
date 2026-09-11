@@ -842,7 +842,15 @@
 
       function setRowLanded(it, landed) {
         applyLanded(it, landed);
-        applyLanded(cloneRowFor(it), landed);
+        var clone = cloneRowFor(it);
+        if (!clone) { return; }
+        applyLanded(clone, landed);
+        // the light card has its own name-tag palette (NAME_TAG_LIGHT), because a colour picked to
+        // read on the green card can be invisible on cream - dawn's pale lavender especially. that
+        // palette is applied once when the clone is built, and applyLanded has just painted the
+        // green-card colour straight over it. re-run it here so it wins again. still keyed by the
+        // row's Webflow variant, so the Designer stays in charge of the light-mode colour.
+        recolorNameTags(clone);
       }
 
       var gatherTl = gsap.timeline({ paused: true });
