@@ -165,6 +165,13 @@
     Mikel:    '#7F1C34'    // maroon
   };
 
+  // same idea for the CREAM card. NAME_TAG_LIGHT repaints by Webflow variant and runs after the
+  // landed swap, so a speaker whose row carries the dawn variant loses his own landed colour there.
+  // a name listed here wins on the light card only; the green card keeps LANDED_NAME_COLORS.
+  var LANDED_NAME_COLORS_LIGHT = {
+    Mikel: '#7F1C34'    // pulse/maroon, and it reads on cream as-is
+  };
+
   var LANDED_ROWS = {
     1: { name: 'Nathalie', text: 'Stephen, how’s the process review going?' },
     2: { name: 'Stephen',  text: 'I’d give Raphael carte blanche.' },
@@ -851,6 +858,21 @@
         // green-card colour straight over it. re-run it here so it wins again. still keyed by the
         // row's Webflow variant, so the Designer stays in charge of the light-mode colour.
         recolorNameTags(clone);
+        // ...but a name in LANDED_NAME_COLORS_LIGHT outranks the variant palette, so a landed
+        // speaker keeps his own colour on cream instead of inheriting the row variant's.
+        var lname = landed && it.getAttribute(LANDED_NAME_ATTR);
+        var lcol  = lname && LANDED_NAME_COLORS_LIGHT[lname];
+        if (lcol) {
+          var ltag = clone.querySelector(NAME_TAG_SEL);
+          if (ltag) {
+            // string = text colour, or { color, bg } like NAME_TAG_LIGHT takes
+            if (typeof lcol === 'string') { ltag.style.color = lcol; }
+            else {
+              if (lcol.color) { ltag.style.color = lcol.color; }
+              if (lcol.bg)    { ltag.style.backgroundColor = lcol.bg; }
+            }
+          }
+        }
       }
 
       var gatherTl = gsap.timeline({ paused: true });
