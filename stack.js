@@ -161,9 +161,8 @@
   // still wins over it.
   var LANDED_NAME_COLORS = {
     Nathalie: '#FFA946',   // glow — the yellow/orange Hayle used to carry
-    Stephen:  '#F0D7FF'    // dawn
-    // Mikel is deliberately absent: on the GREEN card he keeps the pale colour his row is
-    // authored with in the Designer. His maroon lives in LANDED_NAME_COLORS_LIGHT, cream only.
+    Stephen:  '#F0D7FF',   // dawn
+    Mikel:    '#DD6582'    // light red — green card only; his maroon is in the LIGHT table below
   };
 
   // same idea for the CREAM card. NAME_TAG_LIGHT repaints by Webflow variant and runs after the
