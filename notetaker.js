@@ -227,7 +227,7 @@
     }
     // what the card shows before the first task fires (last task in the loop,
     // so the rotation reads as continuous)
-    var CARD_DEFAULT = { name: 'Hailey', task: 'Post Ramp expense reminder in the event channel' };
+    var CARD_DEFAULT = { name: 'Hailey', task: 'Post Ramp reminder in event channel' };
     var tplByName = {};
     var tplByVariant = {};
 
