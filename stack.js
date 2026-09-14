@@ -222,10 +222,14 @@
   // travel - but not at 1: the exit runs on its own clock for CH1_ROW_DUR + stagger x rows
   // (~0.75s at six rows), and firing it at the landing would leave rows still flying out after
   // the card has already arrived.
-  var CH1_AT          = 0.95;  // as late as the ride allows: rows clear just before the landing
+  // 1 = AT the landing, the same frame the card hands its surface to the plate. anything below 1
+  // left a band of scroll where the rows had gone but the card still covered the panel - tab copy
+  // and bg line in, an empty cream card in the middle. at 1 the rows fly out OVER the panel
+  // instead (cardSwap keeps the light clone's rows up and only drops its background).
+  var CH1_AT          = 1;
   var CH1_ROW_Y       = -120;  // px each row travels; negative = up, positive = down
-  var CH1_ROW_DUR     = 0.3;   // seconds per row
-  var CH1_ROW_STAGGER = 0.04;  // seconds between rows (top row leaves first)
+  var CH1_ROW_DUR     = 0.15;  // seconds per row. short: they leave over the running panel, so near-instant
+  var CH1_ROW_STAGGER = 0.015; // seconds between rows (top row leaves first)
   var CH1_ROW_EASE    = 'power2.in';
   var CH1_ROW_FADE    = 0.55;  // fade as a fraction of the travel. <1 = gone before it clears the card
   var CH1_IMG_OUT     = false; // false = the pop images stay in view through chapter 1
@@ -1672,9 +1676,10 @@
         cardSwapped = want;
         // rows have no business in the chapter phase: hard-hide them on visibility, which the exit
         // timeline doesn't animate, so its state stays intact and reversible
+        // only the dark originals: with the card transparent they would show through. the light
+        // clone's rows stay up so the exit plays over the panel - they end at opacity 0 on their own
         var vis = want ? 'hidden' : '';
         for (var r = 0; r < exitRows.length; r++)      { exitRows[r].style.visibility = vis; }
-        for (var c = 0; c < exitCloneRows.length; c++) { exitCloneRows[c].style.visibility = vis; }
         if (plate) {
           gsap.set(plate, { opacity: want ? 1 : 0 });
           // the ring and the copied border only ever existed to hide the dark card edge
@@ -1683,7 +1688,28 @@
           // a hairline outline on the chapter cards. reversible: scrubbing back restores it.
           setPlateEdge(want ? PLATE_EDGE_AFTER : plateEdge);
         }
-        if (cardClone) { gsap.set(cardClone, { opacity: want ? 0 : 1 }); }
+        if (cardClone) {
+          // drop the clone's SURFACE, not the clone: its rows are still flying out over the panel.
+          // the scroll branch that clips it stops running once swapped, so make it whole here -
+          // a fast scroll can land on this frame with the clone still clipped or display:none
+          if (want) {
+            cardClone.style.display     = '';
+            cardClone.style.clipPath    = 'none';
+            cardClone.style.background  = 'transparent';
+            cardClone.style.borderColor = 'transparent';
+            cardClone.style.boxShadow   = 'none';
+            // the clone also carries the card head, foot and icons, which the opacity drop used to
+            // take out. hide the clone and re-show only its rows (visibility is inheritable-overridable)
+            cardClone.style.visibility  = 'hidden';
+            for (var cr = 0; cr < exitCloneRows.length; cr++) { exitCloneRows[cr].style.visibility = 'visible'; }
+          } else {
+            cardClone.style.visibility  = '';
+            for (var cu = 0; cu < exitCloneRows.length; cu++) { exitCloneRows[cu].style.visibility = ''; }
+            cardClone.style.background  = LIGHT_CARD_BG;
+            cardClone.style.borderColor = plateEdge;
+            cardClone.style.boxShadow   = '0 0 0 ' + LIGHT_RING + 'px ' + plateEdge;
+          }
+        }
         if (want) {
           gsap.set(card, { backgroundColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', boxShadow: 'none' });
         } else {
