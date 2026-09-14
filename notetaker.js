@@ -1,11 +1,6 @@
-// notetaker page - hero transcript + task deck. ported from the approved prototype
-// (wispr-notetaker.netlify.app). contract: [data-transcript=wrap|track|name|sentence|card|
-// card-name|card-sentence] + data-transcript-task on rows that spawn a task.
+
 (function () {
 
-    // pre-paint guard: without this the Designer-state card and transcript rows
-    // paint first and visibly re-style when init() runs. visibility (not display)
-    // so init can still measure row/card heights.
     var READY_ATTR = 'data-notetaker-ready';
     function reveal() {
       document.documentElement.setAttribute(READY_ATTR, '');
