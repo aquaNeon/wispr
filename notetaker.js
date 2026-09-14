@@ -80,7 +80,7 @@
     var CARD_FIT_TEXT = true;
     var CARD_FIT_PAD = 0; // px of slack on top of the widest measured task
     var CARD_MAX_W = 0; // px hard cap. 0 = only the viewport gutter below applies
-    var CARD_FIT_GUTTER = 24; // px kept clear each side, so a long task can't cause page scroll
+    var CARD_FIT_GUTTER = 12; // px kept clear each side, so a long task can't cause page scroll. 12 on phones gives the card room for one more word
 
     var CARD_RADIUS = ''; // action card corner radius ('' = leave Webflow's value)
     var CARD_BORDER = '2px solid var(--border-color--border-secondary)'; // '' = leave Webflow's border
