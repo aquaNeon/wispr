@@ -80,7 +80,13 @@
     var CARD_FIT_TEXT = true;
     var CARD_FIT_PAD = 0; // px of slack on top of the widest measured task
     var CARD_MAX_W = 0; // px hard cap. 0 = only the viewport gutter below applies
-    var CARD_FIT_GUTTER = 24; // px kept clear each side, so a long task can't cause page scroll
+    var CARD_FIT_GUTTER = 12; // px kept clear each side, so a long task can't cause page scroll
+    // phone-portrait card spacing. Webflow's is 16/13px padding, 16px between text and pill, 8px
+    // after the sparkle - about 19px of that comes back here. '' = leave Webflow's spacing alone
+    var CARD_PHONE_BP  = 479;
+    var CARD_PHONE_CSS =
+      '[data-transcript="card"] .hero_select_inner{padding:12px 10px !important;gap:8px !important}' +
+      '[data-transcript="card"] .hero_select_check{gap:6px !important}';
 
     var CARD_RADIUS = ''; // action card corner radius ('' = leave Webflow's value)
     var CARD_BORDER = '2px solid var(--border-color--border-secondary)'; // '' = leave Webflow's border
@@ -1025,6 +1031,15 @@
       hasTasks = SENTENCES.some(function (s) {
         return !!s.task;
       });
+
+      // tighter card on phones. injected BEFORE the deck is measured: fitCardWidth measures a clone
+      // inside the deck, so these rules have to be live for that clone or the fit ignores them
+      if (CARD_PHONE_CSS && !document.getElementById('notetaker-card-phone')) {
+        var phoneCss = document.createElement('style');
+        phoneCss.id = 'notetaker-card-phone';
+        phoneCss.textContent = '@media (max-width:' + CARD_PHONE_BP + 'px){' + CARD_PHONE_CSS + '}';
+        document.head.appendChild(phoneCss);
+      }
 
       cardEl = document.querySelector('[' + ATTR + '="' + A_CARD + '"]');
       if (cardEl) {
