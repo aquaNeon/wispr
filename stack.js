@@ -161,15 +161,16 @@
   // still wins over it.
   var LANDED_NAME_COLORS = {
     Nathalie: '#FFA946',   // glow — the yellow/orange Hayle used to carry
-    Stephen:  '#F0D7FF',   // dawn
-    Mikel:    '#DD6582'    // light red — green card only; his maroon is in the LIGHT table below
+    Mikel:    '#F0D7FF',   // dawn
+    Stephen:  '#DD6582'    // light red — green card only; his maroon is in the LIGHT table below
   };
 
   // same idea for the CREAM card. NAME_TAG_LIGHT repaints by Webflow variant and runs after the
   // landed swap, so a speaker whose row carries the dawn variant loses his own landed colour there.
   // a name listed here wins on the light card only; the green card keeps LANDED_NAME_COLORS.
   var LANDED_NAME_COLORS_LIGHT = {
-    Mikel: '#7F1C34'    // pulse/maroon, and it reads on cream as-is
+    Stephen: '#7F1C34',   // pulse/maroon, and it reads on cream as-is
+    Mikel:   '#7232A6'    // dawn on cream - by name, so it holds whatever variant his row carries
   };
 
   var LANDED_ROWS = {
